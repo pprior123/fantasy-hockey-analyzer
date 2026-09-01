@@ -1,0 +1,36 @@
+# Secrets and credentials — never commit these
+.env
+.env.*
+secrets.json
+*.pem
+
+# Yahoo OAuth tokens (yahoofantasy / yfpy write these)
+.yahoofantasy
+token.json
+private.json
+oauth2.json
+
+# Local database and caches
+*.db
+*.sqlite
+*.sqlite3
+data/
+cache/
+
+# Salary imports (may contain league data)
+*.csv
+!sample_*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

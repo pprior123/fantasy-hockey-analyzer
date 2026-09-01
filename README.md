@@ -15,6 +15,10 @@ hand.
 - Surfaces salary and custom rating side by side for waiver, trade, and
   lineup decisions
 
+## Status
+
+Early. Planning and scaffolding.
+
 ## Scope
 
 Single user. Single league. Read-only. Not distributed, not monetized,

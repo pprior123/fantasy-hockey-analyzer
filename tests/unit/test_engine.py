@@ -126,7 +126,15 @@ def test_config_coerces_strings_from_json_or_env() -> None:
 
 @pytest.mark.parametrize(
     ("kwargs", "message"),
-    [({"divisor_method": "bogus"}, "bogus"), ({"categories": ("G", "GAA")}, "GAA")],
+    [
+        ({"divisor_method": "bogus"}, "bogus"),
+        ({"categories": ("G", "GAA")}, "GAA"),
+        ({"categories": "GA"}, "sequence"),
+        ({"divisor_top_n": 2.5}, "divisor_top_n"),
+        ({"divisor_top_n": 20.0}, "divisor_top_n"),
+        ({"divisor_top_n": True}, "divisor_top_n"),
+        ({"gp_floor_fraction": False}, "^gp_floor_fraction must be a number, got a bool$"),
+    ],
 )
 def test_config_rejects_unknown_names(kwargs: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):

@@ -66,6 +66,8 @@ def test_parity_ttltst_and_percentile_with_injected_divisors(injected: RatingRes
         rating = injected.ratings[g["player_id"]]
         if not rating.rated:
             assert g["ttltst"] == 0
+            assert g["percentile"] is None
+            assert rating.percentile is None
             continue
         rated += 1
         assert rating.ttltst == pytest.approx(g["ttltst"], abs=TTLTST_TOLERANCE), g["name"]

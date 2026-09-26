@@ -58,8 +58,15 @@ class EngineConfig:
 
     def __post_init__(self) -> None:
         # Config read from JSON or env arrives as strings: coerce, rejecting unknowns.
+        if isinstance(self.categories, str):
+            raise ValueError(f"categories must be a sequence of names, got {self.categories!r}")
         object.__setattr__(self, "divisor_method", DivisorMethod(self.divisor_method))
         object.__setattr__(self, "categories", tuple(Category(c) for c in self.categories))
+        top_n = self.divisor_top_n
+        if top_n is not None and (isinstance(top_n, bool) or not isinstance(top_n, int)):
+            raise ValueError(f"divisor_top_n must be an integer, got {top_n!r}")
+        if isinstance(self.gp_floor_fraction, bool):
+            raise ValueError("gp_floor_fraction must be a number, got a bool")
         if not self.categories or len(set(self.categories)) != len(self.categories):
             raise ValueError(f"categories must be non-empty and unique, got {self.categories}")
         if not 0 <= self.gp_floor_fraction <= 1:  # also rejects NaN

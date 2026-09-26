@@ -273,7 +273,9 @@ def extract_players(values: Workbook, formulas: Workbook) -> tuple[list[dict[str
                     for cat, (col, _src, _div) in CATEGORIES.items()
                 },
                 "ttltst": ttltst,
-                # Unrated rows (TTLTST 0) have no rating to compare; see SPEC §5.
+                # TTLTST 0 means at or below the GP floor (AD's IF), or above it
+                # with all-zero stats; the latter doesn't occur in 2025-26 (the
+                # golden test checks the rated sets match). See SPEC §5.
                 "percentile": pct_by_score[ttltst] if ttltst > 0 else None,
                 "aav": None if aav == NA else integer(aav, f"S{row}"),
             }

@@ -230,7 +230,8 @@ value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST ==
 The divisor above is the workbook's own formula (`W6:AC6`, found in M1).
 The engine also implements the method this spec first described, the mean
 of the top-10 per-82 rates over eligible players (`DivisorMethod.TOP_PER82`,
-whose `TOP_N` defaults to 10, so switching is one config value). Small samples inflate it (M1 report in `docs/DECISIONS.md`).
+whose `TOP_N` defaults to 10, so switching is one config value). Small
+samples inflate it (M1 report in `docs/DECISIONS.md`).
 The workbook method is the default **pending the owner's confirmation**
 (§11).
 

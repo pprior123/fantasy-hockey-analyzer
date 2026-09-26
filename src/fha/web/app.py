@@ -187,19 +187,11 @@ def create_app(context: AppContext) -> FastAPI:
     async def manifest() -> Response:
         return Response(json.dumps(MANIFEST), media_type="application/manifest+json")
 
-    for key, label in NAV:
-        app.add_api_route(
-            f"/{key}", _placeholder(key, label), methods=["GET"], response_class=HTMLResponse
-        )
+    from fha.web.routes import admin, league, matchup, players, rosters
+
+    for module in (players, rosters, league, matchup, admin):
+        app.include_router(module.router)
     return app
-
-
-def _placeholder(key: str, label: str) -> Callable[[Request], Awaitable[HTMLResponse]]:
-    async def page(request: Request) -> HTMLResponse:
-        services(request)  # a missing configuration shows the error page
-        return render(request, "page.html", active=key, title=label)
-
-    return page
 
 
 def _query(**params: str) -> str:

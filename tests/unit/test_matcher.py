@@ -449,3 +449,24 @@ def test_a_position_tie_break_to_a_player_on_another_team_is_only_a_candidate() 
     result = match(Query("Hughes", "NJ", "D"), ROSTER, scope=Scope.ROSTER)
     assert result.status is Status.REVIEW
     assert result.candidates[0].candidate.player_id == "r4"
+
+
+def test_review_candidates_after_the_pick_are_in_a_stable_order() -> None:
+    tied = [
+        c("j", "Jack Hughes", "Van", "C"),
+        c("b", "Bo Zed", "Van", "D"),
+        c("a", "Al Zed", "Van", "D"),
+    ]
+    for order in (tied, list(reversed(tied))):
+        result = match(Query("Hughes", "NJ", "C"), order, scope=Scope.ROSTER)
+        # Al Zed and Bo Zed score alike: name order breaks the tie, whatever came first.
+        assert [s.candidate.player_id for s in result.candidates] == ["j", "a", "b"]
+
+
+@pytest.mark.parametrize(("their_team", "weak"), [(None, True), ("Hamilton", True), ("TB", False)])
+def test_a_position_mismatch_needs_the_team_to_confirm_a_name_match(
+    their_team: str | None, weak: bool
+) -> None:
+    pool = [c("p", "Jonathan Smith", their_team, "D")]
+    result = match(Query("John Smith", "TBL", "C"), pool)  # the row has a team, he may not
+    assert (result.status is Status.REVIEW) is weak

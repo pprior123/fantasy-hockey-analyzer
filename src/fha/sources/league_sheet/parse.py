@@ -38,7 +38,8 @@ HEADER_ROWS_ABOVE = 3
 REF = r"\$?[A-Za-z]{1,3}\$?\d+"
 SUM_OF_RANGE = re.compile(rf"=\s*SUM\(\s*({REF})\s*:\s*({REF})\s*\)\s*", re.IGNORECASE)
 ONE_REFERENCE = re.compile(rf"=\s*(?:SUM\(\s*({REF})\s*\)|({REF}))\s*", re.IGNORECASE)
-OTHER_TAB_REFERENCE = re.compile(rf"=\s*(?:'([^']+)'|([^'!=\s]+))!\s*({REF})\s*")
+# 'Quoted title' (a quote inside is doubled, as Sheets writes it) or a bare title.
+OTHER_TAB_REFERENCE = re.compile(rf"=\s*(?:'((?:[^']|'')+)'|([^'!=\s]+))!\s*({REF})\s*")
 
 NAME_HEADERS = frozenset({"name", "names", "player", "players", "player name"})
 POSITION_HEADERS = frozenset({"position", "positions", "pos"})
@@ -71,7 +72,8 @@ def parse_sheet(grid: Grid) -> ParsedSheet:
         if cap_cell is not None and cap_cell.formula:
             m = OTHER_TAB_REFERENCE.fullmatch(cap_cell.formula)
             if m:
-                cap_refs[(m[1] or m[2], m[3].replace("$", "").upper())] += 1
+                title = m[1].replace("''", "'") if m[1] else m[2]
+                cap_refs[(title, m[3].replace("$", "").upper())] += 1
         tabs.append(_parse_tab(tab, payroll_label, _whole(cap_cell)))
     cap, source = _summary_cap(grid, cap_refs)
     return ParsedSheet(cap=cap, cap_source=source, tabs=tuple(tabs), other_tabs=tuple(others))
@@ -130,7 +132,9 @@ def _resolve(tab: Tab, formula: str, references: int = 0) -> tuple[str, str]:
         return _resolve(tab, target, references + 1)
     if references:
         raise UnrecognizedTabError("PAYROLL leads to a formula that is not a SUM of one range")
-    raise UnrecognizedTabError(f"PAYROLL formula {formula!r} is not a SUM of one range")
+    # The formula as written, quoted with "" (not repr: its \' escapes would defeat
+    # the check script's redaction of quoted tab titles).
+    raise UnrecognizedTabError(f'PAYROLL formula "{formula}" is not a SUM of one range')
 
 
 def _header(tab: Tab, r1: int, r2: int) -> _Columns:
@@ -202,8 +206,14 @@ def _summary_cap(grid: Grid, refs: Counter[tuple[str, str]]) -> tuple[int | None
     (title, ref), _ = ranked[0]
     summary = grid.tab(title)
     if summary is None:
-        return None, f"'{title}'!{ref}"
-    return _whole(summary.at(ref)), f"'{title}'!{ref}"
+        return None, _reference(title, ref)
+    return _whole(summary.at(ref)), _reference(title, ref)
+
+
+def _reference(title: str, ref: str) -> str:
+    """``'Title'!B3``, with a quote in the title doubled as Sheets writes it."""
+    escaped = title.replace("'", "''")
+    return f"'{escaped}'!{ref}"
 
 
 def _label(tab: Tab, word: str) -> tuple[int, int] | None:

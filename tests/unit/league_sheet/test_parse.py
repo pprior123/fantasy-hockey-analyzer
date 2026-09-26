@@ -205,10 +205,10 @@ def test_unlabelled_rows_below_the_range_are_ignored() -> None:
 @pytest.mark.parametrize(
     ("formula", "reason"),
     [
-        ("=SUM(F7:F8,F10:F12)", "PAYROLL formula '=SUM(F7:F8,F10:F12)' is not a SUM of one range"),
+        ("=SUM(F7:F8,F10:F12)", 'PAYROLL formula "=SUM(F7:F8,F10:F12)" is not a SUM of one range'),
         ("=SUM(F7:G9)", "PAYROLL sums F7:G9, which spans more than one column"),
         ("='Other tab'!C3", "PAYROLL formula \"='Other tab'!C3\" is not a SUM of one range"),
-        ("=F7+F8", "PAYROLL formula '=F7+F8' is not a SUM of one range"),
+        ("=F7+F8", 'PAYROLL formula "=F7+F8" is not a SUM of one range'),
         ("=C20", "PAYROLL leads to C20, which has no formula"),
     ],
 )
@@ -380,3 +380,19 @@ def test_an_infinite_salary_is_no_salary() -> None:
     tab = one(TeamTab("Inf", [*roster(1), Player("Ada Big", salary=float("inf"))], payroll_value=1))
     assert tab.status == "ok"
     assert [r.salary for r in tab.counted] == [1_000_000, None]
+
+
+def test_a_summary_tab_titled_with_an_apostrophe_still_gives_the_cap() -> None:
+    title = "Commish's Summary"
+    summary = Tab.from_rows(title, [[], [], ["Salary cap", CAP]])
+    aces = TeamTab("Aces", roster(1), cap_formula="='Commish''s Summary'!B3")
+    parsed = parse_sheet(grid(aces, summary=summary))
+    assert parsed.cap == CAP
+    assert parsed.cap_source == "'Commish''s Summary'!B3"
+
+
+def test_an_unrecognized_reason_quotes_the_formula_as_written() -> None:
+    tab = one(TeamTab("Rams", roster(1), payroll_formula="""=IF('Pat''s Team'!B3="",0,1)"""))
+    assert (
+        tab.reason == """PAYROLL formula "=IF('Pat''s Team'!B3="",0,1)" is not a SUM of one range"""
+    )

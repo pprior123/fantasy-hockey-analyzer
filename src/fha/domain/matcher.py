@@ -14,7 +14,10 @@ players it may be are ``Candidate`` values. The cascade, first hit wins:
 Steps 1-2 need the row's team; an unknown team skips them. Steps 3-4 skip a
 player whose team *and* position group both contradict the row's (he is then
 only a fuzzy candidate): a silent, permanent binding must not rest on a name
-alone against that evidence. When a step finds
+alone against that evidence. A match that is weak against contrary evidence
+(``weak``: a surname contradicted by team or position; a name contradicted by
+position and unconfirmed by team) is only a candidate for review, with that
+player offered first (owner's decision). When a step finds
 several players, the row's position group (F / D / G) breaks the tie, the
 owner-approved extension of SPEC §6 (the two Sebastian Ahos). A tie it can't
 break is ``AMBIGUOUS``. Aliases apply first: a row whose name has an alias
@@ -76,7 +79,7 @@ class Step(StrEnum):
 
 class Status(StrEnum):
     MATCHED = "matched"  # bind without asking
-    REVIEW = "review"  # fuzzy candidates only: the owner confirms
+    REVIEW = "review"  # candidates only (fuzzy, or a weak match): the owner confirms
     AMBIGUOUS = "ambiguous"  # several players fit equally well
     UNMATCHED = "unmatched"  # nothing close; the best guesses are still offered
 
@@ -200,10 +203,12 @@ def match(
     def weak(step: Step, p: Candidate) -> bool:
         """A match too weak to bind silently against contrary evidence (owner's
         decision, M3 round 2): a surname contradicted by team *or* position; a name
-        with no team to go on, contradicted by position."""
+        contradicted by position that the team doesn't confirm (the row has no
+        team, or the player's is missing or unmapped)."""
         if step is Step.SURNAME:
             return other_team(p) or other_group(p)
-        return step is Step.NAME and team is None and other_group(p)
+        confirmed = team is not None and canonical_team(p.team) == team
+        return step is Step.NAME and other_group(p) and not confirmed
 
     steps.append((Step.NAME, lambda p: bool(keys & name_keys(p.name)) and plausible(p)))
     if scope is Scope.ROSTER:

@@ -807,7 +807,8 @@ every step**, not only steps 3-4. Steps 1-2 tie only when two players share
 a name and a team: the Elias Petterssons are both Vancouver. There, position
 is the only way to tell them apart. A tie position can't break is
 `AMBIGUOUS`, and returns every tied candidate. Position never overrides a
-unique name: a row saying D still matches the only Connor McDavid. Fuzzy
+unique name: a row saying D still matches the only Connor McDavid
+(superseded: see "M3 review round 2: weak matches go to review"). Fuzzy
 ties are ordered same group first.
 
 Why roster fuzzy is 75: among the roughly 27 players of one roster, a typo
@@ -946,7 +947,10 @@ The owner chose (2026-09-26):
   100.
 - **Name-only rows with no team (the PuckPedia CSV):** a position-group
   contradiction alone sends the row to review. Without a team, position is
-  the only other evidence.
+  the only other evidence. Round 3 made the rule precise: a position
+  contradiction sends a name match to review unless the team confirms it.
+  That covers sheet rows whose team is blank or unmapped ("NY"), and players
+  whose own team is missing.
 - **Unchanged:** full-name matches with a team (steps 1-2), and name-only
   matches where the team fits, still bind even if the position disagrees,
   since sources differ on positions. A name-only match contradicted by both

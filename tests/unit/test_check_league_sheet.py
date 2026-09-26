@@ -141,3 +141,13 @@ def test_an_unreadable_file_fails_in_one_line(
     code, _, err = run(capsys, [str(bad)], {})
     assert code == 1
     assert err == "Failed: not a readable .xlsx file (BadZipFile)\n"
+
+
+def test_an_apostrophe_title_in_a_formula_with_double_quotes_is_redacted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    formula = """=IF('Pat''s Team'!B3="",0,SUM(F7:F9))"""
+    path = write(tmp_path, TeamTab("Aces", roster(1), payroll_formula=formula))
+    _, out, _ = run(capsys, [str(path)], {})
+    assert "Pat" not in out
+    assert "'<tab>'!B3" in out

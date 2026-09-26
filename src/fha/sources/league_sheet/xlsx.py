@@ -23,28 +23,31 @@ def read_xlsx(source: bytes | str | Path) -> Grid:
     import openpyxl  # lazily: see the module docstring
     from openpyxl.utils.exceptions import InvalidFileException
 
-    # ParseError: a valid zip holding malformed XML.
     unreadable = (
         OSError,
         KeyError,
-        ValueError,
-        ParseError,
+        ValueError,  # also a cell beyond Excel's last row, met while iterating
+        ParseError,  # a valid zip holding malformed XML
         zipfile.BadZipFile,
         InvalidFileException,
         zlib.error,  # corrupt deflate data: a damaged upload
         TypeError,  # malformed document properties
         NotImplementedError,  # an unsupported zip compression method
+        RuntimeError,  # an entry flagged as encrypted (password required)
         EOFError,
     )
 
     def load(data_only: bool) -> Any:
         stream = io.BytesIO(source) if isinstance(source, bytes) else source
-        try:
-            return openpyxl.load_workbook(stream, data_only=data_only, read_only=False)
-        except unreadable as e:
-            raise LeagueSheetError(f"not a readable .xlsx file ({type(e).__name__})") from None
+        return openpyxl.load_workbook(stream, data_only=data_only, read_only=False)
 
-    formulas, values = load(data_only=False), load(data_only=True)
+    try:  # reading and iterating: damage can surface in either
+        return _grid(load(data_only=False), load(data_only=True))
+    except unreadable as e:
+        raise LeagueSheetError(f"not a readable .xlsx file ({type(e).__name__})") from None
+
+
+def _grid(formulas: Any, values: Any) -> Grid:
     tabs = []
     for sheet in formulas.worksheets:
         computed = values[sheet.title]

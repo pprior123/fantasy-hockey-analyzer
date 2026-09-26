@@ -4,6 +4,7 @@ import datetime as dt
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import openpyxl
 import pytest
@@ -189,3 +190,38 @@ def test_corrupt_compressed_data_is_a_league_sheet_error() -> None:
     with pytest.raises(LeagueSheetError, match=r"not a readable \.xlsx file") as caught:
         read_xlsx(bytes(data))
     assert caught.value.__cause__ is None
+
+
+def _rezip(data: bytes, change: Any) -> bytes:
+    import io
+    import zipfile
+
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for item in src.infolist():
+            z.writestr(item, change(item.filename, src.read(item)))
+    return out.getvalue()
+
+
+def test_an_entry_flagged_as_encrypted_is_a_league_sheet_error() -> None:
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "x"
+    data = bytearray(_rezip(_save(wb), lambda name, body: body))
+    at = data.rfind(b"PK\x01\x02")
+    while at != -1:  # set the "encrypted" flag on every central-directory entry
+        data[at + 8] |= 0x01
+        at = data.rfind(b"PK\x01\x02", 0, at)
+    with pytest.raises(LeagueSheetError, match=r"\(RuntimeError\)"):
+        read_xlsx(bytes(data))
+
+
+def test_a_cell_beyond_excels_last_row_is_a_league_sheet_error() -> None:
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "x"
+
+    def move(name: str, body: bytes) -> bytes:
+        return body.replace(b'r="A1"', b'r="A1048577"') if name.endswith("sheet1.xml") else body
+
+    with pytest.raises(LeagueSheetError, match=r"\(ValueError\)"):
+        read_xlsx(_rezip(_save(wb), move))

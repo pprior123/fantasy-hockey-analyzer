@@ -39,7 +39,8 @@ uv run mutmut run               # mutation testing on src/fha/domain
   Firestore, no clock. External things go behind the Protocols in SPEC §3.
 - **Record decisions** in `docs/DECISIONS.md`: what, why, alternatives, date.
 - **Stay in scope.** Phase 1 only. No write access to Yahoo, no goalie model,
-  no projections, no history, no waiver/trade screens. If something out of
+  no projections, no history, no waiver recommendations or trade screens
+  (the Matchup screen's free-agent filter is in scope). If something out of
   scope seems necessary, ask.
 - Small, focused commits with clear messages. Don't push to `main` without
   the owner's go-ahead unless they've said otherwise for the session.
@@ -78,10 +79,10 @@ uv run mutmut run               # mutation testing on src/fha/domain
 ## Golden data
 
 The owner's workbook goes at `private/2025_2026_stats.xlsx` (ignored by git).
-It holds 2024-25 season data. `scripts/extract_golden.py` turns it into the
-committed fixtures that the metric engine must reproduce. Workbook layout
-notes are in SPEC §5 — trust formulas over the row-2 labels, which are wrong
-in places.
+It holds 2025-26 season data; the app targets 2026-27.
+`scripts/extract_golden.py` turns it into the committed fixtures that the
+metric engine must reproduce. Workbook layout notes are in SPEC §5 — trust
+formulas over the row-2 labels, which are wrong in places.
 
 ## Suggested agent roles
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -10,6 +11,7 @@ from tests.unit.yahoo import builders as b
 
 LK = b.LEAGUE_KEY
 PREFIX = "/fantasy/v2/"
+MAX_PER_REQUEST = 25  # Yahoo's limit on ``count`` and on ``player_keys``
 
 
 def skater(pid: int, gp: int, team: str = "TB") -> b.P:
@@ -29,8 +31,11 @@ LAST = {"1": "82", "4": "70"}  # last season's GP for some players
 class League:
     """Routes Yahoo paths to synthetic responses; tracks concurrency."""
 
-    def __init__(self, *, strict: bool = True, **settings: Any) -> None:
+    def __init__(
+        self, *, strict: bool = True, teams: Sequence[b.T] = (MINE, THEIRS), **settings: Any
+    ) -> None:
         self.strict = strict  # unknown paths: fail the test, or answer 400 like Yahoo
+        self.teams = list(teams)
         self.settings = settings
         self.paths: list[str] = []
         self.in_flight = 0
@@ -47,20 +52,22 @@ class League:
         if path == "game/465/stat_categories":
             return b.game_stat_categories()
         if path == f"league/{LK}/teams/roster":
-            return b.teams_roster([MINE, THEIRS])
+            return b.teams_roster(self.teams)
         if m := re.fullmatch(
             rf"league/{LK}/players;status=A;sort=AR;start=(\d+);count=(\d+)", path
         ):
             start, count = int(m[1]), int(m[2])
+            if count > MAX_PER_REQUEST:
+                raise LookupError(f"count {count} > {MAX_PER_REQUEST}: {path}")
             return b.league_players(FREE[start : start + count])
         if m := re.fullmatch(rf"league/{LK}/scoreboard;week=(\d+)", path):
             week = int(m[1])
             return b.scoreboard(week, [(1, 2)] if week == 1 else [(2, 1)])
         if m := re.fullmatch(r"players;player_keys=([^/]+)/stats;type=season(;season=2025)?", path):
             keys, last = m[1].split(","), m[2]
-            everyone = {
-                p.key: p for p in [*FREE, *(p for t in (MINE, THEIRS) for p, _ in t.roster)]
-            }
+            if len(keys) > MAX_PER_REQUEST:
+                raise LookupError(f"{len(keys)} player keys > {MAX_PER_REQUEST}: {path}")
+            everyone = {p.key: p for p in [*FREE, *(p for t in self.teams for p, _ in t.roster)]}
             players = [everyone[k] for k in keys]
             if last:
                 players = [b.P(p.pid, p.name, stats={"0": LAST.get(p.pid, "-")}) for p in players]

@@ -13,7 +13,7 @@ from fha.sources.yahoo.parse import YahooParseError
 from fha.sources.yahoo.source import HttpYahooSource
 from fha.sources.yahoo.stat_map import build_stat_map, to_player_season
 from tests.unit.yahoo import builders as b
-from tests.unit.yahoo.fake_league import FREE, LK, MINE, THEIRS, League
+from tests.unit.yahoo.fake_league import FREE, LK, MINE, THEIRS, League, skater
 
 
 class Store:
@@ -98,6 +98,30 @@ async def test_available_sort_is_configurable() -> None:
     )
     snap, league = await refresh(league, available=25, available_sort="OR")
     assert len(snap.available) == 25
+    assert [p for p in league.paths if ";status=A;" in p] == [
+        f"league/{LK}/players;status=A;sort=OR;start=0;count=25"
+    ]
+
+
+async def test_rostered_stats_are_requested_25_players_at_a_time() -> None:
+    big = b.T(3, [(skater(1000 + i, 5), "BN") for i in range(30)])
+    league = League(teams=[MINE, THEIRS, big])  # 36 rostered: batches of 25 and 11
+    snap, league = await refresh(league, available=0)
+    batches = [
+        p.removeprefix("players;player_keys=").split("/")[0].split(",")
+        for p in league.paths
+        if p.startswith("players;") and ";season=" not in p
+    ]
+    assert sorted(len(keys) for keys in batches) == [11, 25]
+    assert len(snap.stats) == 36
+
+
+async def test_the_fake_league_refuses_more_than_25_player_keys() -> None:
+    keys = ",".join(f"465.p.{100 + i}" for i in range(26))
+    with pytest.raises(LookupError, match="26 player keys"):
+        League().content(f"players;player_keys={keys}/stats;type=season")
+    with pytest.raises(LookupError, match="count 26"):
+        League().content(f"league/{LK}/players;status=A;sort=AR;start=0;count=26")
 
 
 async def test_available_players_already_rostered_or_repeated_are_dropped() -> None:

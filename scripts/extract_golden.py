@@ -63,7 +63,7 @@ EXPECTED_FORMULAS = {
     "A": "=_xlfn.CONCAT('Stats Data Source'!C@, \" \",'Stats Data Source'!D@)",
     "C": (
         "=SUBSTITUTE(RIGHT(LEFT('Stats Data Source'!G@,"
-        "SEARCH(\"</a\",'Stats Data Source'!G@,1)-1),3), \">\", \"\")"
+        'SEARCH("</a",\'Stats Data Source\'!G@,1)-1),3), ">", "")'
     ),
     "D": "='Stats Data Source'!H@",
     "E": "='Stats Data Source'!R@",
@@ -217,9 +217,9 @@ def extract_players(values: Workbook, formulas: Workbook) -> tuple[list[dict[str
     sources = source_rows(formulas[ANALYSIS], rows)
     check_formulas(formulas[ANALYSIS], rows, sources)
     # Percentile divides by MAX(Table2[Ranking]): the table must end at the last player.
-    table = formulas[ANALYSIS].tables.get(RANKING_TABLE)
+    tables = formulas[ANALYSIS].tables
     want = f"{RANK_COL}{FIRST_ROW - 1}:AL{rows.stop - 1}"
-    if table is None or table.ref != want:
+    if RANKING_TABLE not in tables or tables[RANKING_TABLE].ref != want:
         raise LayoutError(f"{ANALYSIS}: {RANKING_TABLE} must span {want}")
     ranks = [ws[f"{RANK_COL}{row}"].value for row in rows]
     if ranks != list(range(1, len(rows) + 1)):

@@ -47,3 +47,37 @@ reach the serverless bundle (cold starts, SPEC §2).
 and fails on imports of I/O, network, clock (`datetime`, `time`), randomness
 or the outer layers. Cheap, and it turns the "respect the seams" rule into a
 gate.
+
+## 2026-09-26 — Phase 1 target is a running app; scope additions
+Phase 1 ends with the deployed app in daily use; Phase 2 is planned from that
+use. Added to Phase 1 at the owner's request, as views over data already
+fetched: Rosters for any team with team category profiles, a League
+comparison (the workbook's `Table10`), a Matchup screen (current/next week
+opponent, trailing categories, a free-agent shortcut sorted by need), a
+Replace view (owner picks a player; free agents ranked with cap impact), a
+Categories toggle for phone width, and a baseline-season rule so the app is
+useful before and early in 2026-27. Waiver *recommendations*, trade
+evaluation and schedule weighting stay out. M4 now ends with the owner
+running the app locally against real data (dev-only `LocalJsonRepository`)
+before any cloud setup. Alternative: keep the original three screens and
+defer the rest — rejected by the owner; the extra views are cheap given the
+data is already fetched.
+
+## 2026-09-26 — Salaries and cap: league sheet is the source of truth
+The league's shared Google Sheet is what the league enforces: per-team tabs
+with each player's cap hit, the team's payroll, and the cap ($119.6M for
+2026-27). The league constitution's cap formula ("NHL cap + 7.5%") is out of
+date. So rostered salaries, payrolls and the cap come from the sheet; a
+PuckPedia CSV supplies free-agent salaries only (the sheet lists rostered
+players only). Tabs are hand-maintained with differing layouts, so the
+parser keys off each tab's own PAYROLL formula (which identifies the salary
+column and counted rows, excluding IR rows) rather than header labels, and
+flags any tab it cannot resolve. Sheet rows are matched only within the bound
+Yahoo team's roster, which resolves surname-only entries and typos. Read live
+via the Sheets API with the Firestore service account in production; a
+downloaded `.xlsx` in dev and as an Admin upload fallback. The sheet contains
+managers' contact details: never read past, stored, logged or committed;
+tests use synthetic sheets. Alternatives: PuckPedia for everyone (rejected —
+not what the league enforces, and diverges when GMs' entries differ); treat
+the sheet as reference only (rejected by the owner); upload-only, no live
+read (kept as fallback; rosters change weekly so it would go stale).

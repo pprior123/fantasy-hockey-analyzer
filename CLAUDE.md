@@ -72,6 +72,11 @@ uv run mutmut run               # mutation testing on src/fha/domain
 - Divisors recompute every refresh (the workbook's static divisors are a
   known flaw).
 - Injured players stay ranked on rate stats.
+- The league's shared salary sheet is the source of truth for rostered
+  salaries, payrolls and the cap (SPEC §4a). Parse by each tab's PAYROLL
+  formula, never by labels. Free-agent salaries come from a PuckPedia CSV.
+- The sheet holds managers' contact details: never read past, store, log or
+  commit them. Tests use synthetic sheets only.
 - Yahoo league key = `{game_key}.l.8076`; resolve `game_key` at runtime.
 - Serverless: concurrent Yahoo calls (bounded), no filesystem state, light
   imports.

@@ -365,7 +365,8 @@ baseline rule above. Known structure:
   ranks and its name lookup shows the first tied player twice. The extractor
   gives every player with that score the score's first rank, so the golden
   percentile of a tied player the lookup hides is the extractor's reading,
-  not a value the workbook displays (one player in 2025-26).
+  not a value the workbook displays (one rated player in 2025-26). Unrated
+  players (TTLTST 0) get a null golden percentile.
 - Cap hits are looked up by name, so two players with one name (the two Elias
   Petterssons) get the same cap hit. The app binds by player ID (§6).
 
@@ -373,7 +374,8 @@ baseline rule above. Known structure:
 (`data_only=True`) and writes committed JSON fixtures:
 
 - `tests/fixtures/golden_players.json` — per player: source ID, name, team,
-  position, GP, the 7 raw stats, workbook TTLTST, percentile, AAV.
+  position, GP, the 7 raw stats, workbook TTLTST, percentile (null when
+  unrated), AAV.
 - `tests/fixtures/golden_divisors.json` — the `W6:AC6` values.
 - `tests/fixtures/alias_seed.json` — the 57 aliases.
 

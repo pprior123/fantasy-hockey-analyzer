@@ -57,6 +57,9 @@ class EngineConfig:
     divisor_top_n: int | None = None  # None: the method's DEFAULT_TOP_N
 
     def __post_init__(self) -> None:
+        # Config read from JSON or env arrives as strings: coerce, rejecting unknowns.
+        object.__setattr__(self, "divisor_method", DivisorMethod(self.divisor_method))
+        object.__setattr__(self, "categories", tuple(Category(c) for c in self.categories))
         if not self.categories or len(set(self.categories)) != len(self.categories):
             raise ValueError(f"categories must be non-empty and unique, got {self.categories}")
         if not 0 <= self.gp_floor_fraction <= 1:  # also rejects NaN

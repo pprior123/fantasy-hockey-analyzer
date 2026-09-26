@@ -5,7 +5,8 @@ values and once for formulas, and writes three committed fixtures:
 
 - ``golden_players.json``: per skater row of ``Fantasy Analysis``: id, name,
   team, position, GP, the 7 category totals, workbook TTLTST (``AD``),
-  percentile (from ``Table2``) and cap hit (``S``, null when ``#N/A``);
+  percentile (from ``Table2``; null when unrated) and cap hit (``S``, null
+  when ``#N/A``);
 - ``golden_divisors.json``: the category divisors in ``W6:AC6``;
 - ``alias_seed.json``: the ``Name Aliases`` sheet.
 
@@ -272,7 +273,8 @@ def extract_players(values: Workbook, formulas: Workbook) -> tuple[list[dict[str
                     for cat, (col, _src, _div) in CATEGORIES.items()
                 },
                 "ttltst": ttltst,
-                "percentile": pct_by_score[ttltst],
+                # Unrated rows (TTLTST 0) have no rating to compare; see SPEC §5.
+                "percentile": pct_by_score[ttltst] if ttltst > 0 else None,
                 "aav": None if aav == NA else integer(aav, f"S{row}"),
             }
         )

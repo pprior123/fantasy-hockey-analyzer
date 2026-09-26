@@ -63,9 +63,24 @@ def test_report_table(tmp_path: Path) -> None:
     assert "max GP (80)" in text
 
 
-def test_rank_shift_counts_moves_and_top_overlap() -> None:
+def test_rank_shift_of_identical_results_is_zero() -> None:
     wb = dr.rate(POOL, dr.WORKBOOK)
     assert dr.rank_shift(wb, wb, top=2) == (0.0, 2)
+
+
+def result_in_order(order: list[str]) -> dr.RatingResult:
+    # One category; descending G totals set the order.
+    base = dict.fromkeys(SKATER_CATEGORIES, 0.0)
+    pool = [
+        PlayerSeason(pid, pid, 82, base | {Category.G: 10.0 - i}) for i, pid in enumerate(order)
+    ]
+    return dr.rate(pool, EngineConfig(categories=(Category.G,)))
+
+
+def test_rank_shift_counts_moves_and_top_overlap() -> None:
+    # a,b,c,d -> c,a,b,d: moves 1+1+2+0 = 4 over 4 players; top 2 {a,b} vs {c,a}.
+    before, after = result_in_order(["a", "b", "c", "d"]), result_in_order(["c", "a", "b", "d"])
+    assert dr.rank_shift(before, after, top=2) == (1.0, 1)
 
 
 def test_main_prints_the_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

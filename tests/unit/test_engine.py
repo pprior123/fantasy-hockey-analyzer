@@ -114,6 +114,25 @@ def test_config_rejects_bad_values(kwargs: dict[str, object], message: str) -> N
         EngineConfig(**kwargs)  # type: ignore[arg-type]
 
 
+def test_config_coerces_strings_from_json_or_env() -> None:
+    config = EngineConfig(categories=("G", "A"), divisor_method="top_per82")  # type: ignore[arg-type]
+    assert config.divisor_method is DivisorMethod.TOP_PER82
+    assert config.categories == (G, A)
+    assert all(type(c) is Category for c in config.categories)
+    players = [sk("a", 80, {G: 20}), sk("b", 60, {G: 30}), sk("c", 40, {G: 10})]
+    one = EngineConfig(categories=("G",), divisor_method="top_per82", divisor_top_n=2)  # type: ignore[arg-type]
+    assert compute_divisors(players, one) == {G: pytest.approx(30.75)}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [({"divisor_method": "bogus"}, "bogus"), ({"categories": ("G", "GAA")}, "GAA")],
+)
+def test_config_rejects_unknown_names(kwargs: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        EngineConfig(**kwargs)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("fraction", [0.0, 1.0])
 def test_config_accepts_fraction_bounds(fraction: float) -> None:
     assert EngineConfig(gp_floor_fraction=fraction).gp_floor_fraction == fraction

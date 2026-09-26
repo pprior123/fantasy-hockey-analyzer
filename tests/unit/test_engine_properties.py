@@ -19,7 +19,9 @@ from fha.domain.engine import (
 )
 from fha.domain.models import SKATER_CATEGORIES, PlayerSeason
 
-TOTALS = st.integers(min_value=0, max_value=400).map(float)
+# Small value sets mixed in so ties and GP exactly on the floor come up often.
+TOTALS = st.one_of(st.sampled_from([0.0, 1.0, 2.0]), st.integers(0, 400).map(float))
+GPS = st.one_of(st.sampled_from([0, 1, 2, 4, 50, 82]), st.integers(0, 82))
 METHODS = st.sampled_from(list(DivisorMethod))
 CONFIGS = st.builds(
     EngineConfig,
@@ -43,15 +45,16 @@ def player(pid: str, gp: int, totals: Sequence[float], goalie: bool) -> PlayerSe
 @st.composite
 def pools(draw: st.DrawFn, goalies: bool = False, max_size: int = 25) -> list[PlayerSeason]:
     size = draw(st.integers(min_value=0, max_value=max_size))
-    return [
-        player(
-            f"{'g' if goalies else 'p'}{i}",
-            draw(st.integers(min_value=0, max_value=82)),
-            draw(st.lists(TOTALS, min_size=7, max_size=7)),
-            goalies,
-        )
+    prefix = "g" if goalies else "p"
+    pool = [
+        player(f"{prefix}{i}", draw(GPS), draw(st.lists(TOTALS, min_size=7, max_size=7)), goalies)
         for i in range(size)
     ]
+    # Clones under new ids: exact ties in every category.
+    for i in draw(st.lists(st.integers(0, size - 1), max_size=3)) if size else []:
+        p = pool[i]
+        pool.append(player(f"{prefix}c{len(pool)}", p.gp, list(p.stats.values()), goalies))
+    return pool
 
 
 def snapshot(result: RatingResult, ids: Sequence[str] | None = None) -> dict[str, object]:
@@ -74,6 +77,25 @@ def test_zero_gp_and_below_floor_players_are_unrated(
             assert rating.ttltst is None
         else:
             assert rating.rated
+
+
+@given(pools(), st.integers(min_value=1, max_value=41), st.sampled_from([0.25, 0.5]))
+def test_gp_exactly_on_the_floor_is_unrated(
+    pool: list[PlayerSeason], half_max: int, fraction: float
+) -> None:
+    # Max GP 4 * half_max makes the floor a whole number for both fractions.
+    top_gp = 4 * half_max
+    on_floor = int(fraction * top_gp)
+    config = EngineConfig(gp_floor_fraction=fraction)
+    capped = [
+        PlayerSeason(p.player_id, p.name, min(p.gp, top_gp), p.stats, aav=p.aav) for p in pool
+    ]
+    extra = [player("max", top_gp, [1.0] * 7, False), player("on", on_floor, [9.0] * 7, False)]
+    extra.append(player("above", on_floor + 1, [9.0] * 7, False))
+    result = rate(capped + extra, config)
+    assert gp_floor(capped + extra, config) == on_floor
+    assert not result.ratings["on"].rated
+    assert result.ratings["above"].rated
 
 
 @given(pools(), CONFIGS, st.randoms(use_true_random=False))

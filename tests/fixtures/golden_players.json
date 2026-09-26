@@ -12308,7 +12308,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -13239,7 +13239,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": 775000
  },
  {
@@ -13847,7 +13847,7 @@
    "SOG": 2
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -13885,7 +13885,7 @@
    "SOG": 2
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -14284,7 +14284,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -14417,7 +14417,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -14493,7 +14493,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": 775000
  },
  {
@@ -14550,7 +14550,7 @@
    "SOG": 2
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -14664,7 +14664,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": 775000
  },
  {
@@ -15139,7 +15139,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15272,7 +15272,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15405,7 +15405,7 @@
    "SOG": 1
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15500,7 +15500,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15519,7 +15519,7 @@
    "SOG": 2
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15614,7 +15614,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -15652,7 +15652,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": 1250000
  },
  {
@@ -15766,7 +15766,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  },
  {
@@ -16051,7 +16051,7 @@
    "SOG": 0
   },
   "ttltst": 0,
-  "percentile": 2.0118343195266286,
+  "percentile": null,
   "aav": null
  }
 ]

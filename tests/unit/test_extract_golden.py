@@ -154,6 +154,10 @@ def test_extracts_players_divisors_and_aliases() -> None:
     assert golden.unrated_source_players == 0
 
 
+def test_unrated_players_have_no_percentile() -> None:
+    assert eg.extract(*build(ROWS)).players[4]["percentile"] is None
+
+
 def test_missing_cap_hit_is_null() -> None:
     assert eg.extract(*build(ROWS)).players[1]["aav"] is None
 

@@ -173,7 +173,10 @@ are live array formulas:
 mean of the top-20 totals over the mean of the top-20 GP (ranked
 independently). The `Y4` label "mean top ten" is wrong, like the row-2
 labels. Recomputing with that formula reproduces all seven divisors exactly
-(golden test 2). The report (`uv run python scripts/divisor_report.py`):
+(golden test 2). That test pins the stat half of the formula; the GP half
+can't be told apart on this data (28 players share the max of 73 GP, so any
+top-k up to 28 gives 73), so top-20 for GP is pinned by the extractor's
+formula check and the unit tests. The report (`uv run python scripts/divisor_report.py`):
 
 | Category | Workbook `W6:AC6` | Recomputed, workbook method (top 20) | Spec method (top-10 per-82) | Spec / workbook | Low-GP contributors: workbook / spec |
 |---|---:|---:|---:|---:|---:|

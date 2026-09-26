@@ -273,6 +273,20 @@ def test_a_unique_surname_in_the_roster_is_a_match() -> None:
     assert matched(result).player_id == "r5"
 
 
+@pytest.mark.parametrize(
+    ("row", "player"),
+    [
+        ("Pageau", "Jean-Gabriel Pageau"),
+        ("Dubois", "Pierre-Luc Dubois"),
+        ("Vlasic", "Marc-Edouard Vlasic"),
+    ],
+)
+def test_a_surname_matches_a_hyphenated_first_name(row: str, player: str) -> None:
+    roster = [*ROSTER, c("h1", player, "Nyi", "C")]
+    result = match(Query(row), roster, scope=Scope.ROSTER)
+    assert (matched(result).player_id, result.step) == ("h1", Step.SURNAME)
+
+
 def test_surname_only_is_not_a_match_in_the_whole_pool() -> None:
     result = match(Query("Andersen"), ROSTER, scope=Scope.POOL)
     assert result.status is not Status.MATCHED
@@ -284,6 +298,29 @@ def test_a_shared_surname_in_the_roster_is_broken_by_position_or_ambiguous() -> 
     either = match(Query("Hughes"), ROSTER, scope=Scope.ROSTER)
     assert either.status is Status.AMBIGUOUS
     assert {s.candidate.player_id for s in either.candidates} == {"r3", "r4"}
+
+
+def test_a_name_match_contradicted_by_team_and_position_is_only_a_candidate() -> None:
+    pool = [c("p1", "Jonathan Smith", "Tor", "D")]
+    result = match(Query("John Smith", "BOS", "C"), pool)
+    assert result.status is Status.REVIEW
+    assert result.candidates[0].candidate.player_id == "p1"
+
+
+@pytest.mark.parametrize(
+    ("team", "pos"),
+    [("BOS", "D"), ("TOR", "C"), (None, "C"), ("BOS", None)],
+)
+def test_one_contradiction_or_an_unknown_still_matches_by_name(
+    team: str | None, pos: str | None
+) -> None:
+    pool = [c("p1", "Jonathan Smith", "Tor", "D")]
+    assert matched(match(Query("John Smith", team, pos), pool)).player_id == "p1"
+
+
+def test_the_contradiction_guard_applies_to_surnames_in_the_roster() -> None:
+    result = match(Query("Andersen", "BOS", "C"), ROSTER, scope=Scope.ROSTER)
+    assert result.status is Status.REVIEW
 
 
 def test_a_full_name_never_matches_on_surname_alone() -> None:

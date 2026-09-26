@@ -96,9 +96,16 @@ def normalize_name(raw: str) -> str:
 
 
 def surname(raw: str) -> str:
-    """Everything after the first name ("di giuseppe"); a single word is the surname."""
-    words = normalize_name(raw).split(" ", 1)
-    return words[-1]
+    """Everything after the first name ("di giuseppe"); a single word is the surname.
+
+    Split on the raw name's whitespace before normalizing, so a hyphenated first
+    name stays one word ("Jean-Gabriel Pageau" -> "pageau").
+    """
+    last, comma, _ = raw.partition(",")
+    if comma:
+        return normalize_name(last)
+    words = raw.split(None, 1)
+    return normalize_name(words[-1]) if words else ""
 
 
 def name_keys(raw: str) -> set[str]:

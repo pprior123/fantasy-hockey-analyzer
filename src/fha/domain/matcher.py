@@ -11,7 +11,10 @@ players it may be are ``Candidate`` values. The cascade, first hit wins:
 5. fuzzy (rapidfuzz ``token_sort_ratio``): **never a match**, only
    candidates for the owner to confirm.
 
-Steps 1-2 need the row's team; an unknown team skips them. When a step finds
+Steps 1-2 need the row's team; an unknown team skips them. Steps 3-4 skip a
+player whose team *and* position group both contradict the row's (he is then
+only a fuzzy candidate): a silent, permanent binding must not rest on a name
+alone against that evidence. When a step finds
 several players, the row's position group (F / D / G) breaks the tie, the
 owner-approved extension of SPEC §6 (the two Sebastian Ahos). A tie it can't
 break is ``AMBIGUOUS``. Aliases apply first: a row whose name has an alias
@@ -182,9 +185,17 @@ def match(
                 lambda p: bool(keys & name_keys(p.name)) and canonical_team(p.team) == team,
             )
         )
-    steps.append((Step.NAME, lambda p: bool(keys & name_keys(p.name))))
+
+    def plausible(p: Candidate) -> bool:
+        """Not contradicted by both team and position group (steps 3-4 ignore the team,
+        so a same-name player on another team at another position is only a candidate)."""
+        other_team = team is not None and canonical_team(p.team) not in (None, team)
+        other_group = group is not None and position_group(p.position) not in (None, group)
+        return not (other_team and other_group)
+
+    steps.append((Step.NAME, lambda p: bool(keys & name_keys(p.name)) and plausible(p)))
     if scope is Scope.ROSTER:
-        steps.append((Step.SURNAME, lambda p: surname(p.name) in whole))
+        steps.append((Step.SURNAME, lambda p: surname(p.name) in whole and plausible(p)))
 
     for step, fits in steps:
         hits = sorted((p for p in candidates if fits(p)), key=_order)

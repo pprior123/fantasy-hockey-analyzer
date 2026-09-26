@@ -175,6 +175,12 @@ def test_a_name_without_a_nickname_is_its_own_key() -> None:
         ("Phillip Di Giuseppe", "di giuseppe"),
         ("Di Giuseppe, Phillip", "di giuseppe"),
         ("James van Riemsdyk", "van riemsdyk"),
+        ("Jean-Gabriel Pageau", "pageau"),  # a hyphenated first name is one word
+        ("Pageau, Jean-Gabriel", "pageau"),
+        ("Pierre-Luc Dubois", "dubois"),
+        ("Mats Zuccarello-Aasen", "zuccarello aasen"),
+        ("Frederik\u00a0Andersen", "andersen"),
+        ("  ", ""),
         ("", ""),
     ],
 )

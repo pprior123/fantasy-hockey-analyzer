@@ -24,10 +24,17 @@ from collections.abc import Callable, Mapping
 import httpx
 
 from fha.sources.yahoo import oauth, parse
-from fha.sources.yahoo.client import YahooClient, YahooError, make_http_client
+from fha.sources.yahoo.client import YahooClient, YahooError, YahooHTTPError, make_http_client
 from fha.sources.yahoo.oauth import YahooAuthError
 from fha.sources.yahoo.source import DEFAULT_LEAGUE_ID
 from scripts.yahoo_common import JsonFileTokenStore, SetupError, credentials_from_env
+
+FORBIDDEN_HINT = (
+    "The token works but Yahoo won't serve fantasy data to this app. At\n"
+    "https://developer.yahoo.com/apps/ check the app's API Permissions include\n"
+    "Fantasy Sports (Read); fix it (or create a new app with it and update .env),\n"
+    "then run this script again: the saved token predates the permission."
+)
 
 
 async def run(
@@ -57,6 +64,8 @@ async def run(
         settings = parse.parse_league_settings(await client.get(f"league/{league_key}/settings"))
     except (SetupError, YahooAuthError, YahooError, parse.YahooParseError) as e:
         print(f"\nFailed: {e}", file=sys.stderr)
+        if isinstance(e, YahooHTTPError) and e.status == httpx.codes.FORBIDDEN:
+            print(FORBIDDEN_HINT, file=sys.stderr)
         return 1
     print(
         f"Checked: league {settings.league_key}, season {settings.season}, "

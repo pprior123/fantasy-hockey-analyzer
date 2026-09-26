@@ -183,3 +183,27 @@ async def test_a_failing_league_check_is_reported(
     assert code == 1
     assert "no NHL game listed" in err
     assert await store.load() is not None  # consent itself succeeded
+
+
+async def test_a_403_points_at_the_app_permissions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Forbidden(Yahoo):
+        async def __call__(self, request: httpx.Request) -> httpx.Response:
+            if str(request.url) == oauth.TOKEN_URL:
+                return await super().__call__(request)
+            body = {"error": {"description": "This application is not authorized"}}
+            return httpx.Response(403, json=body)
+
+    code, _, err, store = await run(tmp_path, capsys, Forbidden())
+    assert code == 1
+    assert "HTTP 403" in err
+    assert "Fantasy Sports (Read)" in err
+    assert await store.load() is not None
+
+
+async def test_other_failures_carry_no_permissions_hint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, _, err, _ = await run(tmp_path, capsys, Yahoo(token_status=400))
+    assert "Fantasy Sports (Read)" not in err

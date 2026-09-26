@@ -103,6 +103,10 @@ def test_the_profile_uses_the_configured_categories() -> None:
     config = ProfileConfig(categories=(G, A))
     profile = team_profile([member(rated("a", 1.0, G=1.0, A=2.0))], config)
     assert set(profile.mean_norm) == {G, A}
+    assert profile.categories == (G, A)
+    empty = team_profile([], config)
+    assert empty.categories == (G, A)
+    assert compare(profile, empty, config) == Matchup({G: None, A: None}, frozenset())
 
 
 def test_a_rating_without_a_configured_category_is_an_error() -> None:
@@ -154,7 +158,7 @@ def test_an_empty_team_has_no_differences_and_nothing_trailing(empty_side: str) 
 def test_teams_profiled_on_other_categories_cant_be_compared() -> None:
     me = team_profile([member(rated("a", 1.0))], ProfileConfig(categories=(G,)))
     opp = team_profile([member(rated("b", 1.0))])
-    with pytest.raises(ValueError, match="profiled on different categories"):
+    with pytest.raises(ValueError, match=r"^the teams were profiled on different categories$"):
         compare(me, opp)
 
 

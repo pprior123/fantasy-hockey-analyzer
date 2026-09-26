@@ -89,24 +89,25 @@ def test_swap_is_undefined_when_a_needed_amount_is_unknown(
     assert swap_ok(room, drop, add) is None
 
 
-@pytest.mark.parametrize("value", [-1, True])
-def test_amounts_must_be_whole_non_negative_dollars(value: int) -> None:
-    with pytest.raises(ValueError, match="aav"):
-        fits(value, 5)
-    with pytest.raises(ValueError, match="aav"):
-        room_after(5, None, value)
-    with pytest.raises(ValueError, match="aav"):
-        CapHit(value, counted=True)
-    with pytest.raises(ValueError, match="cap"):
-        cap_room(value, 5)
-    with pytest.raises(ValueError, match="payroll"):
-        cap_room(5, value)
+@pytest.mark.parametrize(
+    ("value", "problem"), [(-1, "must be >= 0, got -1"), (True, "must be whole dollars, got True")]
+)
+def test_amounts_must_be_whole_non_negative_dollars(value: int, problem: str) -> None:
+    for call, what in (
+        (lambda: fits(value, 5), "aav"),
+        (lambda: room_after(5, None, value), "aav"),
+        (lambda: CapHit(value, counted=True), "aav"),
+        (lambda: cap_room(value, 5), "cap"),
+        (lambda: cap_room(5, value), "payroll"),
+    ):
+        with pytest.raises(ValueError, match=f"^{what} {problem}$"):
+            call()
 
 
 def test_room_rejects_a_bool() -> None:
-    with pytest.raises(ValueError, match="room must be whole dollars"):
+    with pytest.raises(ValueError, match=r"^room must be whole dollars, got True$"):
         fits(1, True)
-    with pytest.raises(ValueError, match="room must be whole dollars"):
+    with pytest.raises(ValueError, match=r"^room must be whole dollars, got True$"):
         room_after(True, None, 1)
 
 

@@ -1,0 +1,345 @@
+# Fantasy Hockey Roster Analyzer — Specification
+
+Status: Phase 1 spec, ready for build. Supersedes the original planning draft
+(`nhl-fantasy-app-plan.md`, see git history).
+
+## 1. Product
+
+A private, single-user web app for managing one Yahoo NHL fantasy team.
+It replaces an Excel workbook whose core value is a custom player rating,
+**TTLTST**, shown next to each player's salary (AAV).
+
+- **User:** one person (the owner). No accounts, no sharing.
+- **League:** Yahoo NHL league ID `8076`. 8 managers. Head-to-head categories.
+  Daily lineups. Max 5 acquisitions per week. Keeper league (count TBC, ~8).
+- **Scoring categories (10):** G, A, PPP, PIM, HIT, SOG, BLK, W, GAA, SV%.
+- **Roster:** 3 C, 3 LW, 3 RW, 6 D, 1 G, 9 BN, 3 IR+.
+- **Primary device:** phone browser, installable to home screen (PWA).
+- **Access:** Yahoo Fantasy Sports API, **read-only** (approved; app created).
+
+### Phase 1 goal
+
+Parity with the spreadsheet: one mobile-friendly view of every player with
+salary, TTLTST, percentile, and value, filterable by owner. When Phase 1 ships,
+the owner stops opening Excel.
+
+### Explicitly out of scope for Phase 1
+
+Write access to Yahoo (roster moves), goalie rating model, projections,
+rest-of-season or schedule weighting, historical snapshots, waiver-target and
+trade-evaluator screens, multi-user support. Do not build these. Phase 2 and 3
+are listed in §10 for context only.
+
+## 2. Architecture
+
+```
+Phone browser ──HTTPS──▶ Vercel (Python serverless, FastAPI)
+                              │
+                              ├──▶ Yahoo Fantasy Sports API (OAuth 2.0, read-only)
+                              └──▶ Firestore (server-only, service account)
+```
+
+- **Runtime:** Python 3.12, FastAPI, deployed to Vercel Hobby (free,
+  non-commercial). Nothing runs until a request arrives.
+- **UI:** server-rendered Jinja2 templates + HTMX. Mobile-first CSS. No JS
+  build step, no SPA framework.
+- **Storage:** Firestore (Spark free plan). Accessed **only** from the server
+  using a service account. Firestore security rules deny all client access.
+- **Refresh model:** no background jobs. On request, if cached stats are older
+  than the TTL (default 30 min), refresh from Yahoo, recompute, serve. A
+  manual Refresh button forces it.
+- **Why not browser-only:** Yahoo's API does not permit browser (CORS) calls,
+  and the OAuth client secret cannot ship to a browser.
+
+### Serverless constraints (design for these from day one)
+
+- Short function time limits. A full refresh is ~20–35 Yahoo calls; they must
+  run **concurrently** (async `httpx`, bounded concurrency, e.g. 8), never
+  sequentially. Target: full refresh under 8 seconds.
+- Ephemeral filesystem. No token files, no SQLite, no local caches in
+  production. All persistent state lives in Firestore.
+- Cold starts. Keep imports light; avoid heavy dependencies (no pandas in the
+  request path).
+
+## 3. Layering and interfaces
+
+Keep the domain pure and the edges swappable. Suggested package layout:
+
+```
+src/fha/
+  domain/      # pure: models, metric engine, name matcher. No I/O.
+  sources/     # YahooSource, SalarySource (CSV) — external data in
+  storage/     # Repository protocol + InMemoryRepository + FirestoreRepository
+  services/    # orchestration: refresh, import, ranking
+  web/         # FastAPI app, routes, templates, auth
+scripts/       # one-off CLIs (yahoo_auth.py, extract_golden.py)
+tests/
+  unit/ integration/ fixtures/
+```
+
+Required seams (Protocols), each with an in-memory/fake implementation used in
+tests:
+
+- `YahooSource` — league settings, teams, rosters, player pool, season stats.
+- `SalarySource` — yields `(name, team, aav)` rows. Phase 1 impl: CSV.
+  (PuckPedia has a paid private API; a future impl may slot in here.)
+- `Repository` — players, stats cache + timestamp, salaries, name bindings,
+  aliases, Yahoo tokens, config.
+- `Clock` — injectable, so cache-TTL logic is testable.
+
+## 4. Data sources
+
+| Data | Source | Notes |
+|---|---|---|
+| Settings, teams, rosters | Yahoo API | read-only |
+| Player pool + ownership | Yahoo API | `status=T` (taken) + top available by rank, paged 25 |
+| Season stat totals | Yahoo API | **source of truth** for stats |
+| Salary (AAV) | CSV import | from PuckPedia export or the league's roster sheet |
+
+**League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
+`game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —
+it changes every season.
+
+**Player pool scope:** all rostered players (≈216) plus the top ~300 available
+players. Not every NHL player. The TTLTST divisors are computed over this pool
+(see §5).
+
+**Stat ID mapping:** Yahoo identifies stats by numeric IDs. Build the mapping
+from the league settings response, not a hardcoded table. This also resolves
+whether Yahoo exposes PPP directly (use it if so; otherwise PPG + PPA).
+
+### Yahoo client choice (M2 spike)
+
+`yfpy` and `yahoofantasy` both support NHL but default to token *files*, which
+don't work on Vercel. Spend ≤1 hour checking whether either accepts an
+externally supplied token and refresh callback. If yes, wrap it behind
+`YahooSource`. If not, write a thin `httpx` client (OAuth refresh + JSON
+format via `?format=json`). Record the decision in `docs/DECISIONS.md`.
+
+### OAuth consent (one-time, human-in-the-loop)
+
+Yahoo requires an HTTPS redirect URI; the app registers
+`https://localhost:8000`. `scripts/yahoo_auth.py`:
+
+1. Prints the Yahoo authorization URL.
+2. The owner opens it, clicks Allow. The browser redirects to
+   `https://localhost:8000/?code=...` — the page may fail to load; that's fine.
+3. The owner pastes the full redirected URL back into the script.
+4. The script exchanges the code, then stores the refresh token via the
+   `Repository` (Firestore in prod; a gitignored local file only in dev).
+
+Agents must not attempt this step. It requires the owner.
+
+## 5. Metric engine (must match the spreadsheet)
+
+Pure functions in `domain/`. Seven skater categories only:
+**G, A, PPP, PIM, HIT, SOG, BLK.** Goalies are excluded from TTLTST.
+
+```
+eligible(p)        = p.gp >= GP_FLOOR_FRACTION * max(gp over pool)   # default 0.02
+per82(cat, p)      = p.stat[cat] / p.gp * 82                           # eligible only
+divisor(cat)       = mean of the 10 highest per82(cat, ·) over eligible players
+norm(cat, p)       = per82(cat, p) / divisor(cat)
+TTLTST(p)          = arithmetic mean of norm over the 7 categories
+percentile(p)      = (1 - rank(p) / N) * 100      # rank 1 = highest TTLTST
+value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST == 0
+```
+
+Rules:
+
+- `PPP = PPG + PPA` unless Yahoo provides PPP directly.
+- Injured players keep their rate stats and stay ranked (owner's explicit call).
+- Divisors are **recomputed on every refresh**. (The workbook stores them as
+  static values, which drift stale — a known flaw we are fixing.)
+- Ties: document and test the tie-breaking rule for rank.
+- `GP_FLOOR_FRACTION`, the category list, and the top-N (10) are config, not
+  literals.
+
+### Golden reference: the owner's workbook
+
+`2025_2026_stats.xlsx` (not committed — see §8). Note: despite the filename it
+holds the 2024-25 season, used as the pre-season baseline. Known structure:
+
+- Sheet `Stats Data Source`: raw scraped stats, ~900 players.
+- Sheet `Fantasy Analysis`: per-player derived columns; category divisors in
+  `W6:AC6` (static values); TTLTST in column `AD`; ranking table `Table2`
+  (`AE:AL`) with percentile and `$/TTLTST`; owner's roster in `Table4`
+  (`AP2:BK26`); seven other managers' rosters in tables below it; manager
+  comparison `Table10` (`BP10:BZ21`).
+- Sheet `Salaries`: `TEAM, POS` / name / cap hit, ~830 rows.
+- Sheet `Name Aliases`: 57 hand-maintained name fixes.
+- Known label bug: row-2 header labels drift from what formulas pull (e.g.
+  column `Q` labelled `hits` pulls blocks from `Stats Data Source!AE`). Trust
+  the formulas, not the labels.
+
+`scripts/extract_golden.py` reads the workbook once with `openpyxl`
+(`data_only=True`) and writes committed JSON fixtures:
+
+- `tests/fixtures/golden_players.json` — per player: name, GP, the 7 raw
+  stats, workbook TTLTST, percentile, AAV.
+- `tests/fixtures/golden_divisors.json` — the `W6:AC6` values.
+- `tests/fixtures/alias_seed.json` — the 57 aliases.
+
+Golden tests:
+
+1. **Exact parity:** with divisors *injected* from `golden_divisors.json`,
+   the engine reproduces workbook TTLTST for every eligible player within
+   `1e-3`, and percentiles within `0.1`.
+2. **Divisor recompute:** with divisors *computed*, report any difference from
+   the workbook's static divisors. A mismatch is expected (stale statics) and
+   must be written to `docs/DECISIONS.md` with the numbers — not "fixed" by
+   hardcoding.
+
+## 6. Name matching (salary ↔ Yahoo player)
+
+Salary rows are matched to Yahoo `player_id` **once** and the binding
+persisted. Never re-match by name on every request.
+
+Cascade:
+
+1. Exact name + team.
+2. Normalized name + team (strip accents, lowercase, drop punctuation,
+   nickname table: Matt/Matthew, Mitch/Mitchell, Alex/Alexander, …).
+3. Normalized name only (if unique).
+4. Fuzzy (`rapidfuzz`, score ≥ 90) → **candidate only**, requires owner
+   confirmation on the review screen.
+
+Seed the alias table from `alias_seed.json`. Every seed alias is also a test
+case.
+
+Salary import is **idempotent**: re-importing the same CSV updates rows in
+place. A single-player AAV edit exists for mid-season contract changes.
+
+Salary convention: store the cap hit (AAV). Entry-level contracts with
+performance bonuses: store base cap hit in Phase 1, and keep a nullable
+`cap_hit_with_bonuses` field so the convention can change without a migration.
+
+## 7. Screens (Phase 1)
+
+All must be usable at 390 px width.
+
+1. **Players** — table: Name · Pos · Team · Owner · GP · TTLTST · Pctl · AAV ·
+   $/TTLTST. Tap a header to sort. Filter chips: All / My Team / Free Agents /
+   Taken; position; min GP. Tap a row to expand the 7-category norm breakdown.
+   Sticky header. Last-refreshed time and a Refresh button.
+2. **My Roster** — the owner's players with the same metrics, plus the team
+   category profile (mean norm per category, with standard deviation). Goalies
+   listed with raw W / GAA / SV% and Yahoo rank (no TTLTST).
+3. **Admin** — salary CSV import, match review (unmatched salary row vs. top
+   3 candidates, tap to bind), single-player AAV edit, force refresh, config.
+
+Footer on every page: "Fantasy data provided by Yahoo Fantasy" linking to
+Yahoo Fantasy (required attribution).
+
+### App authentication
+
+Single password from env var `APP_PASSWORD`, verified once, then a signed,
+HttpOnly, Secure session cookie (long-lived). No user table.
+
+## 8. Secrets and data hygiene
+
+- Secrets live in `.env` locally and in Vercel environment variables in
+  production: `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `APP_PASSWORD`,
+  `SESSION_SECRET`, `FIRESTORE_PROJECT_ID`, and
+  `FIRESTORE_SERVICE_ACCOUNT_JSON` (the key's JSON content, not a file path —
+  there is no persistent filesystem on Vercel).
+- **Never** commit, print, log, or echo secret values. Never read `.env` into
+  output. Tests never need real secrets.
+- The owner's workbook and any salary CSVs stay out of git (`private/`,
+  `*.xlsx`, `*.csv` are ignored). Only derived JSON fixtures are committed.
+- Firestore rules: deny all client reads and writes. Server uses the service
+  account.
+- The repository is public. Assume everything committed is world-readable.
+
+## 9. Testing (non-negotiable)
+
+- **Tooling:** `pytest`, `pytest-cov`, `pytest-asyncio`, `hypothesis`,
+  `respx` (httpx mocking), `mutmut`, `ruff`, `mypy --strict` on `src/`.
+- **CI:** GitHub Actions on every push and PR: ruff, mypy, pytest with
+  coverage. CI fails if any gate fails.
+- **Coverage gates:** ≥ 95% line and branch on `domain/`; ≥ 90% on
+  `sources/`, `storage/`, `services/`; ≥ 80% on `web/`. Enforce per package,
+  not one global number.
+- **No live network in tests.** Yahoo responses are recorded once, sanitized
+  (no tokens, no personal identifiers beyond league/team names), and committed
+  under `tests/fixtures/yahoo/`. A test that touches the network fails CI.
+- **Golden tests** per §5.
+- **Property tests** (`hypothesis`) for the engine: GP = 0 and below-floor
+  players are excluded without error; input order does not change output;
+  the top-10 players in a category have mean norm = 1 for that category;
+  TTLTST is invariant to scaling every player's stats by the same factor.
+- **Matcher tests:** every seed alias, plus accent, nickname, and
+  duplicate-name cases.
+- **Mutation testing:** `mutmut` on `domain/`; surviving mutants must be
+  killed or justified in the PR. This is the guard against tests that execute
+  code without asserting anything.
+- **Web tests:** FastAPI `TestClient` for every route, including auth
+  redirect, filters, and sort. Templates rendered and checked for key content.
+- **Test-first for the engine and matcher.** Write the failing test, then the
+  code.
+
+## 10. Milestones
+
+Each milestone ends with CI green and every acceptance criterion met. Do not
+start the next milestone until the current one is accepted.
+
+### M0 — Scaffolding
+- `uv` project, Python 3.12, `src/` layout, ruff, mypy, pytest config.
+- GitHub Actions CI running all gates (with a placeholder test).
+- `.gitignore` extended: `private/`, `*.xlsx`.
+- `docs/DECISIONS.md` created.
+- **Accept:** fresh clone → `uv sync && uv run pytest` passes; CI green.
+
+### M1 — Metric engine (no Yahoo)
+- `scripts/extract_golden.py` → the three fixtures in §5.
+- `domain/` models + engine per §5.
+- **Accept:** both golden tests pass (exact parity within tolerance;
+  divisor recompute reported in DECISIONS.md); property tests pass; `domain/`
+  coverage ≥ 95%; `mutmut` survivors resolved.
+
+### M2 — Yahoo source
+- Client spike + decision (§4). `YahooSource` implementation.
+- `scripts/yahoo_auth.py` consent flow (§4).
+- Game-key resolution, stat-ID mapping from league settings, rosters, player
+  pool, season stats. Concurrent fetch with bounded concurrency; token refresh
+  on 401.
+- Record + sanitize real responses into fixtures (owner runs the recording
+  once after consent).
+- **Accept:** all Yahoo tests pass offline from fixtures; a mocked full
+  refresh completes with calls issued concurrently (asserted); PPP question
+  answered in DECISIONS.md.
+
+### M3 — Storage and salaries
+- `Repository` protocol, `InMemoryRepository`, `FirestoreRepository`
+  (integration-tested against the Firestore emulator).
+- Salary CSV import (idempotent), matcher cascade (§6), alias seeding,
+  bindings persisted, single-player edit.
+- Refresh service with TTL and injectable `Clock`.
+- **Accept:** matcher tests incl. all seed aliases pass; re-import is a
+  no-op; TTL behaviour tested with a fake clock; coverage gates met.
+
+### M4 — Web UI
+- Players, My Roster, Admin screens (§7), password auth, attribution footer,
+  PWA manifest + icons.
+- **Accept:** route tests pass; manual check at 390 px width on the owner's
+  phone (owner signs off); all gates green.
+
+### M5 — Deploy
+- Vercel project, env vars, Firestore project with deny-all rules, service
+  account, production redirect URI added to the Yahoo app.
+- Run consent in production; first real refresh.
+- **Accept:** owner opens the app on their phone, logs in, sees their roster
+  with TTLTST and AAV; refresh completes within the time limit.
+
+### Later (context only — do not build)
+- **Phase 2:** waiver targets, trade evaluator, tonight's-games lineup helper
+  (NHL schedule API), weekly acquisition counter.
+- **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie
+  model, keeper-value view.
+
+## 11. Open questions
+
+1. Keeper count (owner believes 8) and whether keeper cost relates to AAV.
+2. Whether Yahoo exposes PPP directly — resolved in M2.
+3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
+   revisit only if the Repository implementation fights it.

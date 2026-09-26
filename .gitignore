@@ -14,8 +14,8 @@ oauth2.json
 *.db
 *.sqlite
 *.sqlite3
-data/
-cache/
+/data/
+/cache/
 
 # Salary imports (may contain league data)
 *.csv
@@ -34,3 +34,11 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Owner's private source data (never commit)
+private/
+*.xlsx
+*.xls
+
+# Template with placeholders only (safe to commit)
+!.env.example

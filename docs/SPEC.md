@@ -20,14 +20,22 @@ It replaces an Excel workbook whose core value is a custom player rating,
 ### Phase 1 goal
 
 Parity with the spreadsheet: one mobile-friendly view of every player with
-salary, TTLTST, percentile, and value, filterable by owner. When Phase 1 ships,
-the owner stops opening Excel.
+salary, TTLTST, percentile, and value, filterable by owner; every team's roster
+with its category profile; and a head-to-head matchup view. When Phase 1
+ships, the owner stops opening Excel.
+
+**Phase 1 ends with a deployed, running app the owner uses day to day.**
+Phase 2 is planned from that real use (bugs first, then features), not from
+this document.
 
 ### Explicitly out of scope for Phase 1
 
 Write access to Yahoo (roster moves), goalie rating model, projections,
-rest-of-season or schedule weighting, historical snapshots, waiver-target and
-trade-evaluator screens, multi-user support. Do not build these. Phase 2 and 3
+rest-of-season or schedule weighting (including games-this-week counts),
+historical snapshots, waiver *recommendation* features (drop suggestions,
+acquisition counter), trade evaluator, multi-user support. (The Matchup
+screen's free-agent shortcut in §7 is a filter and sort over existing data,
+not a recommender.) Do not build these. Phase 2 and 3
 are listed in §10 for context only.
 
 ## 2. Architecture
@@ -94,6 +102,8 @@ tests:
 | Settings, teams, rosters | Yahoo API | read-only |
 | Player pool + ownership | Yahoo API | `status=T` (taken) + top available by rank, paged 25 |
 | Season stat totals | Yahoo API | **source of truth** for stats |
+| Last season's stat totals | Yahoo API | pre-season / early-season baseline (§5) |
+| Weekly matchups | Yahoo API | league scoreboard, current and next week |
 | Salary (AAV) | CSV import | from PuckPedia export or the league's roster sheet |
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
@@ -155,10 +165,43 @@ Rules:
 - `GP_FLOOR_FRACTION`, the category list, and the top-N (10) are config, not
   literals.
 
+### Baseline season (pre-season and early season)
+
+Before opening night every current-season GP is 0, and for the first weeks
+per-82 rates are noise. So the engine runs over one season's pool at a time,
+never mixing seasons:
+
+- If the current season's max GP over the pool is below `BASELINE_MIN_GP`
+  (config, default 10), the default view uses **last season's totals**
+  (fetched from Yahoo for the same pool of players). Otherwise it uses the
+  current season.
+- A season toggle (This season / Last season) overrides the default.
+- The UI always labels which season's numbers are shown.
+
+### Team profiles and matchup comparison
+
+Pure functions in `domain/`, built on the per-player norms above:
+
+```
+team_profile(team, cat) = mean and std dev of norm(cat, p) over the team's
+                          rated skaters, excluding players in IR / IR+ slots
+team_ttltst(team)       = mean TTLTST over the same players
+matchup(me, opp, cat)   = team_profile(me, cat) - team_profile(opp, cat)
+trailing(cat)           = matchup(me, opp, cat) < MATCHUP_CLOSE_MARGIN
+                          # config, default 0.05: "behind or close"
+need_score(p)           = sum of norm(cat, p) over trailing categories
+```
+
+Goalies are shown with raw W / GAA / SV% only (no model; out of scope).
+These compare team *profiles* (rates), not projected weekly totals, which
+depend on games played that week (schedule weighting is out of scope). The
+UI says so.
+
 ### Golden reference: the owner's workbook
 
-`2025_2026_stats.xlsx` (not committed — see §8). Note: despite the filename it
-holds the 2024-25 season, used as the pre-season baseline. Known structure:
+`2025_2026_stats.xlsx` (not committed — see §8). It holds the **2025-26**
+season. The app targets **2026-27**, so 2025-26 is also "last season" for the
+baseline rule above. Known structure:
 
 - Sheet `Stats Data Source`: raw scraped stats, ~900 players.
 - Sheet `Fantasy Analysis`: per-player derived columns; category divisors in
@@ -218,14 +261,28 @@ performance bonuses: store base cap hit in Phase 1, and keep a nullable
 
 All must be usable at 390 px width.
 
+Common to the tables: a **Categories** toggle swaps the salary columns
+(AAV · $/TTLTST) for the 7 category norms, since all of them will not fit at
+390 px. A season label and toggle per §5.
+
 1. **Players** — table: Name · Pos · Team · Owner · GP · TTLTST · Pctl · AAV ·
    $/TTLTST. Tap a header to sort. Filter chips: All / My Team / Free Agents /
-   Taken; position; min GP. Tap a row to expand the 7-category norm breakdown.
-   Sticky header. Last-refreshed time and a Refresh button.
-2. **My Roster** — the owner's players with the same metrics, plus the team
-   category profile (mean norm per category, with standard deviation). Goalies
-   listed with raw W / GAA / SV% and Yahoo rank (no TTLTST).
-3. **Admin** — salary CSV import, match review (unmatched salary row vs. top
+   Taken, plus a team picker for any single team; position; min GP. Tap a row
+   to expand the 7-category norm breakdown. Sticky header. Last-refreshed time
+   and a Refresh button.
+2. **Rosters** — team picker (default: the owner's team). The team's players
+   with the same metrics, plus the team profile (§5: mean norm per category
+   with standard deviation, and mean TTLTST). Goalies listed with raw
+   W / GAA / SV% and Yahoo rank (no TTLTST).
+3. **League** — one row per team: mean norm per category and mean TTLTST
+   (replaces the workbook's manager comparison, `Table10`). Tap a team to
+   open it in Rosters.
+4. **Matchup** — the owner's opponent for the current week and next week
+   (week switch). Side-by-side team profiles per category with the
+   difference; trailing categories (§5) highlighted. Goalies raw. A "Free
+   agents who help here" link opens Players filtered to free agents and
+   sorted by `need_score`.
+5. **Admin** — salary CSV import, match review (unmatched salary row vs. top
    3 candidates, tap to bind), single-player AAV edit, force refresh, config.
 
 Footer on every page: "Fantasy data provided by Yahoo Fantasy" linking to
@@ -300,18 +357,22 @@ start the next milestone until the current one is accepted.
 ### M2 — Yahoo source
 - Client spike + decision (§4). `YahooSource` implementation.
 - `scripts/yahoo_auth.py` consent flow (§4).
-- Game-key resolution, stat-ID mapping from league settings, rosters, player
-  pool, season stats. Concurrent fetch with bounded concurrency; token refresh
+- Game-key resolution, stat-ID mapping from league settings, rosters (with
+  slot, so IR / IR+ is known), player pool, current- and last-season stats,
+  league scoreboard for the current and next week. Concurrent fetch with bounded concurrency; token refresh
   on 401.
 - Record + sanitize real responses into fixtures (owner runs the recording
   once after consent).
 - **Accept:** all Yahoo tests pass offline from fixtures; a mocked full
   refresh completes with calls issued concurrently (asserted); PPP question
-  answered in DECISIONS.md.
+  answered in DECISIONS.md; last-season stats and next week's opponent are
+  retrieved from fixtures.
 
 ### M3 — Storage and salaries
 - `Repository` protocol, `InMemoryRepository`, `FirestoreRepository`
-  (integration-tested against the Firestore emulator).
+  (integration-tested against the Firestore emulator), and a dev-only
+  `LocalJsonRepository` (gitignored file) so the app can run locally against
+  real data before any cloud setup. Never used in production.
 - Salary CSV import (idempotent), matcher cascade (§6), alias seeding,
   bindings persisted, single-player edit.
 - Refresh service with TTL and injectable `Clock`.
@@ -319,21 +380,26 @@ start the next milestone until the current one is accepted.
   no-op; TTL behaviour tested with a fake clock; coverage gates met.
 
 ### M4 — Web UI
-- Players, My Roster, Admin screens (§7), password auth, attribution footer,
-  PWA manifest + icons.
-- **Accept:** route tests pass; manual check at 390 px width on the owner's
-  phone (owner signs off); all gates green.
+- Players, Rosters, League, Matchup, Admin screens (§7), Categories and
+  season toggles, password auth, attribution footer, PWA manifest + icons.
+- Team profile, matchup and `need_score` functions in `domain/` (test-first).
+- **Accept:** route tests pass; the owner runs the app **locally against real
+  Yahoo data** (`LocalJsonRepository`), on laptop and on their phone over the
+  local network at 390 px, and signs off; all gates green.
 
 ### M5 — Deploy
 - Vercel project, env vars, Firestore project with deny-all rules, service
   account, production redirect URI added to the Yahoo app.
 - Run consent in production; first real refresh.
 - **Accept:** owner opens the app on their phone, logs in, sees their roster
-  with TTLTST and AAV; refresh completes within the time limit.
+  with TTLTST and AAV and next week's matchup; refresh completes within the
+  time limit. **This is the Phase 1 target: a running app.**
 
 ### Later (context only — do not build)
-- **Phase 2:** waiver targets, trade evaluator, tonight's-games lineup helper
-  (NHL schedule API), weekly acquisition counter.
+- **Phase 2:** to be planned from the owner's use of the running Phase 1 app.
+  Candidates so far: waiver recommendations (drop suggestions), trade
+  evaluator, tonight's-games lineup helper and games-this-week counts (NHL
+  schedule API), weekly acquisition counter.
 - **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie
   model, keeper-value view.
 
@@ -343,3 +409,6 @@ start the next milestone until the current one is accepted.
 2. Whether Yahoo exposes PPP directly — resolved in M2.
 3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
    revisit only if the Repository implementation fights it.
+4. PuckPedia CSV export columns — owner to supply the header row before M3.
+5. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
+   in team profiles (default: no) — revisit after the owner tries the app.

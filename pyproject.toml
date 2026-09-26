@@ -5,6 +5,7 @@ description = "Private roster analyzer for one Yahoo NHL fantasy team (TTLTST ra
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "google-auth>=2.58.1",
     "httpx>=0.28.1",
 ]
 

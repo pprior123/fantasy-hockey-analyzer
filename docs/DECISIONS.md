@@ -326,8 +326,14 @@ pages if the probe shows league-scoped stats carry GP, or raise concurrency.
 
 Assumptions the recording confirms or corrects: that `;season=` returns
 last season's totals for current player keys (the parser refuses stats
-labelled with another season), that the game-level stat list includes a
-skater "GP", and how long a whole-league refresh takes.
+labelled with another season, or with no season label), that the game-level
+stat list includes a skater "GP", and how long a whole-league refresh takes.
+Also to check against the real responses (review round 2): whether Yahoo
+returns a last-season line for players with no NHL games last season
+(rookies); if it leaves them out, the "pool player missing from the stats"
+rule fails every refresh and must become "no line = no games" for last
+season only; and whether a whole-league refresh sees 999 (rate limit) or
+5xx answers, which currently fail the refresh (no retry).
 
 ## 2026-09-26 — Yahoo API access: pending approval (M2 blocker)
 Consent and token exchange work, but every Fantasy API endpoint, public ones
@@ -344,8 +350,12 @@ provisioned. SPEC §1 said "approved"; corrected. Yahoo's only reply was an
 automated acknowledgement on 2026-09-01 ("review typically takes 1-2 weeks"),
 sent to the email on the application, from a no-reply address. Yahoo lists
 no other contact. On 2026-09-26 the owner submitted the confirmation page
-(sports.yahoo.com/developer/application-confirmation/) with the application's
-email, App ID `OQP5c1XE` and its Client ID in the notes. Next: run
+(sports.yahoo.com/developer/application-confirmation/) with App ID
+`OQP5c1XE` and its Client ID in the notes, but from a different email address
+than the application's. The owner checked the Client ID and App ID against
+the developer site (both match) and resubmitted the confirmation the same day
+from the application's email (the address Yahoo's acknowledgement went to),
+noting the earlier mix-up. Next: run
 `scripts/yahoo_diagnose.py` periodically; a 200 means access is on and the
 owner runs `scripts/record_yahoo.py`. If nothing happens in a week or two,
 re-apply at sports.yahoo.com/developer/access with the Client ID filled in. Until then M2's real recording, the PPP answer from real data and

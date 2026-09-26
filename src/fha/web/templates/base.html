@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}{{ title or "Fantasy Hockey" }}{% endblock %} · FHA</title>
+  <meta name="theme-color" content="#0b3d91">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FHA">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% if active is defined %}
+  <nav class="topnav" aria-label="Main">
+    {% for key, label in nav %}
+    <a href="/{{ key }}" class="{{ 'on' if key == active else '' }}"{% if key == active %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+  <header class="pagehead">
+    <h1>{{ title }}</h1>
+    <div class="meta">
+      {% block meta %}
+      {% if season_label %}<span class="season">{{ season_label }}</span>{% endif %}
+      {% if refreshed_at %}<span class="refreshed">Updated {{ refreshed_at }}</span>{% endif %}
+      {% endblock %}
+    </div>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <a href="https://sports.yahoo.com/fantasy/" rel="noopener">Fantasy data provided by Yahoo Fantasy</a>
+    {% if active is defined %}
+    <form method="post" action="/logout" class="logout"><button type="submit" class="linkish">Log out</button></form>
+    {% endif %}
+  </footer>
+</body>
+</html>

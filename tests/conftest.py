@@ -4,6 +4,7 @@ from contextlib import AbstractContextManager, nullcontext
 
 import pytest
 
+from fha.domain.matcher import clear_caches
 from tests.network_policy import (
     BLOCKED,
     block,
@@ -88,6 +89,13 @@ def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
         result = yield
     _fail_if_blocked(start, "teardown")
     return result
+
+
+@pytest.fixture(autouse=True)
+def fresh_name_caches() -> None:
+    # The matcher memoizes name functions; a cache shared across tests could hide
+    # a mutant (mutmut) or couple tests.
+    clear_caches()
 
 
 @pytest.fixture(autouse=True)

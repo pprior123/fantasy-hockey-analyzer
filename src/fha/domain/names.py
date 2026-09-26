@@ -85,7 +85,7 @@ def _fold(text: str) -> str:
 
 
 def normalize_name(raw: str) -> str:
-    """Lowercase words without accents or punctuation, "Last, First" as "first last"."""
+    """Casefolded words without accents or punctuation, "Last, First" as "first last"."""
     last, comma, first = raw.partition(",")
     text = f"{first} {last}" if comma else raw
     # One pass can expose more work (Ǣ -> ǣ -> æ -> ae); two always settle, checked

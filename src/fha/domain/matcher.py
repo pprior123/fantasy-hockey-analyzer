@@ -23,17 +23,36 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 
 from rapidfuzz import fuzz
 
-from fha.domain.names import (
-    PositionGroup,
-    canonical_team,
-    name_keys,
-    normalize_name,
-    position_group,
-    surname,
-)
+from fha.domain import names
+from fha.domain.names import PositionGroup
+
+# Memoized views of the name functions: a pool import compares every row with
+# every player (~1,700), so without these the same few thousand names are
+# normalized millions of times (8 s for 800 rows; DECISIONS, M3 matcher).
+CACHE_SIZE = 1 << 14
+
+
+def _frozen_keys(raw: str) -> frozenset[str]:
+    return frozenset(names.name_keys(raw))
+
+
+name_keys = lru_cache(maxsize=CACHE_SIZE)(_frozen_keys)
+normalize_name = lru_cache(maxsize=CACHE_SIZE)(names.normalize_name)
+canonical_team = lru_cache(maxsize=CACHE_SIZE)(names.canonical_team)
+position_group = lru_cache(maxsize=CACHE_SIZE)(names.position_group)
+surname = lru_cache(maxsize=CACHE_SIZE)(names.surname)
+_CACHED = (name_keys, normalize_name, canonical_team, position_group, surname)
+
+
+def clear_caches() -> None:
+    """Forget memoized names (tests clear them, so no test sees another's results)."""
+    for cached in _CACHED:
+        cached.cache_clear()
+
 
 POOL_FUZZY = 90.0  # SPEC §6: a fuzzy candidate needs at least this score
 ROSTER_FUZZY = 75.0  # among ~27 roster players a lower bar still suggests the right one
@@ -204,7 +223,7 @@ def _score(names: Iterable[str], p: Candidate, scope: Scope) -> float:
     """
     theirs = name_keys(p.name)
     if scope is Scope.ROSTER:
-        theirs.add(surname(p.name))
+        theirs = theirs | {surname(p.name)}
     return max(
         (
             fuzz.token_sort_ratio(mine, other)

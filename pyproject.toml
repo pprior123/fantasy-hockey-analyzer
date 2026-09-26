@@ -107,6 +107,7 @@ source_paths = ["src/fha/domain/"]
 also_copy = [
   "src/fha/__init__.py",
   "src/fha/py.typed",
+  "src/fha/data/",
   "src/fha/sources/",
   "src/fha/storage/",
   "src/fha/services/",

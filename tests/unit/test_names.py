@@ -76,11 +76,19 @@ def test_last_first_and_first_last_normalize_alike(first: str, last: str) -> Non
 
 
 @given(st.text())
-def test_normalized_names_are_plain_lowercase_words(raw: str) -> None:
+def test_normalized_names_are_plain_casefolded_words(raw: str) -> None:
     normalized = normalize_name(raw)
     assert normalized == " ".join(normalized.split())
     assert all(ch.isalnum() or ch == " " for ch in normalized)
-    assert normalized == normalized.lower()
+    # Casefolded, not lowercased: casefold() maps lowercase Cherokee to uppercase.
+    assert normalized == normalized.casefold()
+    assert normalize_name(normalized) == normalized
+    if raw.isascii():
+        assert normalize_name(raw.upper()) == normalize_name(raw.lower()) == normalized
+
+
+def test_cherokee_casefolds_to_uppercase() -> None:
+    assert normalize_name("\uab70") == normalize_name("\u13a0") == "\u13a0"
 
 
 # ---------------------------------------------------------------- name_keys (nicknames)

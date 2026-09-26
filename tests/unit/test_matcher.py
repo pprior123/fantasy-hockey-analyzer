@@ -17,6 +17,7 @@ from fha.domain.matcher import (
     MatchResult,
     Query,
     Scope,
+    Scored,
     Status,
     Step,
     match,
@@ -154,6 +155,18 @@ def test_fuzzy_ties_prefer_the_rows_position_group() -> None:
     assert [s.candidate for s in result.candidates[:2]] == [AHO_D, AHO_C]
     result = match(Query("Sebastian Ahoo", None, "C"), POOL)
     assert [s.candidate for s in result.candidates[:2]] == [AHO_C, AHO_D]
+
+
+@pytest.mark.parametrize("scope", list(Scope))
+def test_a_blank_name_scores_zero_against_everyone(scope: Scope) -> None:
+    result = match(Query("  "), POOL[:2], scope=scope)
+    assert result.status is Status.UNMATCHED
+    assert [s.score for s in result.candidates] == [0.0, 0.0]
+
+
+def test_a_nameless_candidate_scores_zero() -> None:
+    result = match(Query("Connor McDavid"), [c("x", "")])
+    assert result.candidates == (Scored(c("x", ""), 0.0),)
 
 
 def test_an_empty_pool_is_unmatched_with_no_candidates() -> None:

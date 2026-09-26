@@ -205,6 +205,7 @@ def test_from_mapping_blank_top_n_means_the_methods_default(unset: object) -> No
         ({"categories": "G,,A"}, "^categories: empty name in 'G,,A'$"),
         ({"categories": 7}, "^categories must be names or a comma-separated string, got 7$"),
         ({"divisor_count": 20}, "^unknown rating settings: divisor_count$"),
+        ({"zeta": 1, "alpha": 2}, "^unknown rating settings: alpha, zeta$"),
     ],
 )
 def test_from_mapping_rejects_bad_settings(stored: dict[str, object], message: str) -> None:

@@ -3,9 +3,11 @@
 One ``spreadsheets.get`` request with ``includeGridData``, masked to tab titles
 and each cell's entered value (which holds the formula) and computed value.
 So formulas and values come together in a single request. The service
-account's token comes from an injected callable. The spreadsheet ID is private
-(SPEC §8), so it never appears in an error, and an httpx error, whose message
-could carry the URL, is replaced rather than chained.
+account's token comes from an injected callable; if Google refuses it (a
+revoked key, ``invalid_grant``) that is a ``LeagueSheetError`` like any other
+failed read. The spreadsheet ID is private (SPEC §8), so it never appears in
+an error, and an httpx error, whose message could carry the URL, is replaced
+rather than chained.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from fha.sources.google_auth import GoogleAuthError
 from fha.sources.league_sheet.grid import Cell, Grid, Tab, Value, a1
 from fha.sources.league_sheet.models import LeagueSheetError
 
@@ -29,7 +32,11 @@ TokenProvider = Callable[[], Awaitable[str]]
 
 
 async def read_sheets_api(http: httpx.AsyncClient, sheet_id: str, token: TokenProvider) -> Grid:
-    headers = {"Authorization": f"Bearer {await token()}"}
+    try:
+        bearer = await token()
+    except GoogleAuthError as e:  # its message never carries the key or a token
+        raise LeagueSheetError(f"service-account auth failed: {e}") from None
+    headers = {"Authorization": f"Bearer {bearer}"}
     params = {"includeGridData": "true", "fields": FIELDS}
     try:
         response = await http.get(API + sheet_id, params=params, headers=headers)

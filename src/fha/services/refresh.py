@@ -7,7 +7,8 @@ it on every view, so a settings change needs no refresh.
 
 If Yahoo fails and a cached snapshot exists, the stale snapshot is served
 with the error attached (the app stays usable during a Yahoo outage);
-without a cache the error propagates.
+without a cache a ``RefreshError`` is raised, whatever the source raised
+(a Yahoo HTTP error, a transport timeout, a parse error).
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ async def save_cached(repo: Repository, cached: Cached) -> None:
 
 
 class RefreshError(Exception):
-    """A refresh failed recently and there is no cached snapshot to serve."""
+    """A refresh failed (now, or recently) and there is no cached snapshot to serve."""
 
 
 class RefreshService:
@@ -111,27 +112,25 @@ class RefreshService:
         """
         cached = await self._stored()
         if cached is not None and not force and self.is_fresh(cached):
-            return cached
+            return self._with_recent_failure(cached)
         async with self._lock:
             # Another request may have refreshed while this one waited.
             latest = await self._stored()
             seen = None if cached is None else cached.fetched_at
             if latest is not None and latest.fetched_at != seen and self.is_fresh(latest):
                 return latest
-            if self._failure is not None:
-                failed_at, reason = self._failure
-                ago = self._clock.now() - failed_at
-                if 0 <= ago < self._retry_after:
-                    note = f"{reason} ({ago:.0f} s ago; retrying after {self._retry_after:.0f} s)"
-                    if latest is None:
-                        raise RefreshError(f"refresh failed: {note}")
-                    return replace(latest, refresh_error=note)
+            failure = self._recent_failure()
+            if failure is not None:
+                _, note = failure
+                if latest is None:
+                    raise RefreshError(f"refresh failed: {note}")
+                return replace(latest, refresh_error=note)
             try:
                 snapshot = await self._source.fetch_snapshot()
             except Exception as error:
                 self._failure = (self._clock.now(), f"{type(error).__name__}: {error}")
                 if latest is None:
-                    raise
+                    raise RefreshError(f"refresh failed: {self._failure[1]}") from error
                 return replace(latest, refresh_error=self._failure[1])
             self._failure = None
             fresh = Cached(snapshot, self._clock.now())
@@ -144,6 +143,28 @@ class RefreshService:
                 # tries the save again.
                 self._memory = replace(fresh, refresh_error=f"not saved: {error}")
             return self._memory
+
+    def _recent_failure(self) -> tuple[float, str] | None:
+        """(when, note) of the last failure while within ``retry_after_seconds`` of it."""
+        if self._failure is None:
+            return None
+        failed_at, reason = self._failure
+        ago = self._clock.now() - failed_at
+        if not 0 <= ago < self._retry_after:
+            return None
+        return failed_at, f"{reason} ({ago:.0f} s ago; retrying after {self._retry_after:.0f} s)"
+
+    def _with_recent_failure(self, cached: Cached) -> Cached:
+        """A fresh snapshot, with the note of a refresh that failed after it was fetched
+        (the Refresh button's forced attempt): so the page after a failed Refresh says
+        so, instead of looking like a success."""
+        failure = self._recent_failure()
+        if failure is None or cached.refresh_error is not None:
+            return cached
+        failed_at, note = failure
+        if failed_at < cached.fetched_at:
+            return cached  # a newer fetch (another instance's) succeeded since
+        return replace(cached, refresh_error=note)
 
     async def _stored(self) -> Cached | None:
         """The newest snapshot: from memory unless the store holds a newer fetch, so a

@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
+import httpx
 import pytest
 
 from fha.services.refresh import (
@@ -123,8 +124,57 @@ async def test_a_failed_refresh_serves_the_stale_cache_with_the_error(
 
 
 async def test_a_failed_refresh_without_a_cache_raises() -> None:
-    with pytest.raises(YahooHTTPError):
+    with pytest.raises(RefreshError, match=r"refresh failed: YahooHTTPError: .*503") as info:
         await service(FailingSource(), InMemoryRepository(), FakeClock()).current()
+    assert isinstance(info.value.__cause__, YahooHTTPError)
+
+
+async def test_a_transport_error_without_a_cache_is_a_refresh_error_too() -> None:
+    """Not only Yahoo's own errors: a timeout (or anything else the source raises)
+    becomes a RefreshError, which the screens show as "no Yahoo data" (M4R1A-1)."""
+
+    class TimingOut:
+        async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+            raise httpx.ConnectTimeout("timed out")
+
+    with pytest.raises(RefreshError, match="refresh failed: ConnectTimeout: timed out") as info:
+        await service(TimingOut(), InMemoryRepository(), FakeClock()).current()
+    assert isinstance(info.value.__cause__, httpx.ConnectTimeout)
+
+
+async def test_a_failed_forced_refresh_is_noted_on_the_fresh_snapshot(
+    snap: LeagueSnapshot,
+) -> None:
+    """The Refresh button fails while the cache is still fresh: the next (unforced)
+    request serves the cache with the failure noted, until the retry window ends
+    (M4R1B-2). Without it the page after a failed Refresh looks like a success."""
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 600)
+    await save_cached(repo, Cached(snap, T0))
+    source = FailingSource()
+    refresh = service(source, repo, clock)
+    assert (await refresh.current()).refresh_error is None  # fresh: Yahoo isn't asked
+    forced = await refresh.current(force=True)
+    assert forced.refresh_error is not None
+    assert forced.refresh_error.startswith("YahooHTTPError")
+    clock.t += 5
+    after = await refresh.current()
+    assert (after.fetched_at, source.calls) == (T0, 1)
+    assert after.refresh_error == f"{forced.refresh_error} (5 s ago; retrying after 60 s)"
+    clock.t += 55  # the window has passed: the fresh cache is served plainly again
+    assert (await refresh.current()).refresh_error is None
+    assert source.calls == 1
+
+
+async def test_a_newer_fetch_elsewhere_clears_the_failure_note(snap: LeagueSnapshot) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 600)
+    await save_cached(repo, Cached(snap, T0))
+    refresh = service(FailingSource(), repo, clock)
+    await refresh.current(force=True)
+    clock.t += 5
+    await save_cached(repo, Cached(snap, clock.t))  # another instance refreshed after it
+    clock.t += 1
+    got = await refresh.current()
+    assert (got.fetched_at, got.refresh_error) == (T0 + 605, None)
 
 
 async def test_a_damaged_cache_is_refetched(snap: LeagueSnapshot) -> None:
@@ -284,7 +334,7 @@ async def test_after_the_backoff_a_refresh_is_tried_again(snap: LeagueSnapshot) 
 async def test_a_failure_without_a_cache_raises_then_backs_off() -> None:
     source = FailingSource()
     refresh = service(source, InMemoryRepository(), FakeClock())
-    with pytest.raises(YahooHTTPError):
+    with pytest.raises(RefreshError, match=r"refresh failed: YahooHTTPError: [^(]*$"):
         await refresh.current()
     with pytest.raises(RefreshError, match=r"refresh failed: YahooHTTPError: .* \(0 s ago"):
         await refresh.current()

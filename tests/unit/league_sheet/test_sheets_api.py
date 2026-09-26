@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 
+from fha.sources.google_auth import GoogleAuthError
 from fha.sources.league_sheet.grid import Cell, Grid, Tab
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.parse import parse_sheet
@@ -236,6 +237,23 @@ async def test_a_transport_error_is_replaced_not_chained() -> None:
     assert str(caught.value) == "Sheets API request failed (ConnectError)"
     assert caught.value.__cause__ is None
     assert caught.value.__suppress_context__
+
+
+async def test_a_refused_service_account_is_a_sheet_error_not_a_crash() -> None:
+    """A revoked key (``invalid_grant``) fails in the token call, before any request
+    (M4R1A-2): Admin shows it as a failed read."""
+    google = Google()
+
+    async def refused() -> str:
+        raise GoogleAuthError("Google refused the token request: HTTP 400 (invalid_grant)")
+
+    with pytest.raises(LeagueSheetError) as caught:
+        await read_sheets_api(http(google), SHEET_ID, refused)
+    assert str(caught.value) == (
+        "service-account auth failed: Google refused the token request: HTTP 400 (invalid_grant)"
+    )
+    assert caught.value.__cause__ is None
+    assert google.requests == []
 
 
 async def test_a_malformed_sheet_id_is_an_error_that_hides_it() -> None:

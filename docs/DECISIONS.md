@@ -1274,7 +1274,8 @@ the fix; the lows are fixed or recorded here.
   form. A test checks that no page nests forms.
 - **A failed Refresh says so (M4R1B-2).** The refresh service notes a failure
   on a snapshot that is still fresh while it is within the retry window
-  (60 s), unless a newer fetch succeeded since. So the page the Refresh
+  (60 s), unless a newer fetch succeeded since; it replaces a "not saved"
+  note (round 2). So the page the Refresh
   button returns to shows "Yahoo couldn't be reached". This keeps the note
   server-side instead of in a URL flag that every link would carry on.
 - **`SALARY_CAP` (M4R1B-4)** is read by `Settings.from_env` (whole dollars,
@@ -1350,4 +1351,59 @@ Alternatives:
   token);
 - an httpx-level `GoogleAuthError` catch in the route (rejected: every
   caller of the reader would need it).
+
+## 2026-09-26 — M4 review round 2: what changed
+Reviewed at `59351ec`. Both reviewers reverted each round-1 fix in their
+scope; every one failed a test. Domain mutmut killed 936 of 936. Two
+mediums, both fixed with tests:
+- **A negative amount on the sheet (M4R2B-1).** A negative salary crashed
+  every rated screen and Admin, because `PlayerSeason` refuses one. The
+  parser now reads a negative salary or cap as unknown, like `???`. A
+  negative PAYROLL makes the tab unrecognized ("the PAYROLL beside C2 is
+  negative"), since cap arithmetic can't use it.
+- **Damaged stored rating settings (M4R2A-1).** They gave a 500 on the rated
+  screens and on four Admin POSTs. The rated screens now show a page that
+  says so and links to Admin's rating settings. The Admin POSTs flash "…
+  needs valid rating settings first". Admin GET already handled this.
+
+Lows and nits, all fixed:
+- **Storage down (M4R2B-3)** is a 503 page, "the app's storage couldn't be
+  reached". It shows no details, since Firestore's reason text can name the
+  project, and it logs the type and path only.
+- **A missing or mistyped form field (M4R2A-6)** is the 400 page. FastAPI's
+  422 JSON used to echo the input back.
+- **Content-Length (M4R2A-2)** is checked for digits and length before
+  `int()`. The 413 page says 4.5 MB, the real limit.
+- **A lazy build that raises anything but a ConfigError (M4R2A-3)** is
+  retried on the next request, instead of leaving the instance broken. The
+  httpx client is made once.
+- **`CACHE_TTL_MINUTES` and `BASELINE_MIN_GP` (M4R2A-4)** must be finite and at
+  most 1e6. `nan` and `1e400` used to get through or crash the build.
+- **The season toggle and Refresh (M4R2B-4)** are now on Replace and the
+  Matchup free-agent list too (SPEC §7).
+- **The `view` parameter (M4R2B-6):** Matchup refuses a bad `view` like every
+  other rated screen. A 400 page links back to its screen's top level, since
+  a Replace link without `drop` would itself be a 400.
+- **Test gaps (M4R2A-5, M4R2B-5)** are closed, and each mutant the reviewers
+  listed now fails a test:
+  - the stored alias document is asserted;
+  - the confirm POSTs are tested against a store that refuses writes;
+  - a 4.2 MB sheet is tested;
+  - the sign of the Δ norms is tested;
+  - "My Team" with no team of mine is tested;
+  - eligible positions versus the display text are tested;
+  - the `view` input in the picker and the back link is tested;
+  - roster and Replace colspans are tested;
+  - money at $1,000 and $999.50 is tested;
+  - the failure note at the fetch's own instant is tested.
+- **A Content-Security-Policy** (`default-src 'self'; frame-ancestors
+  'none'; base-uri 'none'; form-action 'self'; object-src 'none'`). htmx's
+  inline indicator style is turned off with `htmx-config`, since the
+  templates have no inline scripts or styles.
+- **Nits:**
+  - a `vh` fallback before the `dvh` table height;
+  - trailing categories listed in SPEC order;
+  - `money(999.5)` is `$0.001M`;
+  - the cap-hit search says it needs Yahoo data when there is none;
+  - `players.html` uses `in_ir_slot`.
 

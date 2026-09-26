@@ -6,7 +6,11 @@ types round-trip exactly: an int is an ``integerValue`` and never comes back
 as a float. The same code talks to the emulator in tests, with the
 emulator's fake bearer token.
 
-- ``put`` is a PATCH without an update mask, which replaces the whole
+- By-ID operations name the document in the request body, never the URL:
+  ``get`` is a one-document ``:batchGet``, and ``put`` and ``delete`` are
+  one-write ``:commit``s. A 1,500-byte ID is legal, but percent-encoded it can
+  outgrow a URL (the emulator answers 404).
+- ``put`` is an update write without a mask, which replaces the whole
   document rather than merging.
 - ``replace_all`` lists the collection, then sends one atomic ``:commit``:
   updates for the given documents, and deletes for the others. A document
@@ -60,27 +64,40 @@ class FirestoreRepository:
     # ---------------------------------------------------------------- Repository
 
     async def get(self, collection: str, doc_id: str) -> Document | None:
-        response = await self._request("GET", self._doc_url(collection, doc_id), ok=(200, 404))
-        if response.status_code == httpx.codes.NOT_FOUND:
+        what = f"{collection}/{doc_id}"
+        body = {"documents": [self._doc_name(collection, doc_id)]}
+        response = await self._request("get", what, f"{self._url}:batchGet", json_body=body)
+        try:
+            results = response.json()
+        except ValueError:
+            results = None
+        if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
+            raise RepositoryError(f"Firestore get {what}: not one batchGet result")
+        if "found" in results[0]:
+            return decode_document(results[0]["found"])
+        if "missing" in results[0]:
             return None
-        return decode_document(_json(response))
+        raise RepositoryError(f"Firestore get {what}: neither found nor missing")
 
     async def put(self, collection: str, doc_id: str, doc: Document) -> None:
-        body = {"fields": encode_fields(check_document(doc))}
-        await self._request("PATCH", self._doc_url(collection, doc_id), json_body=body)
+        fields = encode_fields(check_document(doc))
+        write = {"update": {"name": self._doc_name(collection, doc_id), "fields": fields}}
+        await self._commit("put", f"{collection}/{doc_id}", [write])
 
     async def delete(self, collection: str, doc_id: str) -> None:
-        await self._request("DELETE", self._doc_url(collection, doc_id), ok=(200, 404))
+        write = {"delete": self._doc_name(collection, doc_id)}  # no error if it's missing
+        await self._commit("delete", f"{collection}/{doc_id}", [write])
 
     async def all(self, collection: str) -> dict[str, Document]:
-        url = f"{self._base}/v1/{self._documents}/{_segment(collection, 'collection')}"
+        url = f"{self._url}/{quote(check_id(collection, 'collection'), safe='')}"
         docs: dict[str, Document] = {}
         page_token: str | None = None
         while True:
             params = {"pageSize": str(PAGE_SIZE)}
             if page_token:
                 params["pageToken"] = page_token
-            body = _json(await self._request("GET", url, params=params))
+            response = await self._request("list", collection, url, method="GET", params=params)
+            body = _json(response)
             for raw in body.get("documents", []):
                 docs[_doc_id(raw)] = decode_document(raw)
             page_token = body.get("nextPageToken")
@@ -99,34 +116,36 @@ class FirestoreRepository:
             raise RepositoryError(
                 f"replacing {collection} takes {len(writes)} writes, over {MAX_BATCH}"
             )
-        body = {"writes": writes}
-        size = len(json.dumps(body, separators=(",", ":")).encode())
-        if size > MAX_REQUEST_BYTES:
-            raise RepositoryError(f"replacing {collection} is a {size}-byte request, over 10 MiB")
         if writes:
-            await self._request("POST", f"{self._base}/v1/{self._documents}:commit", json_body=body)
+            await self._commit("replace", collection, writes)
 
     # ---------------------------------------------------------------- HTTP
 
     @property
-    def _documents(self) -> str:
-        return f"{self._database}/documents"
+    def _url(self) -> str:
+        return f"{self._base}/v1/{self._database}/documents"
 
     def _doc_name(self, collection: str, doc_id: str) -> str:
-        return f"{self._documents}/{check_id(collection, 'collection')}/{check_id(doc_id)}"
+        name = f"{check_id(collection, 'collection')}/{check_id(doc_id)}"
+        return f"{self._database}/documents/{name}"
 
-    def _doc_url(self, collection: str, doc_id: str) -> str:
-        path = f"{_segment(collection, 'collection')}/{_segment(doc_id, 'document ID')}"
-        return f"{self._base}/v1/{self._documents}/{path}"
+    async def _commit(self, action: str, what: str, writes: list[dict[str, Any]]) -> None:
+        """One atomic commit, after checking Firestore's request-size limit."""
+        body = {"writes": writes}
+        size = len(json.dumps(body, separators=(",", ":")).encode())
+        if size > MAX_REQUEST_BYTES:
+            raise RepositoryError(f"Firestore {action} {what}: {size}-byte request, over 10 MiB")
+        await self._request(action, what, f"{self._url}:commit", json_body=body)
 
     async def _request(
         self,
-        method: str,
+        action: str,
+        what: str,
         url: str,
         *,
+        method: str = "POST",
         params: dict[str, str] | None = None,
         json_body: Any = None,
-        ok: tuple[int, ...] = (200,),
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {await self._token()}"}
         try:
@@ -134,22 +153,12 @@ class FirestoreRepository:
                 method, url, params=params, json=json_body, headers=headers
             )
         except httpx.HTTPError as e:
-            raise RepositoryError(f"Firestore {method} failed: {type(e).__name__}") from None
-        if response.status_code not in ok:
+            raise RepositoryError(f"Firestore {action} failed: {type(e).__name__}") from None
+        if response.status_code != httpx.codes.OK:
             raise RepositoryError(
-                f"Firestore {method} {_short(url)}: HTTP {response.status_code}{_reason(response)}"
+                f"Firestore {action} {what}: HTTP {response.status_code}{_reason(response)}"
             )
         return response
-
-
-def _segment(value: str, what: str) -> str:
-    return quote(check_id(value, what), safe="")
-
-
-def _short(url: str) -> str:
-    """The URL from ``documents`` on: which document, without host or project."""
-    _, sep, rest = url.partition("/documents")
-    return f"documents{rest}" if sep else url
 
 
 def _reason(response: httpx.Response) -> str:

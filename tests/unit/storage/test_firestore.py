@@ -143,27 +143,85 @@ def test_a_document_without_fields_is_empty_and_bad_fields_are_refused() -> None
 # ---------------------------------------------------------------- requests
 
 
-async def test_get_reads_one_document_with_the_bearer_token() -> None:
-    server = Server(ok(raw_doc("a", {"v": {"integerValue": "3"}})))
+NAME = "projects/p/databases/(default)/documents/things"
+
+
+def found(doc_id: str, fields: dict[str, Any]) -> httpx.Response:
+    return ok([{"found": raw_doc(doc_id, fields), "readTime": "2026-09-26T00:00:00Z"}])
+
+
+def missing(doc_id: str) -> httpx.Response:
+    return ok([{"missing": f"{NAME}/{doc_id}", "readTime": "2026-09-26T00:00:00Z"}])
+
+
+async def test_get_is_a_one_document_batch_get_with_the_bearer_token() -> None:
+    server = Server(found("a", {"v": {"integerValue": "3"}}))
     assert await repo(server).get("things", "a") == {"v": 3}
     [request] = server.requests
-    assert (request.method, str(request.url)) == ("GET", f"{BASE}/things/a")
+    assert (request.method, str(request.url)) == ("POST", f"{BASE}:batchGet")
+    assert server.body(0) == {"documents": [f"{NAME}/a"]}
     assert request.headers["Authorization"] == f"Bearer {TOKEN}"
 
 
-async def test_ids_are_percent_encoded_in_urls() -> None:
-    server = Server(httpx.Response(404, json={}))
-    assert await repo(server).get("things", "Pinecone Club é?#") is None
-    assert server.requests[0].url.raw_path.decode().endswith("/things/Pinecone%20Club%20%C3%A9%3F%23")
+async def test_a_missing_document_is_none() -> None:
+    assert await repo(Server(missing("a"))).get("things", "a") is None
 
 
-async def test_put_replaces_the_whole_document_with_no_update_mask() -> None:
+async def test_ids_travel_in_the_body_never_the_url() -> None:
+    server = Server(missing("x"), ok(), ok())
+    odd = "Pinecone Club é?#%"
+    await repo(server).get("things", odd)
+    await repo(server).put("things", odd, {})
+    await repo(server).delete("things", odd)
+    assert all("Pinecone" not in str(r.url) for r in server.requests)
+    assert server.body(0) == {"documents": [f"{NAME}/{odd}"]}
+    assert server.body(1)["writes"][0]["update"]["name"] == f"{NAME}/{odd}"
+    assert server.body(2) == {"writes": [{"delete": f"{NAME}/{odd}"}]}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="not json"),
+        ok({"found": {}}),
+        ok([]),
+        ok([{"found": {}}, {"found": {}}]),
+        ok(["x"]),
+    ],
+)
+async def test_get_refuses_anything_but_one_batch_get_result(response: httpx.Response) -> None:
+    with pytest.raises(RepositoryError, match=r"^Firestore get things/a: not one batchGet result$"):
+        await repo(Server(response)).get("things", "a")
+
+
+async def test_get_refuses_a_result_neither_found_nor_missing() -> None:
+    with pytest.raises(RepositoryError, match="neither found nor missing"):
+        await repo(Server(ok([{"readTime": "x"}]))).get("things", "a")
+
+
+async def test_put_is_one_update_write_with_no_mask_so_it_replaces() -> None:
     server = Server(ok())
     await repo(server).put("things", "a", {"v": 1, "f": 0.5})
     [request] = server.requests
-    assert (request.method, str(request.url)) == ("PATCH", f"{BASE}/things/a")
-    assert "updateMask" not in str(request.url)
-    assert server.body(0) == {"fields": {"v": {"integerValue": "1"}, "f": {"doubleValue": 0.5}}}
+    assert (request.method, str(request.url)) == ("POST", f"{BASE}:commit")
+    assert server.body(0) == {
+        "writes": [
+            {
+                "update": {
+                    "name": f"{NAME}/a",
+                    "fields": {"v": {"integerValue": "1"}, "f": {"doubleValue": 0.5}},
+                }
+            }
+        ]
+    }
+
+
+async def test_put_refuses_a_request_over_10_mib(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fs, "MAX_REQUEST_BYTES", 100)
+    server = Server()
+    with pytest.raises(RepositoryError, match=r"^Firestore put things/a: \d+-byte request"):
+        await repo(server).put("things", "a", {"v": "x" * 100})
+    assert server.requests == []
 
 
 async def test_put_checks_the_document_before_sending() -> None:
@@ -173,14 +231,11 @@ async def test_put_checks_the_document_before_sending() -> None:
     assert server.requests == []
 
 
-@pytest.mark.parametrize("status", [200, 404])
-async def test_delete_tolerates_a_missing_document(status: int) -> None:
-    server = Server(httpx.Response(status, json={}))
+async def test_delete_is_one_delete_write() -> None:
+    server = Server(ok())
     await repo(server).delete("things", "a")
-    assert (server.requests[0].method, str(server.requests[0].url)) == (
-        "DELETE",
-        f"{BASE}/things/a",
-    )
+    assert (server.requests[0].method, str(server.requests[0].url)) == ("POST", f"{BASE}:commit")
+    assert server.body(0) == {"writes": [{"delete": f"{NAME}/a"}]}
 
 
 async def test_all_follows_page_tokens() -> None:
@@ -205,14 +260,14 @@ async def test_all_of_an_empty_collection() -> None:
 async def test_replace_all_commits_updates_and_deletes_in_one_request() -> None:
     server = Server(ok({"documents": [raw_doc("keep", {}), raw_doc("drop", {})]}), ok())
     await repo(server).replace_all("things", {"keep": {"v": 1}, "new": {"v": 2}})
-    commit = server.requests[1]
+    listing, commit = server.requests
+    assert (listing.method, str(listing.url).split("?")[0]) == ("GET", f"{BASE}/things")
     assert (commit.method, str(commit.url)) == ("POST", f"{BASE}:commit")
-    name = "projects/p/databases/(default)/documents/things"
     assert server.body(1) == {
         "writes": [
-            {"update": {"name": f"{name}/keep", "fields": {"v": {"integerValue": "1"}}}},
-            {"update": {"name": f"{name}/new", "fields": {"v": {"integerValue": "2"}}}},
-            {"delete": f"{name}/drop"},
+            {"update": {"name": f"{NAME}/keep", "fields": {"v": {"integerValue": "1"}}}},
+            {"update": {"name": f"{NAME}/new", "fields": {"v": {"integerValue": "2"}}}},
+            {"delete": f"{NAME}/drop"},
         ]
     }
 
@@ -248,9 +303,7 @@ async def test_an_http_error_names_the_status_and_reason_but_never_the_token() -
     with pytest.raises(RepositoryError) as caught:
         await repo(server).get("things", "a")
     message = str(caught.value)
-    assert message == (
-        "Firestore GET documents/things/a: HTTP 403 (PERMISSION_DENIED: Missing perms.)"
-    )
+    assert message == "Firestore get things/a: HTTP 403 (PERMISSION_DENIED: Missing perms.)"
     assert TOKEN not in message
 
 
@@ -272,7 +325,7 @@ async def test_a_transport_failure_is_a_repository_error() -> None:
     def offline(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no route to firestore.googleapis.com")
 
-    with pytest.raises(RepositoryError, match=r"^Firestore GET failed: ConnectError$"):
+    with pytest.raises(RepositoryError, match=r"^Firestore get failed: ConnectError$"):
         await repo(Server(offline)).get("things", "a")
 
 
@@ -306,18 +359,18 @@ def mock_http(server: Server) -> httpx.AsyncClient:
 
 
 async def test_the_emulator_host_selects_the_emulator_with_its_fake_token() -> None:
-    server = Server(httpx.Response(404, json={}))
+    server = Server(missing("a"))
     env = {"FIRESTORE_EMULATOR_HOST": "127.0.0.1:8181", "FIRESTORE_SERVICE_ACCOUNT_JSON": "{}"}
-    await repository_from_env(env, mock_http(server)).get("things", "a")
+    assert await repository_from_env(env, mock_http(server)).get("things", "a") is None
     [request] = server.requests
     assert str(request.url) == (
-        "http://127.0.0.1:8181/v1/projects/demo-fha/databases/(default)/documents/things/a"
+        "http://127.0.0.1:8181/v1/projects/demo-fha/databases/(default)/documents:batchGet"
     )
     assert request.headers["Authorization"] == "Bearer owner"
 
 
 async def test_the_emulator_uses_the_configured_project_if_any() -> None:
-    server = Server(httpx.Response(404, json={}))
+    server = Server(missing("a"))
     env = {"FIRESTORE_EMULATOR_HOST": "[::1]:8181", "FIRESTORE_PROJECT_ID": "demo-other"}
     await repository_from_env(env, mock_http(server)).get("things", "a")
     assert "/projects/demo-other/" in str(server.requests[0].url)
@@ -332,14 +385,14 @@ def test_a_non_loopback_emulator_host_is_refused(host: str) -> None:
 
 
 async def test_project_and_key_select_production_firestore() -> None:
-    server = Server(httpx.Response(404, json={}))
+    server = Server(missing("a"))
     env = {"FIRESTORE_PROJECT_ID": "fha-prod", "FIRESTORE_SERVICE_ACCOUNT_JSON": key_json()}
     await repository_from_env(env, mock_http(server)).get("things", "a")
     token_request, get = server.requests
     assert str(token_request.url) == "https://oauth2.example.test/token"
     assert "scope" not in parse_qs(token_request.content.decode())  # it's inside the JWT
     assert str(get.url) == (
-        "https://firestore.googleapis.com/v1/projects/fha-prod/databases/(default)/documents/things/a"
+        "https://firestore.googleapis.com/v1/projects/fha-prod/databases/(default)/documents:batchGet"
     )
     assert get.headers["Authorization"] == f"Bearer {TOKEN}"
 

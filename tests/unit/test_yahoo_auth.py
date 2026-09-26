@@ -198,7 +198,8 @@ async def test_a_403_points_at_the_app_permissions(
     code, _, err, store = await run(tmp_path, capsys, Forbidden())
     assert code == 1
     assert "HTTP 403" in err
-    assert "Fantasy Sports (Read)" in err
+    assert "API Permissions" in err
+    assert "fspt-r scope" in err
     assert await store.load() is not None
 
 
@@ -206,4 +207,4 @@ async def test_other_failures_carry_no_permissions_hint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _, _, err, _ = await run(tmp_path, capsys, Yahoo(token_status=400))
-    assert "Fantasy Sports (Read)" not in err
+    assert "API Permissions" not in err

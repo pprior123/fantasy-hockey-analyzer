@@ -499,3 +499,28 @@ M2's `TokenStore`); Firestore rules deny every client (SPEC §8).
 
 Alternative: a typed method per record on the protocol (rejected: three
 backends × about ten methods, each needing the same encoding).
+
+## 2026-09-26 — M3: refresh behaviour
+- **The stats cache** is the raw `LeagueSnapshot` in the `stats_cache`
+  collection: a meta document plus chunks for the available players and
+  both seasons' stat lines, written with one `replace_all`. Ratings are
+  never cached, so a settings change needs no refresh.
+- **Fresh means** `0 <= now - fetched_at < TTL`, with a default TTL of 30
+  min. A timestamp from the future counts as stale (clock skew between
+  serverless instances shouldn't pin a cache forever).
+- **Concurrency:** one refresh at a time per process. A request that waited
+  behind another's refresh uses its result, even a forced one. Instances
+  can still refresh concurrently; with one user that costs at most a
+  duplicate Yahoo read.
+- **Failures:**
+  - A failed refresh with a cache serves the stale snapshot with the error
+    attached, so the UI can say "Yahoo unavailable, showing data from HH:MM".
+    Without a cache the error propagates.
+  - A damaged or old-format cache is refetched. A backend failure (Firestore
+    down) is an error, not "no cache".
+- **Last season's stats** are refetched on every refresh for now. Caching
+  them (they never change) waits for the M2 recording's real timing; see
+  "how the Yahoo source reads the league".
+Alternatives: fail the request when Yahoo fails (rejected: an outage would
+blank the app although the data is at most hours old); cache ratings
+(rejected: SPEC §10 M3).

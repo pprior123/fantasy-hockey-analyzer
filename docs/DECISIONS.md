@@ -1168,12 +1168,14 @@ Alternatives:
   - A row's norm breakdown is a `<details>` in the name cell.
   - htmx isn't used yet. The pages are plain enough that full reloads are
     fast.
-- **Bad parameters** (an unknown owner, position, view, sort, week, team or
-  toggle value) render a 400 page in the layout with a plain message, never
-  a 500.
+- **Bad parameters** (an unknown owner, position, view, sort, week, team,
+  season or toggle value) render a 400 page in the layout with a plain
+  message, never a 500.
 - **Formatting (`fha.web.format`):**
-  - Money is `$7.25M`, with a minus sign for negative room. Unknown money is
-    always "—", never $0 (SPEC §5).
+  - Money is `$7.25M` from $1M up, `$0.925M` from $1,000, and whole dollars
+    below, rounded half-up in decimal; a minus sign for negative room, which
+    never shows as zero (round 1, below). Unknown money is always "—", never
+    $0 (SPEC §5).
   - The rating settings in use appear on every rated screen, e.g. "workbook
     top-20, floor 2%" (SPEC §7.5).
   - The filters are installed on the app's Jinja environment when the
@@ -1220,7 +1222,7 @@ hit edit, refresh, rating settings, and configuration.
   statuses, reasons, payroll, cap, counted rows). A test uploads a synthetic
   sheet with a contact block and asserts none of it appears, before and
   after binding.
-- **Uploads.** The `.xlsx` is capped at 5 MB and the CSV at 2 MB; the file
+- **Uploads.** The `.xlsx` is capped at 4 MB and the CSV at 2 MB; the file
   is read one byte past the cap to tell. An unreadable file, a
   `LeagueSheetError` or a `SalaryCsvError` becomes a message, never a 500.
   openpyxl stays lazy (the cold-start test passes).
@@ -1250,3 +1252,102 @@ Alternatives: a flash stored in the Repository and cleared on read
 (rejected: a GET with a side effect); rendering the page straight from the
 POST (rejected: a reload resubmits the upload); a JS toggle to pre-fill the
 count (rejected: no JS needed, since blank already means the default).
+
+## 2026-09-26 — M4 review round 1: what changed
+Reviewed at `105bb41`. Every medium is fixed with a test that fails without
+the fix; the lows are fixed or recorded here.
+- **No Yahoo data (M4R1A-1).** With no cache, anything the source raises (a
+  timeout as much as a Yahoo 403) is now a `RefreshError`, chained to the
+  cause. The rated screens show it as a 503 "No Yahoo data" page with the
+  reason and the nav (`fha.web.data.NO_DATA` = `RefreshError`, `ViewError`),
+  and Admin renders around it as before.
+- **A refused service account (M4R1A-2)** is a `LeagueSheetError`
+  ("service-account auth failed: …"), so Admin's read shows it.
+- **Sticky header (M4R1A-3/B-3).** A box that scrolls sideways is also a
+  vertical scroll container, and sticky cells stick to it, not the page. So
+  `.table-wrap` scrolls both ways, at most a screen tall less the nav, the
+  footer and the safe-area insets, and `thead th` sticks at its top. The
+  Players row count sits above the table, so scrolled to the page's end the
+  header is still below the nav. Checked in Chrome at 390×844: the header is
+  in view at every page and table scroll position.
+- **Rosters' Refresh (M4R1B-1)** is no longer nested in the team picker's
+  form. A test checks that no page nests forms.
+- **A failed Refresh says so (M4R1B-2).** The refresh service notes a failure
+  on a snapshot that is still fresh while it is within the retry window
+  (60 s), unless a newer fetch succeeded since. So the page the Refresh
+  button returns to shows "Yahoo couldn't be reached". This keeps the note
+  server-side instead of in a URL flag that every link would carry on.
+- **`SALARY_CAP` (M4R1B-4)** is read by `Settings.from_env` (whole dollars,
+  commas allowed) and passed as `load_salaries(cap_override=)`. The sheet's
+  cap still wins. Admin's configuration list shows it.
+- **Test strength (M4R1B-5).** The Players sort tests assert the exact order,
+  per column and direction: ties by name then id, blanks last. They run over
+  the demo league, and the expected order comes from the row values, not
+  from the code under test. Replace has dual-eligible and Util cases, and
+  the cap filters have `AAV == room` and zero-room-after cases. Name
+  tie-breaks are also tested. Every mutant the reviewer applied by hand,
+  and a few more, now fails a test.
+- **Goalies' Yahoo rank (M4R1B-6): deferred to the M2 recording.** The
+  `Player` model has no rank, and Yahoo's rank fields (`player_ranks`, or the
+  `sort=AR` order of available players) have never been seen in a real
+  response. Parsing an unseen shape would be a guess. It lands with the M2
+  fixtures, before M4 acceptance, which needs real data anyway. SPEC §7.2
+  notes this.
+- **Categories toggle (B-7).** `view=cats` now works on Rosters, Replace and
+  League too (SPEC §7: "common to the tables"). Salary view:
+  - Rosters: AAV and $/TTLTST;
+  - Replace: AAV and room after;
+  - League: payroll and room.
+
+  The Categories view swaps those columns for the 7 norms (Δ norms on
+  Replace). Links carry `season` and `view`, and the nav carries `season`.
+- **Money (B-8)** rounds half-up in decimal. Amounts under $1M get three
+  decimals, and under $1,000 whole dollars, so −$4,000 is `-$0.004M`, not
+  `-$0.00M`. Numbers and percentiles round half-up too, never show `-0.00`,
+  and show "—" when not finite.
+- **Hardening (A-4, A-7, A-8, A-9, A-11, B-9, nits):**
+  - **Cap hit input:** capped at $1,000,000,000, and nothing over 20
+    characters is parsed.
+  - **`min_gp`:** at most 4 digits.
+  - **Login after a POST:** `next` is the same-site Referer, since a POST's
+    path may have no GET (e.g. `/refresh`).
+  - **Admin POSTs check their values:**
+    - a tab must be in the stored sheet;
+    - a team, or a player, must be in the Yahoo data;
+    - a sheet row must be on its tab, and its player on the bound roster;
+    - an alias is named from the stored row and the pool, never the form;
+    - a `RepositoryError` (e.g. a tab named `__x__`) is a message, not a 500.
+  - **Request size:** a body over 4.5 MB (Vercel's limit) is refused by its
+    Content-Length before it is read. The sheet upload cap is 4 MB.
+  - **Settings:** `SESSION_SECRET` must be at least 32 characters, and
+    `FHA_INSECURE_COOKIES=1` is refused when `VERCEL` is set.
+  - **Security headers** on every response: nosniff,
+    `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`.
+  - **The error app** answers every method.
+  - **Tests:** a sweep checks that every non-public route, POSTs included,
+    needs a login. Entered test clients now exit.
+- **Unexpected errors (A-5).** A middleware now answers them, instead of an
+  exception handler that Starlette re-raised to the server's traceback
+  logger. So "logs only the exception type and path" is now true: the test
+  runs with server exceptions raised, and none escapes.
+- **Without lifespan events (A-10).** If the host sends none, the services
+  are built on the first request, once. This is harmless if Vercel does send
+  them. The httpx client of a first-request build is never closed, and a
+  serverless instance ends with its process.
+- **The login throttle (A-6) stays global per process.** On Vercel, keying it
+  by `x-forwarded-for` is sound, since Vercel sets that header. But a
+  lockout costs the owner at most 60 s, and only while someone is guessing,
+  which is also when a lockout is wanted. Revisit in M5 if it bites.
+- **Logout (A-11)** deletes the cookie only, so a copied cookie stays valid
+  until it expires. Revoking all sessions means rotating `SESSION_SECRET`.
+  A server-side revocation list would add a store read to every request.
+  Not worth it for one user; recorded for M5's runbook.
+
+Alternatives:
+- a `refresh=failed` query flag (rejected: every filter and toggle link would
+  carry it on);
+- a signed flash like Admin's (rejected: the same problem, and a GET-visible
+  token);
+- an httpx-level `GoogleAuthError` catch in the route (rejected: every
+  caller of the reader would need it).
+

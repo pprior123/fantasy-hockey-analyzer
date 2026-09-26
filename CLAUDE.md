@@ -31,7 +31,8 @@ npx -y firebase-tools@15.31.0 emulators:exec --only firestore --project demo-fha
                                 # storage contract against the Firestore emulator (Java 21+ on PATH)
 uv run python -m scripts.check_league_sheet private/<sheet>.xlsx
                                 # parse the owner's downloaded league sheet (statuses and sums only)
-FHA_DEMO=1 FHA_INSECURE_COOKIES=1 APP_PASSWORD=dev SESSION_SECRET=dev \
+FHA_DEMO=1 FHA_INSECURE_COOKIES=1 APP_PASSWORD=dev \
+  SESSION_SECRET=dev-only-secret-at-least-32-characters \
   uv run uvicorn fha.web.main:app --reload
                                 # the app on http://127.0.0.1:8000 with the demo league
 uv run python -m scripts.make_icons   # redraw the PWA icons

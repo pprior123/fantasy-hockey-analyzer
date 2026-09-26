@@ -5,9 +5,13 @@ description = "Private roster analyzer for one Yahoo NHL fantasy team (TTLTST ra
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi>=0.141.1",
     "google-auth>=2.58.1",
     "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
     "openpyxl>=3.1.5",
+    "python-multipart>=0.0.32",
     "rapidfuzz>=3.14.6",
 ]
 
@@ -20,6 +24,7 @@ module-name = "fha"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
     "hypothesis>=6.168.1",
     "mutmut>=3.8.0",
     "mypy>=2.3.1",
@@ -30,6 +35,7 @@ dev = [
     "respx>=0.23.1",
     "ruff>=0.16.9",
     "types-openpyxl>=3.1.5.20260827",
+    "uvicorn>=0.54.0",
 ]
 
 # ---------------------------------------------------------------- ruff

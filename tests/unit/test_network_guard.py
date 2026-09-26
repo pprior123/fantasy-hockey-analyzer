@@ -20,8 +20,9 @@ from tests.network_policy import (
 
 pytest_plugins = ["pytester"]
 
-# Runs at import, i.e. during collection, before any test setup.
-with warnings.catch_warnings():
+# Runs at import, i.e. during collection, before any test setup. The attempt is
+# claimed: an unclaimed one would fail the session (see the collection test).
+with warnings.catch_warnings(), expect_blocked():
     warnings.simplefilter("ignore")
     try:
         socket.socket(socket.AF_INET, socket.SOCK_STREAM).close()
@@ -51,6 +52,8 @@ def test_inet_sockets_are_blocked() -> None:
         (lambda: socket.gethostbyname("example.com"), "gethostbyname"),
         (lambda: socket.gethostbyname_ex("example.com"), "gethostbyname_ex"),
         (lambda: socket.getnameinfo(("93.184.215.14", 443), 0), "getnameinfo"),
+        (lambda: socket.gethostbyaddr("93.184.215.14"), "gethostbyaddr"),
+        (lambda: socket.getfqdn("93.184.215.14"), "gethostbyaddr"),
     ],
 )
 def test_name_resolution_is_blocked(call: Any, name: str) -> None:
@@ -144,6 +147,7 @@ def test_loopback_only_allows_loopback_and_blocks_everything_else() -> None:
             lambda: socket.gethostbyname("example.com"),
             lambda: socket.gethostbyname_ex("example.com"),
             lambda: socket.getnameinfo(("93.184.215.14", 443), 0),
+            lambda: socket.gethostbyaddr("93.184.215.14"),
         ):
             with pytest.raises(SocketBlockedError):
                 resolve()
@@ -152,7 +156,7 @@ def test_loopback_only_allows_loopback_and_blocks_everything_else() -> None:
                 udp.sendto(b"x", ("10.255.255.1", 53))
             with pytest.raises(SocketBlockedError):
                 udp.sendmsg([b"x"], [], 0, ("10.255.255.1", 53))
-    assert len(seen) == 8
+    assert len(seen) == 9
     # Re-blocked on exit, resolution included.
     with expect_blocked() as after:
         with pytest.raises(SocketBlockedError):
@@ -257,7 +261,9 @@ import pytest
 @pytest.mark.allow_hosts(["127.0.0.1"])
 def test_marked():
     assert os.environ.get("FIRESTORE_EMULATOR_HOST") == "127.0.0.1:8181"
-    assert "FIRESTORE_SERVICE_ACCOUNT_JSON" not in os.environ
+    for name in ("FIRESTORE_SERVICE_ACCOUNT_JSON", "FIRESTORE_PROJECT_ID", "LEAGUE_SHEET_ID",
+                 "APP_PASSWORD", "FHA_LOCAL_REPOSITORY"):
+        assert name not in os.environ, name
 
 def test_unmarked():
     assert "FIRESTORE_EMULATOR_HOST" not in os.environ
@@ -268,7 +274,10 @@ def test_marked_tests_keep_the_emulator_host_but_no_credentials(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8181")
-    monkeypatch.setenv("FIRESTORE_SERVICE_ACCOUNT_JSON", "{}")
+    for name in ("FIRESTORE_SERVICE_ACCOUNT_JSON", "FIRESTORE_PROJECT_ID", "LEAGUE_SHEET_ID"):
+        monkeypatch.setenv(name, "real-looking")
+    monkeypatch.setenv("APP_PASSWORD", "x")
+    monkeypatch.setenv("FHA_LOCAL_REPOSITORY", "private/dev.json")
     inner_session(pytester, CLOUD_ENV_TEST)
     result = pytester.runpytest_inprocess("-p", "no:socket")
     result.assert_outcomes(passed=2)
@@ -282,3 +291,47 @@ def test_a_non_loopback_emulator_host_fails_marked_tests(
     result = pytester.runpytest_inprocess("-p", "no:socket")
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(["*FIRESTORE_EMULATOR_HOST must be loopback*"])
+
+
+COLLECTION_SWALLOW = """
+import socket
+
+try:
+    socket.socket(socket.AF_INET)
+except Exception:
+    pass
+
+def test_fine():
+    pass
+"""
+
+
+def test_a_swallowed_attempt_at_collection_time_fails_the_session(
+    pytester: pytest.Pytester,
+) -> None:
+    inner_session(pytester, COLLECTION_SWALLOW)
+    before = len(BLOCKED)
+    result = pytester.runpytest_inprocess("-p", "no:socket", "-W", "ignore")
+    del BLOCKED[before:]
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*blocked network access during collection*"])
+
+
+SKIP_AFTER_ATTEMPT = """
+import socket
+import pytest
+
+def test_skips_after_trying():
+    try:
+        socket.socket(socket.AF_INET)
+    except Exception:
+        pytest.skip("no network")
+"""
+
+
+def test_a_blocked_attempt_is_not_hidden_by_a_skip(pytester: pytest.Pytester) -> None:
+    inner_session(pytester, SKIP_AFTER_ATTEMPT)
+    before = len(BLOCKED)
+    result = pytester.runpytest_inprocess("-p", "no:socket", "-W", "ignore")
+    del BLOCKED[before:]
+    result.assert_outcomes(failed=1)

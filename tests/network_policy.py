@@ -10,13 +10,14 @@ use its functions instead and own the lifecycle:
 - during setup, call and teardown of a test marked ``allow_hosts(...)`` with
   loopback-only hosts (Firestore-emulator tests, SPEC §10 M3). In that window
   ``connect``, ``connect_ex``, ``sendto``, ``sendmsg`` and name resolution
-  (``getaddrinfo``, ``gethostbyname(_ex)``, ``getnameinfo``) are restricted
-  to loopback.
+  (``getaddrinfo``, ``gethostbyname(_ex)``, ``gethostbyaddr`` (so ``getfqdn``),
+  ``getnameinfo``) are restricted to loopback.
 
 Every blocked attempt is recorded in ``BLOCKED``, and conftest fails the test
 that made it even if the code under test caught the exception (a broad
-``except`` must not hide a missing mock). Tests of the guard itself claim
-their attempts with ``expect_blocked()``.
+``except`` must not hide a missing mock), or skipped; one made during
+collection fails the session. Tests of the guard itself claim their attempts
+with ``expect_blocked()``.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ BLOCKED: list[str] = []  # every blocked attempt, in order
 # The real functions, taken before anything is patched.
 _REAL = {
     name: getattr(socket, name)
-    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "getnameinfo")
+    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo")
 }
 _REAL_CONNECT_EX = socket.socket.connect_ex
 _REAL_SENDTO = socket.socket.sendto

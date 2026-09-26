@@ -14,23 +14,24 @@ from tests.network_policy import (
     violations,
 )
 
-# Cloud configuration no unmarked test may see: code reading the environment
-# must never find a real project, key or sheet (network-policy gap 2).
+# Configuration no test may see: code reading the environment must never find
+# a real project, key, sheet, secret or the owner's dev file (network-policy
+# gap 2; every SPEC §8 name). Emulator tests keep FIRESTORE_EMULATOR_HOST only.
+EMULATOR_HOST = "FIRESTORE_EMULATOR_HOST"
 CLOUD_ENV = (
-    "FIRESTORE_EMULATOR_HOST",
+    EMULATOR_HOST,
+    "APP_PASSWORD",
+    "FHA_LOCAL_REPOSITORY",
     "FIRESTORE_PROJECT_ID",
     "FIRESTORE_SERVICE_ACCOUNT_JSON",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "LEAGUE_SHEET_ID",
+    "LEAGUE_SHEET_XLSX",
+    "SESSION_SECRET",
+    "VERCEL",
     "YAHOO_CLIENT_ID",
     "YAHOO_CLIENT_SECRET",
-)
-# Credentials even emulator tests must not see (the emulator needs none).
-CREDENTIAL_ENV = (
-    "FIRESTORE_SERVICE_ACCOUNT_JSON",
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "YAHOO_CLIENT_ID",
-    "YAHOO_CLIENT_SECRET",
+    "YAHOO_REDIRECT_URI",
 )
 
 
@@ -44,6 +45,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if BLOCKED:  # e.g. module-level code whose broad except hid the error
+        raise pytest.UsageError(f"blocked network access during collection: {BLOCKED[0]}")
     problems = violations(items)
     if problems:
         raise pytest.UsageError("Network policy violations:\n" + "\n".join(problems))
@@ -67,8 +70,12 @@ def _fail_if_blocked(start: int, phase: str) -> None:
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
     start = len(BLOCKED)
-    with _network(item):
-        result = yield
+    try:
+        with _network(item):
+            result = yield
+    except BaseException:
+        _fail_if_blocked(start, "setup")  # a blocked attempt beats a skip or a failure
+        raise
     _fail_if_blocked(start, "setup")
     return result
 
@@ -76,8 +83,12 @@ def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     start = len(BLOCKED)
-    with _network(item):
-        result = yield
+    try:
+        with _network(item):
+            result = yield
+    except BaseException:
+        _fail_if_blocked(start, "call")  # a blocked attempt beats a skip or a failure
+        raise
     _fail_if_blocked(start, "call")
     return result
 
@@ -85,8 +96,12 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
     start = len(BLOCKED)
-    with _network(item):
-        result = yield
+    try:
+        with _network(item):
+            result = yield
+    except BaseException:
+        _fail_if_blocked(start, "teardown")  # a blocked attempt beats a skip or a failure
+        raise
     _fail_if_blocked(start, "teardown")
     return result
 
@@ -100,12 +115,12 @@ def fresh_name_caches() -> None:
 
 @pytest.fixture(autouse=True)
 def cloud_env_policy(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    if request.node.get_closest_marker("allow_hosts") is None:
-        for name in CLOUD_ENV:
+    marked = request.node.get_closest_marker("allow_hosts") is not None
+    for name in CLOUD_ENV:
+        if not (marked and name == EMULATOR_HOST):
             monkeypatch.delenv(name, raising=False)
+    if not marked:
         return
-    for name in CREDENTIAL_ENV:
-        monkeypatch.delenv(name, raising=False)
-    host = os.environ.get("FIRESTORE_EMULATOR_HOST")
+    host = os.environ.get(EMULATOR_HOST)
     if host is not None and not emulator_host_ok(host):
         pytest.fail(f"FIRESTORE_EMULATOR_HOST must be loopback, got {host!r}", pytrace=False)

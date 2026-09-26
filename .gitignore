@@ -28,6 +28,21 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
+mutants/
+.mutmut-cache
+dist/
+build/
+*.egg-info/
+
+# Vercel CLI
+.vercel/
 
 # Editors / OS
 .vscode/

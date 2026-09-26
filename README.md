@@ -19,6 +19,20 @@ hand.
 
 Early. Planning and scaffolding.
 
+## Development
+
+Requires [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
+
+```
+uv sync                                   # install
+uv run pytest                             # tests (network is blocked)
+uv run pytest --cov --cov-report=json && uv run python scripts/check_coverage.py
+uv run ruff check . && uv run ruff format --check .
+uv run mypy src scripts
+```
+
+Specification: [`docs/SPEC.md`](docs/SPEC.md). Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## Scope
 
 Single user. Single league. Read-only. Not distributed, not monetized,

@@ -4,22 +4,26 @@ The pool is every rostered player plus every available player Yahoo lists
 (owner's decision, 2026-09-26: percentiles are over everyone who played, as in
 the workbook; players with GP 0 don't count, so paging past them is harmless).
 
-A refresh has two dependent steps, then everything else at once; the client
-caps how many requests are in flight (SPEC §2):
+A refresh has four dependent stages; each stage's requests go out together,
+and the client caps how many are in flight (SPEC §2):
 
 1. the current NHL game (``game_key`` changes every season);
 2. league settings + the game's stat categories;
-3. together: the rosters (one call), the available players (pages of 25,
-   Yahoo's maximum, in waves of ``PAGE_WAVE`` until a short page), and the
-   scoreboards for the current and next week. Each page's season stats, and
-   the rostered players', are requested as soon as their players are known,
-   so paging and stats share the request slots instead of taking turns.
+3. the rosters (one call), the available players (pages of 25, Yahoo's
+   maximum, in waves of ``PAGE_WAVE`` until a short page), and the
+   scoreboards for the current and next week;
+4. season stats, 25 players a call. Each page's, and the rostered players',
+   are requested as soon as their players are known, so paging and stats
+   share the request slots instead of taking turns.
+
+The first failure cancels every request still running (task groups, not
+``gather``), so nothing outlives a failed refresh.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -45,7 +49,7 @@ class ApiClient(Protocol):
     async def get(self, path: str) -> dict[str, Any]: ...
 
 
-PageFetcher = Callable[[int, int], Awaitable[tuple[Player, ...]]]  # (start, count)
+PageFetcher = Callable[[int, int], Coroutine[Any, Any, tuple[Player, ...]]]  # (start, count)
 
 
 def _chunks(keys: Sequence[str], size: int) -> list[list[str]]:
@@ -55,6 +59,16 @@ def _chunks(keys: Sequence[str], size: int) -> list[list[str]]:
 def _first_error(group: BaseExceptionGroup[Exception]) -> Exception:
     first = group.exceptions[0]
     return _first_error(first) if isinstance(first, BaseExceptionGroup) else first
+
+
+async def _together[T](*coros: Coroutine[Any, Any, T]) -> list[T]:
+    """Run ``coros`` at once; the first failure cancels the rest and is raised."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(c) for c in coros]
+    except ExceptionGroup as errors:
+        raise _first_error(errors) from None
+    return [t.result() for t in tasks]
 
 
 class HttpYahooSource:
@@ -79,7 +93,7 @@ class HttpYahooSource:
         game = parse.parse_games(await get("games;game_codes=nhl"))
         league_key = f"{game.game_key}.l.{self._league_id}"
 
-        settings_json, categories_json = await asyncio.gather(
+        settings_json, categories_json = await _together(
             get(f"league/{league_key}/settings"),
             get(f"game/{game.game_key}/stat_categories"),
         )
@@ -155,13 +169,11 @@ class HttpYahooSource:
         """The available players: ``self._available`` of them, or every one."""
         if self._available is not None:
             starts = range(0, self._available, PAGE_SIZE)
-            pages = await asyncio.gather(
-                *(page(s, min(PAGE_SIZE, self._available - s)) for s in starts)
-            )
+            pages = await _together(*(page(s, min(PAGE_SIZE, self._available - s)) for s in starts))
             return _dedupe(p for pg in pages for p in pg)[: self._available]
         players: list[Player] = []
         for wave in range(0, MAX_AVAILABLE, PAGE_WAVE * PAGE_SIZE):
-            pages = await asyncio.gather(
+            pages = await _together(
                 *(page(wave + i * PAGE_SIZE, PAGE_SIZE) for i in range(PAGE_WAVE))
             )
             players.extend(p for pg in pages for p in pg)
@@ -170,7 +182,7 @@ class HttpYahooSource:
         raise YahooParseError(f"more than {MAX_AVAILABLE} available players: stopped paging")
 
     async def _scoreboards(self, league_key: str, weeks: Sequence[int]) -> list[Scoreboard]:
-        return list(await asyncio.gather(*(self._scoreboard(league_key, w) for w in weeks)))
+        return await _together(*(self._scoreboard(league_key, w) for w in weeks))
 
     async def _available_page(self, league_key: str, start: int, count: int) -> tuple[Player, ...]:
         return parse.parse_league_players(

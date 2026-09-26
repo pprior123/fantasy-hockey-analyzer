@@ -1,5 +1,6 @@
 """A full refresh through HttpYahooSource against a mocked Yahoo (SPEC §10 M2)."""
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -274,3 +275,26 @@ async def test_a_failure_in_one_request_is_raised_as_itself() -> None:
     league.overrides[f"league/{LK}/players;status=A;sort=AR;start=25;count=25"] = {"league": []}
     with pytest.raises(YahooParseError, match="missing 'players'"):
         await refresh(league)
+
+
+class SlowPages(League):
+    """Every available page but the first answers late."""
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if ";status=A;" in str(request.url) and ";start=0;" not in str(request.url):
+            for _ in range(50):
+                await asyncio.sleep(0)
+        return await super().__call__(request)
+
+
+@pytest.mark.parametrize("available", [60, None])
+async def test_a_failed_page_cancels_the_requests_still_running(available: int | None) -> None:
+    league = SlowPages()
+    league.overrides[f"league/{LK}/players;status=A;sort=AR;start=0;count=25"] = {"league": []}
+    with pytest.raises(YahooParseError):
+        await source(league, available=available).fetch_snapshot()
+    issued = len(league.paths)
+    for _ in range(300):  # the slow pages would have answered by now
+        await asyncio.sleep(0)
+    assert len(league.paths) == issued
+    assert not [p for p in league.paths if ";status=A;" in p and ";start=0;" not in p]

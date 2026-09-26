@@ -9,9 +9,10 @@
 
 ``problems`` then re-checks the result: a fixture is written only if it
 reports nothing. Besides forbidden keys and email addresses, it refuses any
-string still holding one of the original team or league names
-(``private_names``), wherever it turned up. The repo is public, so this errs
-on the side of refusing.
+string still holding one of the original team or league names or manager
+nicknames (``private_names``), wherever it turned up, except in public
+player fields (``PUBLIC_KEYS``: a team called "Kings" mustn't block every
+Los Angeles player). The repo is public, so this errs on the side of refusing.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ TEAM_LOGO = [{"team_logo": {"size": "large", "url": "https://example.invalid/tea
 LEAGUE_NAME = "League"
 PLACEHOLDER = re.compile(r"Team \d+|League")
 SHORT_NAME = 4  # names shorter than this only match a whole string
+# Public player fields: NHL names and teams, never a fantasy team's or manager's.
+PUBLIC_KEYS = frozenset(
+    {"full", "first", "last", "ascii_first", "ascii_last", "editorial_team_full_name"}
+)
 
 
 def team_name(team_key: str) -> str:
@@ -83,7 +88,7 @@ def sanitize(node: Any) -> Any:
 
 
 def private_names(node: Any) -> set[str]:
-    """The team and league names in a raw response: what ``sanitize`` replaces."""
+    """The team and league names and manager nicknames in a raw response."""
     names: set[str] = set()
     if isinstance(node, list):
         if _team_key(node) is not None:
@@ -93,9 +98,12 @@ def private_names(node: Any) -> set[str]:
     elif isinstance(node, dict):
         if ("team_key" in node or "league_key" in node) and "name" in node:
             names.add(node["name"])
+        if "nickname" in node:  # a manager's
+            names.add(node["nickname"])
         for value in node.values():
             names |= private_names(value)
-    return {n for n in names if isinstance(n, str) and n.strip() and not PLACEHOLDER.fullmatch(n)}
+    stripped = {n.strip() for n in names if isinstance(n, str)}
+    return {n for n in stripped if n and not PLACEHOLDER.fullmatch(n)}
 
 
 def _holds_name(text: str, names: frozenset[str]) -> bool:
@@ -105,7 +113,9 @@ def _holds_name(text: str, names: frozenset[str]) -> bool:
     )
 
 
-def problems(node: Any, names: frozenset[str] = frozenset(), path: str = "$") -> list[str]:
+def problems(
+    node: Any, names: frozenset[str] = frozenset(), path: str = "$", key: str = ""
+) -> list[str]:
     """Where ``node`` still holds something that must not be committed.
 
     ``names``: the original team and league names (``private_names`` of the
@@ -113,16 +123,16 @@ def problems(node: Any, names: frozenset[str] = frozenset(), path: str = "$") ->
     """
     found = []
     if isinstance(node, dict):
-        for key, value in node.items():
-            if key in FORBIDDEN_KEYS:
-                found.append(f"{path}.{key}: forbidden key")
-            found.extend(problems(value, names, f"{path}.{key}"))
+        for k, value in node.items():
+            if k in FORBIDDEN_KEYS:
+                found.append(f"{path}.{k}: forbidden key")
+            found.extend(problems(value, names, f"{path}.{k}", k))
     elif isinstance(node, list):
         for i, item in enumerate(node):
-            found.extend(problems(item, names, f"{path}[{i}]"))
+            found.extend(problems(item, names, f"{path}[{i}]", key))
     elif isinstance(node, str):
         if EMAIL.search(node):
             found.append(f"{path}: email address")
-        if _holds_name(node, names):
+        if key not in PUBLIC_KEYS and _holds_name(node, names):
             found.append(f"{path}: a team or league name")
     return found

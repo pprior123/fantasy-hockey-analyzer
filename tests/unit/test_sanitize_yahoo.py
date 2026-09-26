@@ -131,7 +131,8 @@ def test_private_names_are_the_team_and_league_names() -> None:
         ],
         "flat": {"team_key": "465.l.8076.t.3", "name": "Flat Out"},
     }
-    assert private_names(raw) == {"Real League", "Bunch", "Flat Out"}  # "Team 2" is ours
+    # "Team 2" is our placeholder; "Someone" is the synthetic managers' nickname
+    assert private_names(raw) == {"Real League", "Bunch", "Flat Out", "Someone"}
 
 
 def test_player_names_are_not_private_names() -> None:
@@ -152,6 +153,25 @@ def test_player_names_are_not_private_names() -> None:
 def test_a_private_name_anywhere_is_a_problem(text: str, leaks: bool) -> None:
     found = problems({"recap": {"title": text}}, frozenset({"Bunch", "Ab"}))
     assert found == (["$.recap.title: a team or league name"] if leaks else [])
+
+
+def test_manager_nicknames_are_private_names_and_names_are_trimmed() -> None:
+    raw = {
+        "managers": [{"manager": {"nickname": "Someone"}}],
+        "t": [{"team_key": "k.t.1"}, {"name": " Bunch "}],
+    }
+    assert private_names(raw) == {"Someone", "Bunch"}
+
+
+def test_public_player_fields_may_repeat_a_team_name() -> None:
+    kings = b.P("8", "Anze Kings", "LA")  # a surname that is also a fantasy team's name
+    page = b.league_players([kings])
+    meta = page["league"][1]["players"]["0"]["player"][0]
+    meta.append({"editorial_team_full_name": "Los Angeles Kings"})
+    assert problems(sanitize(page), frozenset({"Kings"})) == []
+    assert problems({"recap": "Kings win"}, frozenset({"Kings"})) == [
+        "$.recap: a team or league name"
+    ]
 
 
 def test_sanitized_rosters_hold_no_private_name() -> None:

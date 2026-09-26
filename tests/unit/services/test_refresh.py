@@ -411,3 +411,25 @@ async def test_a_cache_without_a_timestamp_is_logged(
     await repo.put(CACHE, "meta", meta)
     assert await load_cached(repo) is None
     assert caplog.messages == ["stats cache has no usable timestamp; refetching"]
+
+
+class SlowReads(CountingReads):
+    """Reads that yield to the event loop, so concurrent requests really interleave."""
+
+    async def get(self, collection: str, doc_id: str) -> Any:
+        await asyncio.sleep(0)
+        return await super().get(collection, doc_id)
+
+    async def all(self, collection: str) -> dict[str, Any]:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return await super().all(collection)
+
+
+async def test_interleaved_cold_requests_download_the_cache_once(snap: LeagueSnapshot) -> None:
+    repo, clock = SlowReads(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(snap, T0))
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    results = await asyncio.gather(*(refresh.current() for _ in range(4)))
+    assert repo.alls == 1
+    assert all(r == Cached(snap, T0) for r in results)

@@ -441,3 +441,9 @@ def test_a_weak_match_by_alias_says_so() -> None:
     assert result.status is Status.REVIEW
     assert result.by_alias
     assert result.candidates[0].candidate == MCDAVID
+
+
+def test_a_position_tie_break_to_a_player_on_another_team_is_only_a_candidate() -> None:
+    result = match(Query("Hughes", "BOS", "D"), ROSTER, scope=Scope.ROSTER)  # Quinn is VAN
+    assert result.status is Status.REVIEW
+    assert result.candidates[0].candidate.player_id == "r4"

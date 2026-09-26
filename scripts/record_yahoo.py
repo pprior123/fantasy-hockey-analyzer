@@ -98,6 +98,13 @@ def file_name(index: int, path: str) -> str:
     return f"{index:03d}-{slug}.json"
 
 
+def latest_per_path(records: Sequence[Record]) -> list[Record]:
+    """One record per path, the last: a request retried after a 401 was recorded
+    twice, and a replay must serve the answer the refresh actually used."""
+    last = {r.path: i for i, r in enumerate(records)}
+    return [r for i, r in enumerate(records) if last[r.path] == i]
+
+
 def write_records(records: Sequence[Record], directory: Path, params: dict[str, Any]) -> None:
     """Sanitize, check, then (only if every record is clean) replace ``directory``'s files."""
     names = frozenset(n for r in records for n in private_names(r.body))
@@ -232,12 +239,15 @@ async def record(
         started = time.perf_counter()
         try:
             snapshot = await source.fetch_snapshot()
-        except Exception:
-            write_records(transport.records, probe_dir / "failed", params)
+        except Exception as error:
+            try:  # every record, retries included: this is for diagnosis
+                write_records(transport.records, probe_dir / "failed", params)
+            except SanitizeError as e:  # keep the refresh's error, the one that matters
+                error.add_note(f"What it recorded was not kept: {e}")
             raise
         seconds = time.perf_counter() - started
         main_calls = list(transport.records)
-        write_records(main_calls, fixture_dir, params)
+        write_records(latest_per_path(main_calls), fixture_dir, params)
         notes = await run_probes(client, snapshot)
         write_records(transport.records[len(main_calls) :], probe_dir, params)
     return Summary(len(main_calls), seconds, snapshot, notes)
@@ -251,7 +261,7 @@ async def _main() -> int:
             raise SetupError("no token yet: run python -m scripts.yahoo_auth first")
         summary = await record(creds, store, httpx.AsyncHTTPTransport())
     except (SetupError, SanitizeError, YahooError, YahooAuthError, YahooParseError) as e:
-        print(f"Failed: {e}", file=sys.stderr)
+        print(f"Failed: {e}", *getattr(e, "__notes__", ()), sep="\n", file=sys.stderr)
         return 1
     print("\n".join(summary.lines()))
     print(f"\nFixtures: {FIXTURE_DIR.relative_to(REPO)}; probes: {PROBE_DIR.relative_to(REPO)}")

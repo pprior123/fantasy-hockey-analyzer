@@ -24,11 +24,16 @@ class Yahoo:
     def __init__(self) -> None:
         self.league = League(strict=False)
         self.refreshes = 0
+        self.unauthorized_once: set[str] = set()  # API paths answered 401 the first time
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         if str(request.url) == oauth.TOKEN_URL:
             self.refreshes += 1
             return httpx.Response(200, json={"access_token": "acc-hidden", "expires_in": 3600})
+        path = rec.api_path(request.url)
+        if path in self.unauthorized_once:
+            self.unauthorized_once.discard(path)
+            return httpx.Response(401, json={"error": {"description": "token expired"}})
         return await self.league(request)
 
 
@@ -142,6 +147,52 @@ async def test_a_failed_refresh_keeps_what_it_recorded_in_private(tmp_path: Path
     assert (tmp_path / "fixtures" / "000-previous.json").exists()  # untouched
 
 
+async def test_a_retried_request_is_one_fixture_the_answer_used(tmp_path: Path) -> None:
+    yahoo = Yahoo()
+    settings = f"league/{LK}/settings"
+    yahoo.unauthorized_once.add(settings)
+    await record(tmp_path, yahoo)
+    assert yahoo.refreshes == 1
+    assert yahoo.league.paths.count(settings) == 1  # the 401 never reached the league
+    calls = written(tmp_path / "fixtures")[rec.MANIFEST]["calls"]
+    assert [c["status"] for c in calls if c["path"] == settings] == [200]
+    assert len(calls) == len({c["path"] for c in calls}) == 17
+
+
+def test_latest_per_path_keeps_the_last_record_of_each_path_in_order() -> None:
+    records = [rec.Record("a", 401, None), rec.Record("b", 200, 1), rec.Record("a", 200, 2)]
+    assert rec.latest_per_path(records) == records[1:]
+
+
+async def test_a_failed_refresh_keeps_its_error_if_its_records_leak(tmp_path: Path) -> None:
+    yahoo = Yahoo()
+    yahoo.league.settings["league_key"] = "465.l.9999"
+    yahoo.league.overrides["game/465/stat_categories"] = {"x": "mail me: a.b@example.com"}
+    with pytest.raises(YahooParseError, match="asked for league") as caught:
+        await record(tmp_path, yahoo)
+    assert any("not kept: 1 problems" in n for n in caught.value.__notes__)
+    assert not (tmp_path / "probes" / "failed").exists()
+
+
+async def test_main_prints_the_error_and_its_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def failing_record(*args: object, **kw: object) -> rec.Summary:
+        error = YahooParseError("asked for league X")
+        error.add_note("What it recorded was not kept: 1 problems")
+        raise error
+
+    monkeypatch.setenv("YAHOO_CLIENT_ID", "c")
+    monkeypatch.setenv("YAHOO_CLIENT_SECRET", "s")
+    token = await store(tmp_path)
+    monkeypatch.setattr(rec, "JsonFileTokenStore", lambda: token)
+    monkeypatch.setattr(rec, "record", failing_record)
+    assert await rec._main() == 1
+    assert capsys.readouterr().err == (
+        "Failed: asked for league X\nWhat it recorded was not kept: 1 problems\n"
+    )
+
+
 def test_nothing_is_written_if_sanitizing_leaves_an_email(tmp_path: Path) -> None:
     leaky = b.P("777", "Mail me at x.y@example.com")
     records = [
@@ -197,8 +248,9 @@ async def test_summary_explains_a_stat_map_failure(tmp_path: Path) -> None:
 
 
 async def test_main_needs_credentials(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.setattr(rec, "JsonFileTokenStore", lambda: JsonFileTokenStore(tmp_path / "none"))
     monkeypatch.delenv("YAHOO_CLIENT_ID", raising=False)
     monkeypatch.delenv("YAHOO_CLIENT_SECRET", raising=False)
     assert await rec._main() == 1

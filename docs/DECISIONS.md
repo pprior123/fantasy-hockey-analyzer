@@ -933,3 +933,31 @@ fixed as listed in PR #5's review log. The design changes:
     logs request URLs, which carry the sheet ID and the Firestore project.
   - Create `RefreshService` and the token providers per event loop (their
     `asyncio.Lock`s bind to the first loop that uses them).
+
+## 2026-09-26 — M3 review round 2: weak matches go to review (owner's decision)
+The round-2 reviewer found that a stale sheet row "Hughes / D / NJD" bound
+silently and permanently to the roster's only Hughes, a C on another team.
+The row's salary went to the wrong player, and the discrepancy report showed
+nothing, although the report exists to make stale tabs visible (SPEC §4a).
+The owner chose (2026-09-26):
+- **Surname-only rows (roster scope):** a unique surname still matches, but
+  if the row's team **or** position group contradicts that player, it
+  becomes a candidate for review. The picked player is offered first, at
+  100.
+- **Name-only rows with no team (the PuckPedia CSV):** a position-group
+  contradiction alone sends the row to review. Without a team, position is
+  the only other evidence.
+- **Unchanged:** full-name matches with a team (steps 1-2), and name-only
+  matches where the team fits, still bind even if the position disagrees,
+  since sources differ on positions. A name-only match contradicted by both
+  team and position is only a candidate (round 1).
+
+The cost is one confirmation per contradicted row, versus a wrong salary
+silently feeding `room_after` / `swap_ok`. SPEC §6 is updated to match.
+
+The owner asked about a Team column in the CSV. It is already optional
+(DECISIONS, CSV format), and it lets rows match at steps 1-2 and skip the
+position-only review. PuckPedia's copied table has no team, so adding one
+means pasting team by team. That's deferred until the first real import
+shows whether the review list is long.
+

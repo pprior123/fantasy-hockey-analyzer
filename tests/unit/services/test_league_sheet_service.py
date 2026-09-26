@@ -178,7 +178,7 @@ def test_an_unrecognized_tab_has_no_payroll() -> None:
 
 
 def test_two_rows_on_one_player_trust_neither() -> None:
-    twice = s.TeamTab("Twice", [s.Player("Dee Hill", "C"), s.Player("Hill", "C")])
+    twice = s.TeamTab("Twice", [s.Player("Dee Hill", "C", "OTT"), s.Player("Hill", "C", "OTT")])
     report = match_tab(parse_sheet(s.grid(twice)).tab("Twice"), TWO, NO_ALIASES, {})
     assert [m.player_id for m in report.rows] == [None, None]
     assert [p.name for p in report.missing_from_tab] == ["Dee Hill", "Eve Moss"]
@@ -310,7 +310,7 @@ def test_unknown_team_strings_are_listed() -> None:
 
 
 def test_two_rows_on_one_player_are_offered_that_player_for_review() -> None:
-    twice = s.TeamTab("Twice", [s.Player("Dee Hill", "C"), s.Player("Hill", "C")])
+    twice = s.TeamTab("Twice", [s.Player("Dee Hill", "C", "OTT"), s.Player("Hill", "C", "OTT")])
     report = match_tab(parse_sheet(s.grid(twice)).tab("Twice"), TWO, NO_ALIASES, {})
     for m in report.rows:
         assert m.result is not None

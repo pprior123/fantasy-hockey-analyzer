@@ -123,9 +123,23 @@ def test_a_tie_position_cannot_break_is_ambiguous() -> None:
     assert len(result.candidates) == 2
 
 
-def test_position_alone_never_overrides_a_unique_name() -> None:
-    result = match(Query("Connor McDavid", None, "D"), POOL)  # the row's position is wrong
-    assert (matched(result), result.by_position) == (MCDAVID, False)
+def test_with_no_team_a_position_mismatch_sends_a_unique_name_to_review() -> None:
+    # Owner's decision (M3 round 2): a CSV row has no team, so its position group
+    # is the only other evidence, and a mismatch mustn't bind silently.
+    result = match(Query("Connor McDavid", None, "D"), POOL)
+    assert result.status is Status.REVIEW
+    assert result.candidates[0].candidate == MCDAVID
+    assert result.candidates[0].score == 100.0
+
+
+def test_with_the_team_matching_a_position_mismatch_still_matches() -> None:
+    result = match(Query("Connor McDavid", "EDM", "D"), POOL)  # sources disagree on position
+    assert (matched(result), result.step) == (MCDAVID, Step.EXACT)
+
+
+def test_with_no_team_and_no_position_a_unique_name_matches() -> None:
+    assert matched(match(Query("Connor McDavid"), POOL)) == MCDAVID
+    assert matched(match(Query("Connor McDavid", None, "C"), POOL)) == MCDAVID
 
 
 # ---------------------------------------------------------------- fuzzy: candidates only
@@ -309,7 +323,7 @@ def test_a_name_match_contradicted_by_team_and_position_is_only_a_candidate() ->
 
 @pytest.mark.parametrize(
     ("team", "pos"),
-    [("BOS", "D"), ("TOR", "C"), (None, "C"), ("BOS", None)],
+    [("BOS", "D"), ("TOR", "C"), ("BOS", None)],  # (None, "C"): review, see McDavid
 )
 def test_one_contradiction_or_an_unknown_still_matches_by_name(
     team: str | None, pos: str | None
@@ -321,6 +335,30 @@ def test_one_contradiction_or_an_unknown_still_matches_by_name(
 def test_the_contradiction_guard_applies_to_surnames_in_the_roster() -> None:
     result = match(Query("Andersen", "BOS", "C"), ROSTER, scope=Scope.ROSTER)
     assert result.status is Status.REVIEW
+
+
+@pytest.mark.parametrize(
+    ("team", "pos"),
+    [("NJ", "D"), ("VAN", "C"), (None, "D"), ("NJ", None)],
+)
+def test_a_surname_match_contradicted_by_team_or_position_is_only_a_candidate(
+    team: str | None, pos: str | None
+) -> None:
+    # Owner's decision (M3 round 2): a stale "Hughes / D / NJD" row mustn't bind
+    # the roster's only Hughes (a C on another team) and hand him the salary.
+    roster = [c("j", "Jack Hughes", "Van", "C"), c("o", "Other Guy", "Van", "D")]
+    contradicts = (team is not None and team != "VAN") or (pos is not None and pos != "C")
+    result = match(Query("Hughes", team, pos), roster, scope=Scope.ROSTER)
+    if contradicts:
+        assert result.status is Status.REVIEW
+        assert result.candidates[0].candidate.player_id == "j"
+    else:
+        assert matched(result).player_id == "j"
+
+
+def test_a_surname_that_fits_team_and_position_still_matches() -> None:
+    result = match(Query("Andersen", "CAR", "G"), ROSTER, scope=Scope.ROSTER)
+    assert (matched(result).player_id, result.step) == ("r1", Step.SURNAME)
 
 
 def test_a_full_name_never_matches_on_surname_alone() -> None:
@@ -375,3 +413,31 @@ def test_fuzzy_never_matches(names: list[tuple[str, str]], first: str, last: str
         assert result.player is None
         assert result.step is None
         assert len(result.candidates) <= max(3, len(pool))
+
+
+def test_a_weak_match_offers_the_picked_player_first_then_the_closest_others() -> None:
+    from rapidfuzz import fuzz
+
+    roster = [
+        c("j", "Jack Hughes", "Van", "C"),
+        c("h", "Dan Hughs", "Van", "D"),  # surname close to the row's
+        c("z", "Bob Zed", "Van", "D"),
+        c("y", "Al Yu", "Van", "D"),
+    ]
+    result = match(Query("Hughes", "NJ", "C"), roster, scope=Scope.ROSTER)
+    assert result.status is Status.REVIEW
+    assert not result.by_alias
+    ids = [s.candidate.player_id for s in result.candidates]
+    assert (len(ids), ids[:2], len(set(ids))) == (3, ["j", "h"], 3)  # TOP, no repeats
+    assert result.candidates[0].score == 100.0
+    # Roster scope: scored against the surname, as fuzzy review would be.
+    assert result.candidates[1].score == pytest.approx(fuzz.token_sort_ratio("hughes", "hughs"))
+    assert result.candidates[1].score >= result.candidates[2].score
+
+
+def test_a_weak_match_by_alias_says_so() -> None:
+    aliases = Aliases().with_alias("Connor McDavid", "Con MacDavid")
+    result = match(Query("Con MacDavid", None, "D"), POOL, aliases=aliases)
+    assert result.status is Status.REVIEW
+    assert result.by_alias
+    assert result.candidates[0].candidate == MCDAVID

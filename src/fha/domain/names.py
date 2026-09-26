@@ -175,7 +175,7 @@ def team_spellings(teams: Mapping[str, tuple[str, str, tuple[str, ...]]]) -> dic
     """Every spelling of every team -> its code; a spelling shared by two teams is an error."""
     table: dict[str, str] = {}
     for code, (city, nickname, others) in teams.items():
-        codes = [code, *(o for o in others if o.isupper() and len(o) <= 3)]  # "TB", "LA"
+        codes = [code, *(o for o in others if o.isupper())]  # other codes: "TB", "LA", "CLS"
         with_nickname = [f"{c} {nickname}" for c in codes]  # "LA Kings", "TBL Lightning"
         for spelling in (code, city, nickname, f"{city} {nickname}", *others, *with_nickname):
             if table.setdefault(_team_key(spelling), code) != code:

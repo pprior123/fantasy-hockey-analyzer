@@ -186,12 +186,24 @@ def match(
             )
         )
 
+    def other_team(p: Candidate) -> bool:
+        return team is not None and canonical_team(p.team) not in (None, team)
+
+    def other_group(p: Candidate) -> bool:
+        return group is not None and position_group(p.position) not in (None, group)
+
     def plausible(p: Candidate) -> bool:
         """Not contradicted by both team and position group (steps 3-4 ignore the team,
         so a same-name player on another team at another position is only a candidate)."""
-        other_team = team is not None and canonical_team(p.team) not in (None, team)
-        other_group = group is not None and position_group(p.position) not in (None, group)
-        return not (other_team and other_group)
+        return not (other_team(p) and other_group(p))
+
+    def weak(step: Step, p: Candidate) -> bool:
+        """A match too weak to bind silently against contrary evidence (owner's
+        decision, M3 round 2): a surname contradicted by team *or* position; a name
+        with no team to go on, contradicted by position."""
+        if step is Step.SURNAME:
+            return other_team(p) or other_group(p)
+        return step is Step.NAME and team is None and other_group(p)
 
     steps.append((Step.NAME, lambda p: bool(keys & name_keys(p.name)) and plausible(p)))
     if scope is Scope.ROSTER:
@@ -200,10 +212,14 @@ def match(
     for step, fits in steps:
         hits = sorted((p for p in candidates if fits(p)), key=_order)
         if len(hits) == 1:
+            if weak(step, hits[0]):
+                return _review(hits[0], names, candidates, scope, by_alias)
             return MatchResult(Status.MATCHED, hits[0], step, by_alias)
         if hits:
             same = [p for p in hits if group is not None and position_group(p.position) is group]
             if len(same) == 1:
+                if weak(step, same[0]):
+                    return _review(same[0], names, candidates, scope, by_alias)
                 return MatchResult(Status.MATCHED, same[0], step, by_alias, by_position=True)
             tie = tuple(Scored(p, _score(names, p, scope)) for p in hits)
             return MatchResult(Status.AMBIGUOUS, by_alias=by_alias, candidates=tie)
@@ -215,6 +231,23 @@ def match(
     bar = ROSTER_FUZZY if scope is Scope.ROSTER else POOL_FUZZY
     status = Status.REVIEW if scored and scored[0].score >= bar else Status.UNMATCHED
     return MatchResult(status, by_alias=by_alias, candidates=tuple(scored))
+
+
+def _review(
+    chosen: Candidate,
+    names: Sequence[str],
+    candidates: Sequence[Candidate],
+    scope: Scope,
+    by_alias: bool,
+) -> MatchResult:
+    """The player the cascade picked, offered for the owner's review (first, at 100)."""
+    others = sorted(
+        (Scored(p, _score(names, p, scope)) for p in candidates if p != chosen),
+        key=lambda s: (-s.score, *_order(s.candidate)),
+    )
+    return MatchResult(
+        Status.REVIEW, by_alias=by_alias, candidates=(Scored(chosen, 100.0), *others[: TOP - 1])
+    )
 
 
 def _order(p: Candidate) -> tuple[str, str]:

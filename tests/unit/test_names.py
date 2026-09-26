@@ -324,3 +324,9 @@ def test_unknown_or_mixed_positions_are_none(raw: str | None) -> None:
 )
 def test_a_code_with_the_nickname_is_the_team(raw: str, code: str) -> None:
     assert canonical_team(raw) == code
+
+
+def test_only_codes_combine_with_the_nickname() -> None:
+    assert canonical_team("CLS Blue Jackets") == "CBJ"  # a 3-letter alternate code
+    assert canonical_team("Habs Canadiens") is None  # a short form, not a code
+    assert canonical_team("Tampa Lightning") is None

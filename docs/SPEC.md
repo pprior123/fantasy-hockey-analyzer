@@ -409,8 +409,12 @@ persisted. Never re-match by name on every request.
 
 League-sheet rows are matched **only against the bound Yahoo team's roster**
 (~27 candidates), which makes surname-only entries ("Andersen") and typos
-("Oetterger") resolvable: a unique surname within the roster is a match;
-fuzzy matches are still candidates needing confirmation. PuckPedia rows use
+("Oetterger") resolvable: a unique surname within the roster is a match,
+unless the row's team or position group contradicts that player (then it is
+a candidate for confirmation, owner's decision 2026-09-26); fuzzy matches
+are still candidates needing confirmation. A name-only match for a row with
+no team (PuckPedia rows) whose position group contradicts is likewise only a
+candidate. Position group also breaks ties (DECISIONS, M3 matcher). PuckPedia rows use
 the full cascade against the whole pool. Names may be "Last, First"; the
 normalizer handles both orders.
 

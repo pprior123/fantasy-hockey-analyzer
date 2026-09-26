@@ -50,6 +50,17 @@ def test_normalize_name(raw: str, normalized: str) -> None:
     assert normalize_name(raw) == normalized
 
 
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        ("\N{LATIN CAPITAL LETTER AE WITH MACRON}", "ae"),  # needs two folds: Ǣ -> ǣ -> æ -> ae
+        ("\N{GREEK UPSILON WITH HOOK SYMBOL}", "\N{GREEK SMALL LETTER UPSILON}"),
+    ],
+)
+def test_letters_that_need_two_folds_settle(raw: str, normalized: str) -> None:
+    assert normalize_name(raw) == normalized
+
+
 @given(st.text())
 def test_normalize_name_is_idempotent(raw: str) -> None:
     once = normalize_name(raw)

@@ -30,7 +30,6 @@ SPECIAL_LETTERS = str.maketrans(
 DROPPED = frozenset(
     "'`.\N{RIGHT SINGLE QUOTATION MARK}\N{LEFT SINGLE QUOTATION MARK}\N{MODIFIER LETTER APOSTROPHE}"
 )
-MAX_PASSES = 4  # casefold and NFKD can each expose work for the other; settle within a few
 
 # Equivalent first names. A name may sit in several groups (Cal: Callan or
 # Calvin); two names match if they share a group. Mostly from the workbook's
@@ -89,11 +88,9 @@ def normalize_name(raw: str) -> str:
     """Lowercase words without accents or punctuation, "Last, First" as "first last"."""
     last, comma, first = raw.partition(",")
     text = f"{first} {last}" if comma else raw
-    for _ in range(MAX_PASSES):
-        folded = _fold(text)
-        if folded == text:
-            break
-        text = folded
+    # One pass can expose more work (Ǣ -> ǣ -> æ -> ae); two always settle, checked
+    # over every Unicode code point.
+    text = _fold(_fold(text))
     kept = "".join("" if ch in DROPPED else ch if ch.isalnum() else " " for ch in text)
     return " ".join(kept.split())
 

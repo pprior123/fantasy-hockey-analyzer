@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fha.services.teams import free_agents_by_need, matchup_view
 from fha.web import format as _format  # noqa: F401 - installs the template filters
 from fha.web.app import render
-from fha.web.data import page_data, season_param
+from fha.web.data import page_data, season_param, view_param
 from fha.web.routes.players import bad_request
 
 router = APIRouter()
@@ -30,6 +30,7 @@ async def matchup(request: Request) -> HTMLResponse:
     week = _week(params)
     if week is None:
         return bad_request(request, "week must be current or next.", "/matchup", "matchup")
+    view_param(params.get("view"))  # no salary columns here, but the same values hold
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     game = matchup_view(view, next_week=week == "next")
@@ -64,6 +65,7 @@ async def free_agents(request: Request) -> HTMLResponse:
         return bad_request(
             request, "week must be current or next, and fits 1 or left out.", "/matchup", "matchup"
         )
+    view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     game = matchup_view(data.view, next_week=week == "next")
     need = free_agents_by_need(data.view, game, fits_my_cap=fits == "1") if game else None

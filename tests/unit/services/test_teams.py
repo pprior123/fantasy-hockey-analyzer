@@ -152,6 +152,11 @@ def test_replace_lists_free_agents_at_the_players_positions(snap: LeagueSnapshot
     rated = next(r for r in swap.rows if r.player.ttltst is not None)
     assert rated.delta_ttltst == pytest.approx(rated.player.ttltst - drop_ttl)  # type: ignore[operator]
     assert set(rated.delta_norms) == set(Category)
+    for cat in Category:  # the free agent's norm minus the dropped player's, not the reverse
+        assert rated.delta_norms[cat] == pytest.approx(
+            rated.player.norms[cat] - swap.drop.norms[cat]
+        )
+    assert any(v != 0 for v in rated.delta_norms.values())
 
 
 def test_the_swap_ok_toggle_keeps_only_legal_swaps_and_counts_unknowns(

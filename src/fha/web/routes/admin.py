@@ -322,6 +322,8 @@ async def _data_for(request: Request, what: str) -> PageData:
         return await page_data(request)
     except NO_DATA as e:
         raise InputError(f"{what} needs Yahoo data first ({type(e).__name__})") from None
+    except SettingsError:
+        raise InputError(f"{what} needs valid rating settings first (below)") from None
 
 
 @router.post("/admin/bind")
@@ -382,6 +384,8 @@ async def csv_import(request: Request, file: UploadFile) -> RedirectResponse:
         return _back(
             request, "error", f"Import needs Yahoo data first ({type(e).__name__}).", anchor="csv"
         )
+    except SettingsError:
+        return _back(request, "error", "Import needs valid rating settings first.", anchor="csv")
     try:
         report = await import_free_agent_salaries(
             svc.repo, rows, data.view.snapshot.pool, await load_aliases(svc.repo)

@@ -41,6 +41,7 @@ select, input[type=text], input[type=number], input[type=password] {
    the footer (~4rem, and the home bar's inset), so even scrolled to the page's end the
    header row is below the nav. Numbers right-aligned. */
 .table-wrap { overflow: auto; border: 1px solid var(--line);
+              max-height: calc(100vh - 9.5rem); /* older WebKit: no dvh */
               max-height: calc(100dvh - 9.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
               border-radius: .4rem; -webkit-overflow-scrolling: touch; }
 table.data { border-collapse: collapse; width: 100%; font-size: .85rem; }

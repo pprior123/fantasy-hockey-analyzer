@@ -157,9 +157,10 @@ class RefreshService:
     def _with_recent_failure(self, cached: Cached) -> Cached:
         """A fresh snapshot, with the note of a refresh that failed after it was fetched
         (the Refresh button's forced attempt): so the page after a failed Refresh says
-        so, instead of looking like a success."""
+        so, instead of looking like a success. It replaces a "not saved" note: the
+        snapshot is no longer the fresh fetch that note describes."""
         failure = self._recent_failure()
-        if failure is None or cached.refresh_error is not None:
+        if failure is None:
             return cached
         failed_at, note = failure
         if failed_at < cached.fetched_at:

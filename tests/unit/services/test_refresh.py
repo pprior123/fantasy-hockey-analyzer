@@ -165,6 +165,41 @@ async def test_a_failed_forced_refresh_is_noted_on_the_fresh_snapshot(
     assert source.calls == 1
 
 
+async def test_a_failed_refresh_note_replaces_a_not_saved_note(snap: LeagueSnapshot) -> None:
+    """M4R2B-2: Firestore refused the save, then Yahoo failed on Refresh. The page must
+    say Yahoo failed, not "Fresh from Yahoo, but it couldn't be saved"."""
+
+    class ReadOnly(InMemoryRepository):
+        async def replace_all(self, collection: str, docs: Any) -> None:
+            raise RepositoryError("Firestore HTTP 403")
+
+    class OnceThenDown(FakeYahooSource):
+        async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+            if self.calls:
+                raise YahooHTTPError(503, "x", None)
+            return await super().fetch_snapshot(last_season=last_season)
+
+    clock = FakeClock()
+    refresh = service(OnceThenDown(snap), ReadOnly(), clock)
+    assert (await refresh.current()).refresh_error == "not saved: Firestore HTTP 403"
+    clock.t += 5
+    forced = await refresh.current(force=True)
+    assert forced.refresh_error is not None
+    assert forced.refresh_error.startswith("YahooHTTPError")
+    after = await refresh.current()
+    assert after.refresh_error is not None
+    assert after.refresh_error.startswith("YahooHTTPError")
+
+
+async def test_a_failure_at_the_fetch_instant_is_still_noted(snap: LeagueSnapshot) -> None:
+    """Only a fetch strictly newer than the failure clears its note."""
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 600)
+    await save_cached(repo, Cached(snap, T0 + 600))
+    refresh = service(FailingSource(), repo, clock)
+    await refresh.current(force=True)  # fails at T0 + 600, the fetch's own instant
+    assert (await refresh.current()).refresh_error is not None
+
+
 async def test_a_newer_fetch_elsewhere_clears_the_failure_note(snap: LeagueSnapshot) -> None:
     repo, clock = InMemoryRepository(), FakeClock(T0 + 600)
     await save_cached(repo, Cached(snap, T0))

@@ -1,5 +1,6 @@
 """The Admin screen (SPEC §7.5, §4a, §6): every section and action, through the app."""
 
+import asyncio
 import re
 from dataclasses import replace
 from typing import Any
@@ -10,6 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import URLSafeTimedSerializer
 
+from fha.domain.names import normalize_name
+from fha.services.aliases import load_aliases
 from fha.services.refresh import RefreshService
 from fha.services.settings import COLLECTION as SETTINGS_COLLECTION
 from fha.services.settings import RATING
@@ -360,6 +363,32 @@ def test_a_bad_csv_is_refused_with_its_message(data: bytes, message: str) -> Non
     assert result["text"].startswith(message)
 
 
+def test_a_sheet_over_4_mb_is_refused_though_under_the_request_limit() -> None:
+    """4.2 MB passes the 4.5 MB request limit but not the sheet's own 4 MiB cap."""
+    result = upload_sheet(client(), b"x" * (4 * 1024 * 1024 + 1))
+    assert result == {"kind": "error", "text": "Upload: that file is over 4 MB."}
+
+
+@pytest.mark.parametrize(
+    ("path", "kw"),
+    [
+        ("/admin/bind", {"data": {"team_key": "x"}}),
+        ("/admin/csv", {"data": {"file": "Player,Pos,Cap Hit"}}),
+        ("/admin/aav", {}),
+    ],
+)
+def test_a_missing_or_mistyped_field_is_the_400_page_not_json(
+    path: str, kw: dict[str, Any]
+) -> None:
+    """M4R2A-6: FastAPI's 422 JSON echoed the input back; the app's page doesn't."""
+    response = client().post(path, **kw)
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "A form value was missing" in response.text
+    assert "Player,Pos" not in response.text
+    assert 'href="/admin"' in response.text
+
+
 def test_an_oversized_csv_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(admin, "MAX_CSV_BYTES", 1024 * 1024)
     result = post(client(), "/admin/csv", files={"file": ("fa.csv", b"x" * (1024 * 1024 + 1))})
@@ -402,7 +431,13 @@ def test_an_alias_is_named_from_the_stored_row_and_the_pool_not_the_form() -> No
     }
     result = post(c, "/admin/fa/confirm", data=form)
     assert result["text"] == f"Matched. Alias saved: {last_first(typo)[1:-1]} = {target.name}."
-    assert "Gretzky" not in c.get("/admin").text
+    repo = c.app.state.context.services.repo  # type: ignore[attr-defined]
+    aliases = asyncio.run(load_aliases(repo))
+    assert aliases.table[normalize_name(typo)] == (target.name,)  # the stored alias itself
+    assert all(
+        "Gretzky" not in names and "McDavid" not in names for names in aliases.table.values()
+    )
+    assert normalize_name("Wayne Gretzky") not in aliases.table
 
 
 def test_confirming_a_player_outside_the_pool_is_refused() -> None:
@@ -565,6 +600,29 @@ async def test_damaged_stored_settings_are_shown_not_hidden() -> None:
     assert "In use:" not in html
 
 
+async def test_damaged_settings_are_messages_on_the_admin_posts_that_rate() -> None:
+    """M4R2A-1: these POSTs rate the league to check their values; with damaged
+    settings they say so, pointing at the form that fixes them, never a 500."""
+    services = make_services()
+    await services.repo.put(SETTINGS_COLLECTION, RATING, {"gp_floor_fraction": 7})
+    c = client(services)
+    p = FREE[0]
+    assert post(c, "/admin/aav", data={"player_id": p.player_id, "aav": "1M"}) == {
+        "kind": "error",
+        "text": "A cap hit needs valid rating settings first (below).",
+    }
+    assert post(c, "/admin/fa/confirm", data={"key": "k|F", "player_id": p.player_id}) == {
+        "kind": "error",
+        "text": "Matching needs valid rating settings first (below).",
+    }
+    confirm = post(c, "/admin/sheet/confirm", data={"tab": "T", "key": "k", "player_id": "1"})
+    assert confirm["text"] == "T: Matching a row needs valid rating settings first (below)."
+    assert upload_csv(c, csv_row("Ada Big", "C", "$1")) == {
+        "kind": "error",
+        "text": "Import needs valid rating settings first.",
+    }
+
+
 # ---------------------------------------------------------------- flash and no data
 
 
@@ -603,7 +661,7 @@ def test_without_yahoo_data_the_page_still_works_and_imports_wait() -> None:
     c = client(no_yahoo())
     html = c.get("/admin", params={"q": "anyone"}).text
     assert "No Yahoo data yet" in html
-    assert "No player matches" in html  # nothing to search without the pool
+    assert "The search needs Yahoo data" in html  # nothing to search without the pool
     upload_sheet(c)
     assert "Needs Yahoo data (the teams)." in c.get("/admin").text
     assert upload_csv(c, csv_row("Ada Big", "C", "$1")) == {
@@ -778,3 +836,27 @@ def test_a_store_that_refuses_writes_is_a_message_on_every_admin_post() -> None:
     assert aav == {"kind": "error", "text": f"{refused}."}
     form = {"divisor_method": "workbook", "divisor_top_n": "", "gp_floor_percent": "2"}
     assert post(c, "/admin/settings", data=form)["text"] == f"Not saved: {refused}."
+
+
+def test_a_store_that_refuses_writes_is_a_message_on_the_confirm_posts() -> None:
+    repo = Refusing()
+    base = make_services()
+    services = replace(
+        base, repo=repo, refresh=RefreshService(FakeYahooSource(DEMO), repo, base.clock)
+    )
+    c = client(services)
+    upload_sheet(c)
+    post(c, "/admin/bind", data={"tab": "Pinecone", "team_key": TEAM1.team_key})
+    target = FREE[0]
+    typo = target.name[:-1] + "q"
+    upload_csv(c, csv_row(typo, target.display_position[0], "$2,000,000"))
+    key = re.search(
+        r'action="/admin/fa/confirm".*?name="key" value="([^"]+)"', c.get("/admin").text, re.S
+    )
+    assert key is not None
+    repo.refuse = True
+    refused = "Firestore answered HTTP 503"
+    row = {"tab": "Pinecone", "key": "zed nobody|F", "player_id": TEAM1.roster[-1].player.player_id}
+    assert post(c, "/admin/sheet/confirm", data=row)["text"] == f"Pinecone: {refused}."
+    fa = {"key": key[1], "player_id": target.player_id}
+    assert post(c, "/admin/fa/confirm", data=fa) == {"kind": "error", "text": f"{refused}."}

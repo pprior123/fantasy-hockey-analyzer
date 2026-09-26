@@ -2,12 +2,16 @@
 {% import "_macros.html" as m %}
 {% block content %}
 {{ m.notes(data) }}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/matchup/free-agents", params) }}
+  {{ m.refresh_button(here) }}
+</div>
 <p><a href="{{ url('/matchup', params, fits=None) }}">Back to the matchup</a></p>
 {% if need is none %}
 <p class="card">No matchup {{ 'next week' if week == 'next' else 'this week' }}, so nothing to help with.</p>
 {% else %}
 <p>Sorted by how much each free agent adds in the categories you're behind or close in:
-  {% for cat in game.comparison.trailing|sort %}<span class="badge">{{ cat.value }}</span> {% else %}<span class="muted">none</span>{% endfor %}</p>
+  {% for cat in categories if game.comparison and cat in game.comparison.trailing %}<span class="badge">{{ cat.value }}</span> {% else %}<span class="muted">none</span>{% endfor %}</p>
 <nav class="chips" aria-label="Cap">
   <a class="chip {{ '' if fits else 'on' }}" href="{{ url('/matchup/free-agents', params, fits=None) }}">All</a>
   <a class="chip {{ 'on' if fits else '' }}" href="{{ url('/matchup/free-agents', params, fits='1') }}">Fits my cap</a>

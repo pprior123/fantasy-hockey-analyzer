@@ -74,6 +74,14 @@ def test_insecure_cookies_are_refused_on_vercel() -> None:
     assert Settings.from_env({**BASE, "VERCEL": "1"}).secure_cookies is True
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "1e400", "2e6"])
+def test_non_finite_or_absurd_numbers_are_config_errors(value: str) -> None:
+    """M4R2A-4: nan was accepted (a nan TTL) and 1e400 raised OverflowError."""
+    for name in ("CACHE_TTL_MINUTES", "BASELINE_MIN_GP"):
+        with pytest.raises(ConfigError, match=f"^{name} must be a finite number up to 1e"):
+            Settings.from_env({**BASE, name: value})
+
+
 def test_the_salary_cap_override() -> None:
     """M4R1B-4: SALARY_CAP, whole dollars, only a fallback for the sheet's cap."""
     assert Settings.from_env(BASE).salary_cap is None

@@ -33,7 +33,7 @@ def money(amount: float | None) -> str:
     dollars = abs(Decimal(str(amount)))
     if dollars >= 999_500:  # rounds to $1.000M or more: two decimals, like $1.00M
         return f"{sign}${_round(dollars / 1_000_000, 2)}M"
-    if dollars >= 1_000:
+    if dollars >= 999.5:  # rounds to $1,000 or more
         return f"{sign}${_round(dollars / 1_000_000, 3)}M"
     whole = _round(dollars, 0)
     return f"{sign if whole else ''}${whole}"

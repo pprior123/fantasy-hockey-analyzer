@@ -17,6 +17,10 @@ For each tab with a ``PAYROLL`` label in its first rows:
 4. The cap is the summary-tab cell that the team tabs' ``CAP`` formulas
    reference.
 
+Amounts are whole dollars and never negative: a negative salary or cap
+reads as unknown (like ``???``), and a negative PAYROLL makes the tab
+unrecognized, since the app's cap arithmetic refuses negative amounts.
+
 Error reasons name cell addresses and the PAYROLL formula itself, never
 another cell's contents.
 """
@@ -74,7 +78,7 @@ def parse_sheet(grid: Grid) -> ParsedSheet:
             if m:
                 title = m[1].replace("''", "'") if m[1] else m[2]
                 cap_refs[(title, m[3].replace("$", "").upper())] += 1
-        tabs.append(_parse_tab(tab, payroll_label, _whole(cap_cell)))
+        tabs.append(_parse_tab(tab, payroll_label, _dollars(cap_cell)))
     cap, source = _summary_cap(grid, cap_refs)
     return ParsedSheet(cap=cap, cap_source=source, tabs=tuple(tabs), other_tabs=tuple(others))
 
@@ -96,6 +100,8 @@ def _parse_tab(tab: Tab, payroll_label: tuple[int, int], cap: int | None) -> Par
         payroll = _whole(cell)
         if payroll is None:
             raise UnrecognizedTabError("PAYROLL has no computed value (was the file recalculated?)")
+        if payroll < 0:
+            raise UnrecognizedTabError(f"the PAYROLL beside {a1(*payroll_label)} is negative")
         columns = _header(tab, r1, r2)
         first = columns.header_row + 1 if columns.header_row == r1 else r1
         rows = [*_counted_rows(tab, columns, c1, first, r2), *_ir_rows(tab, columns, c1, r2)]
@@ -191,7 +197,7 @@ def _row(
         name=name,
         position=_text(tab.cell(r, cols.position)) if cols.position else "",
         team=_text(tab.cell(r, cols.team)) if cols.team else "",
-        salary=_whole(salary),
+        salary=_dollars(salary),
         counted=counted,
         ir=ir,
     )
@@ -207,7 +213,7 @@ def _summary_cap(grid: Grid, refs: Counter[tuple[str, str]]) -> tuple[int | None
     summary = grid.tab(title)
     if summary is None:
         return None, _reference(title, ref)
-    return _whole(summary.at(ref)), _reference(title, ref)
+    return _dollars(summary.at(ref)), _reference(title, ref)
 
 
 def _reference(title: str, ref: str) -> str:
@@ -252,3 +258,9 @@ def _text(cell: Cell) -> str:
 def _whole(cell: Cell | None) -> int | None:
     number = cell.number if cell is not None else None
     return round(number) if number is not None else None
+
+
+def _dollars(cell: Cell | None) -> int | None:
+    """A salary or cap: whole dollars, or None when not a number or negative."""
+    amount = _whole(cell)
+    return amount if amount is not None and amount >= 0 else None

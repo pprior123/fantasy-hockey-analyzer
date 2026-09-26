@@ -164,7 +164,8 @@
     <input type="text" name="q" value="{{ q }}" placeholder="Player name" aria-label="Find a player">
     <button class="btn secondary" type="submit">Find</button>
   </form>
-  {% if q and not found %}<p class="muted">No player matches “{{ q }}”.</p>{% endif %}
+  {% if q and not data %}<p class="muted">The search needs Yahoo data (the player pool).</p>
+  {% elif q and not found %}<p class="muted">No player matches “{{ q }}”.</p>{% endif %}
   {% for f in found %}
   <div class="admin-review">
     <p><strong>{{ f.name }}</strong> {{ f.team }} <span class="muted">{{ f.owner or "free agent" }}</span> — {{ money(f.aav) }}{% if f.source %} <span class="muted">({{ f.source }})</span>{% endif %}</p>

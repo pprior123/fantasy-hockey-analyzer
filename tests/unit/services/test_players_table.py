@@ -180,3 +180,21 @@ def test_bad_params_are_refused(params: dict[str, str], message: str) -> None:
 def test_only_numbers_and_text_sort() -> None:
     with pytest.raises(TypeError, match="can't sort by a list"):
         _comparable([1])
+
+
+async def test_my_team_chip_is_empty_without_my_team() -> None:
+    """Without the owner's team in the data, "My Team" lists nobody (not the free
+    agents, whose owner is also None)."""
+    snap = await synthetic_snapshot()
+    orphan = replace(snap, teams=tuple(replace(t, is_mine=False) for t in snap.teams))
+    view = build_view(orphan, DEFAULT_CONFIG, Salaries())
+    assert select(view, PlayersQuery(owner=Owner.MINE)) == []
+
+
+def test_the_position_filter_uses_eligible_positions_not_the_display_text() -> None:
+    snap = demo_snapshot()
+    target = next(p for p in snap.available if p.eligible_positions == ("C",))
+    wider = replace(target, eligible_positions=("C", "LW"))  # display still "C"
+    snap = replace(snap, available=tuple(wider if p is target else p for p in snap.available))
+    view = build_view(snap, DEFAULT_CONFIG, Salaries())
+    assert target.player_id in ids(select(view, PlayersQuery(position="LW")))

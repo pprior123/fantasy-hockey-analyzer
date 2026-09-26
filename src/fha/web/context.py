@@ -9,6 +9,7 @@ factory runs inside the running app (its lifespan), not at import
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from fha.storage.repository import Repository
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
+MAX_SETTING = 1e6  # minutes or games: far beyond any sensible TTL or baseline
 MIN_SECRET_LENGTH = 32  # characters: it signs the session cookie and Admin's messages
 
 
@@ -73,6 +75,8 @@ def _number(environ: Mapping[str, str], name: str, default: float) -> float:
         value = float(raw)
     except ValueError:
         raise ConfigError(f"{name} must be a number") from None
+    if not math.isfinite(value) or value > MAX_SETTING:
+        raise ConfigError(f"{name} must be a finite number up to {MAX_SETTING:g}")
     if value < 0:
         raise ConfigError(f"{name} must be >= 0")
     return value

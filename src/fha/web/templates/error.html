@@ -4,5 +4,6 @@
   {% if message %}<p class="error">{{ message }}</p>
   {% else %}<p class="error">The app hit an unexpected error. Try again, or check the server log.</p>{% endif %}
   {% if hint %}<p class="muted">{{ hint }}</p>{% endif %}
+  {% if link %}<p><a href="{{ link[0] }}">{{ link[1] }}</a></p>{% endif %}
 </div>
 {% endblock %}

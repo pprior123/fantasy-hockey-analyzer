@@ -90,6 +90,9 @@ def names_in(html: str, table: str) -> list[str]:
         (999_500, "$1.00M"),
         (-4_000, "-$0.004M"),  # a team $4,000 over the cap never shows as "-$0.00M"
         (-400, "-$400"),
+        (1_000, "$0.001M"),
+        (999.5, "$0.001M"),  # rounds to $1,000: millions, not "$1000"
+        (999.4, "$999"),
         (400.4, "$400"),
         (0, "$0"),
         (float("inf"), "—"),
@@ -627,3 +630,75 @@ def test_refresh_needs_a_login() -> None:
         response = anonymous.post("/refresh", data={"next": "/league"}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"].startswith("/login")
+
+
+def test_a_negative_salary_on_the_sheet_is_unknown_not_a_crash() -> None:
+    """M4R2B-1: a typo'd negative cell crashed every rated screen and Admin."""
+    svc = make_services()
+    seed(svc, salary=-500_000)
+    c = client(svc)
+    for path in ("/admin", "/players", "/rosters", "/league", "/matchup", "/matchup/free-agents"):
+        assert c.get(path).status_code == 200, path
+    mine = c.get("/rosters").text.split('class="data roster"', 1)[1].split("</table>", 1)[0]
+    assert "-$" not in mine
+
+
+@pytest.mark.parametrize("path", ["/rosters/replace?drop=MY", "/matchup/free-agents"])
+def test_replace_and_the_need_list_have_the_season_toggle_and_refresh(path: str) -> None:
+    """M4R2B-4: SPEC §7: the season toggle is common to the tables."""
+    c = client()
+    html = c.get(
+        path.replace("MY", my_skater()) + ("&" if "?" in path else "?") + "season=current"
+    ).text
+    assert 'class="chips season-toggle"' in html
+    assert 'class="chip on" href="' in html.split("season-toggle", 1)[1].split("</nav>", 1)[0]
+    refresh = re.search(r'<form method="post" action="/refresh".*?</form>', html, flags=re.S)
+    assert refresh is not None
+    assert "season=current" in refresh[0]
+
+
+@pytest.mark.parametrize(
+    ("path", "back"),
+    [
+        ("/matchup?view=bogus", "/matchup"),
+        ("/matchup/free-agents?view=bogus", "/matchup"),
+        ("/rosters/replace?drop=1&view=x", "/rosters"),  # not /rosters/replace, itself a 400
+        ("/league?season=x", "/league"),
+    ],
+)
+def test_a_bad_value_links_back_to_the_screen(path: str, back: str) -> None:
+    response = client().get(path)
+    assert response.status_code == 400
+    assert f'<a href="{back}">Start over</a>' in response.text
+
+
+def test_the_replace_back_link_and_the_team_picker_keep_the_view() -> None:
+    c = client()
+    replace_page = c.get(f"/rosters/replace?drop={my_skater()}&view=cats&season=current").text
+    assert 'href="/rosters?season=current&amp;view=cats">Back to my roster' in replace_page
+    picker = c.get("/rosters?view=cats&season=last").text.split("team-picker", 1)[1]
+    picker = picker.split("</form>", 1)[0]
+    assert '<input type="hidden" name="view" value="cats">' in picker
+    assert '<input type="hidden" name="season" value="last">' in picker
+
+
+@pytest.mark.parametrize(("view", "columns"), [("", 9), ("&view=cats", 14)])
+def test_empty_roster_and_replace_tables_span_their_columns(view: str, columns: int) -> None:
+    empty = replace(
+        SNAP,
+        teams=tuple(
+            replace(t, roster=tuple(e for e in t.roster if e.player.is_goalie)) if t.is_mine else t
+            for t in SNAP.teams
+        ),
+    )
+    html = client(services_for(empty)).get(f"/rosters?x=1{view}").text
+    head = html.split('class="data roster"', 1)[1].split("</thead>", 1)[0]
+    assert len(re.findall(r"<th\b", head)) == columns
+    assert f'<td colspan="{columns}" class="muted">No skaters.' in html
+    no_fa = replace(SNAP, available=())
+    c = client(services_for(no_fa))
+    page = c.get(f"/rosters/replace?drop={my_skater()}{view}").text
+    head = page.split('class="data replace"', 1)[1].split("</thead>", 1)[0]
+    want = len(re.findall(r"<th\b", head))
+    assert want == (6 if not view else 11)
+    assert f'<td colspan="{want}" class="muted">No free agents at' in page

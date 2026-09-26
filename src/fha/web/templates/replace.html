@@ -3,6 +3,10 @@
 {% block content %}
 {{ m.notes(data) }}
 {% set drop = swap.drop %}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/rosters/replace", params) }}
+  {{ m.refresh_button(here) }}
+</div>
 <section class="card">
   <p><strong>{{ drop.name }}</strong> ({{ drop.position }}) · TTLTST {{ drop.ttltst|number(3) }} · AAV {{ drop.aav|money }}
     {% if drop.counts is none %}<span class="muted">(not on the sheet: frees nothing)</span>{% elif not drop.counts %}<span class="muted">(IR row: frees nothing)</span>{% endif %}</p>

@@ -4,14 +4,22 @@ import json
 import logging
 import re
 import struct
+from dataclasses import replace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from fha.services.refresh import RefreshService
+from fha.sources.yahoo.demo import demo_snapshot
+from fha.sources.yahoo.fake import FakeYahooSource
+from fha.storage.memory import InMemoryRepository
+from fha.storage.repository import RepositoryError
 from fha.web.app import (
     HERE,
     MAX_BODY_BYTES,
     NAV,
+    _length_ok,
     configure_logging,
     create_app,
     create_error_app,
@@ -149,6 +157,8 @@ def test_every_response_carries_the_security_headers() -> None:
     with TestClient(create_error_app("APP_PASSWORD not set")) as broken:
         responses.append(broken.get("/players"))
     for response in responses:
+        assert "default-src 'self'" in response.headers["content-security-policy"]
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["referrer-policy"] == "same-origin"
         assert response.headers["x-frame-options"] == "DENY"
@@ -168,7 +178,7 @@ def test_an_oversized_body_is_refused_before_it_is_read() -> None:
     big = b"x" * (MAX_BODY_BYTES + 1)
     response = client.post("/admin/sheet/upload", files={"file": ("sheet.xlsx", big)})
     assert response.status_code == 413
-    assert "That upload is over 4 MB." in response.text
+    assert "That upload is over 4.5 MB." in response.text
     assert 'href="/admin"' in response.text
     small = client.post("/refresh", data={"next": "/league"}, follow_redirects=False)
     assert small.status_code == 303
@@ -221,3 +231,114 @@ def test_the_stylesheet_keeps_table_headers_sticky_and_breakdowns_narrow() -> No
     assert re.search(r"dl\.norms \{[^}]*grid-template-columns: repeat\(2, auto\)", css)
     assert re.search(r"\.admin-inline \{[^}]*flex-wrap: wrap", css)
     assert "env(safe-area-inset-left)" in css
+
+
+@pytest.mark.parametrize(
+    ("length", "ok"),
+    [
+        ("0", True),
+        (str(MAX_BODY_BYTES), True),
+        (str(MAX_BODY_BYTES + 1), False),
+        ("9" * 5000, False),
+        ("12a", False),
+        ("١٢", False),
+        ("", False),
+    ],
+)
+def test_content_length_checks_never_parse_a_huge_number(length: str, ok: bool) -> None:
+    """M4R2A-2: int() of a 5000-digit Content-Length raised (a 500, not a 413)."""
+    assert _length_ok(length) is ok
+
+
+def test_a_huge_content_length_is_a_413_not_a_500() -> None:
+    import asyncio
+
+    app = make_app()
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/login",
+        "raw_path": b"/login",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"content-length", b"9" * 5000)],
+        "client": ("127.0.0.1", 1),
+        "server": ("testserver", 80),
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 413
+
+
+def test_a_failed_lazy_build_is_retried_on_the_next_request() -> None:
+    """M4R2A-3: an error other than ConfigError used to leave the instance broken."""
+    attempts: list[int] = []
+
+    def factory(http: object) -> Services:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("disk hiccup")
+        return make_services()
+
+    client = TestClient(create_app(AppContext(SETTINGS, factory)))
+    client.post("/login", data={"password": PASSWORD}, follow_redirects=False)
+    assert client.get("/players").status_code == 500  # the page without details
+    assert client.get("/players").status_code == 200
+    assert client.get("/league").status_code == 200
+    assert attempts == [1, 1]
+
+
+def test_a_storage_outage_is_a_503_page_without_details(caplog: pytest.LogCaptureFixture) -> None:
+    """M4R2B-3: Firestore down (every read fails) on a rated screen or Refresh."""
+
+    class Down(InMemoryRepository):
+        down = False
+
+        async def get(self, collection: str, doc_id: str) -> Any:
+            if self.down:
+                raise RepositoryError("Firestore get x: HTTP 503 (projects/secret-project)")
+            return await super().get(collection, doc_id)
+
+    services = make_services()
+    repo = Down()
+    services = replace(
+        services,
+        repo=repo,
+        refresh=RefreshService(FakeYahooSource(demo_snapshot()), repo, services.clock),
+    )
+    client = logged_in(make_app(services))
+    assert client.get("/players").status_code == 200
+    repo.down = True
+    for response in (client.get("/players"), client.post("/refresh", data={"next": "/league"})):
+        assert response.status_code == 503
+        assert "The app&#39;s storage couldn&#39;t be reached." in response.text
+        assert "secret-project" not in response.text
+    assert "storage failed (RepositoryError) on /players" in caplog.text
+    assert "secret-project" not in caplog.text
+
+
+def test_damaged_rating_settings_point_every_rated_screen_at_admin() -> None:
+    """M4R2A-1: every rated screen was a bare 500."""
+    import asyncio
+
+    from fha.services.settings import COLLECTION, RATING
+
+    services = make_services()
+    asyncio.run(services.repo.put(COLLECTION, RATING, {"gp_floor_fraction": 7}))
+    client = logged_in(make_app(services))
+    for path in ("/players", "/rosters", "/league", "/matchup", "/matchup/free-agents"):
+        response = client.get(path)
+        assert response.status_code == 500, path
+        assert "The stored rating settings are invalid" in response.text
+        assert 'href="/admin#settings"' in response.text
+    assert client.get("/admin").status_code == 200

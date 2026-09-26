@@ -60,7 +60,7 @@
     </td>
     <td>{{ r.position }}</td>
     <td>{{ r.nhl_team or DASH }}</td>
-    <td>{{ team_names.get(r.owner_key, 'FA') if r.owner_key else 'FA' }}{% if r.slot in ('IR', 'IR+') %} <span class="muted">{{ r.slot }}</span>{% endif %}</td>
+    <td>{{ team_names.get(r.owner_key, 'FA') if r.owner_key else 'FA' }}{% if r.in_ir_slot %} <span class="muted">{{ r.slot }}</span>{% endif %}</td>
     <td class="num">{{ r.gp }}</td>
     <td class="num">{{ r.ttltst|number(3) }}</td>
     <td class="num">{{ r.percentile|pctl }}</td>

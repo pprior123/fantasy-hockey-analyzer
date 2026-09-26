@@ -156,6 +156,28 @@ def test_blank_rows_are_skipped_and_text_salaries_are_none() -> None:
     assert tab.payroll == tab.counted_total == 900_000 + 886_666  # SUM skips text
 
 
+def test_a_negative_salary_is_unknown_like_text() -> None:
+    """M4R2B-1: the app's cap arithmetic refuses negative amounts, so a typo like
+    -500000 must not reach it (it crashed every rated screen)."""
+    tab = one(TeamTab("Owls", [Player("Ann Able", salary=-500_000), Player("Ben Baker")]))
+    assert tab.status == "ok"
+    assert [r.salary for r in tab.rows] == [None, 1_000_000]
+
+
+def test_a_negative_payroll_makes_the_tab_unrecognized() -> None:
+    tab = one(TeamTab("Owls", roster(2), payroll_value=-5))
+    assert tab.status == "unrecognized"
+    assert tab.reason is not None
+    assert tab.reason.endswith("is negative")
+    assert tab.reason.startswith("the PAYROLL beside ")
+
+
+def test_a_negative_cap_is_unknown() -> None:
+    sheet = parse_sheet(grid(TeamTab("Owls", roster(2), cap_value=-1), summary=summary_tab(-1)))
+    assert sheet.cap is None
+    assert sheet.tabs[0].cap is None
+
+
 def test_a_whitespace_salary_with_no_name_is_a_blank_row() -> None:
     tab = one(TeamTab("Lynx", [Player("Ann Able"), Player("", salary=" ")]))
     assert [r.name for r in tab.rows] == ["Ann Able"]

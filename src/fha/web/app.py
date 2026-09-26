@@ -60,6 +60,11 @@ QUIET_LOGGERS = ("httpx", "httpcore")  # at INFO they log URLs with the sheet ID
 # Vercel refuses request bodies over 4.5 MB; refuse them here too, before any is read.
 MAX_BODY_BYTES = 4_500_000
 SECURITY_HEADERS = {
+    # Everything is served from this origin; htmx's inline indicator style is off.
+    "Content-Security-Policy": (
+        "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'self'; object-src 'none'"
+    ),
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
     "X-Frame-Options": "DENY",
@@ -96,18 +101,19 @@ def services(request: Request) -> Services:
 
 def _build(app: FastAPI) -> None:
     """Build the services once, inside the running event loop (their httpx client
-    and locks bind to it). A ConfigError is kept for the error page."""
+    and locks bind to it). A ConfigError is kept for the error page; anything
+    else propagates, and the next request tries again."""
     context: AppContext = app.state.context
-    app.state.built = True
-    if context.services is not None:
-        return
-    from fha.sources.yahoo.client import make_http_client
+    if context.services is None:
+        from fha.sources.yahoo.client import make_http_client
 
-    app.state.http = make_http_client()
-    try:
-        context.services = context.factory(app.state.http)
-    except ConfigError as e:
-        app.state.config_error = str(e)
+        if app.state.http is None:
+            app.state.http = make_http_client()
+        try:
+            context.services = context.factory(app.state.http)
+        except ConfigError as e:
+            app.state.config_error = str(e)
+    app.state.built = True
 
 
 def _active(path: str) -> str | None:
@@ -175,13 +181,13 @@ def create_app(context: AppContext) -> FastAPI:
     ) -> Response:
         """Refuse an oversized body by its Content-Length, before anything reads it."""
         length = request.headers.get("content-length")
-        if length is not None and (not length.isdigit() or int(length) > MAX_BODY_BYTES):
+        if length is not None and not _length_ok(length):
             return render(
                 request,
                 "bad_request.html",
                 status_code=413,
                 title="Too large",
-                message=f"That upload is over {MAX_BODY_BYTES // 1_000_000} MB.",
+                message=f"That upload is over {MAX_BODY_BYTES / 1_000_000:g} MB.",
                 back="/admin" if path_is_admin(request.url.path) else None,
             )
         return await call_next(request)
@@ -259,6 +265,10 @@ def create_app(context: AppContext) -> FastAPI:
     async def manifest() -> Response:
         return Response(json.dumps(MANIFEST), media_type="application/manifest+json")
 
+    from fastapi.exceptions import RequestValidationError
+
+    from fha.services.settings import SettingsError
+    from fha.storage.repository import RepositoryError
     from fha.web.data import NO_DATA, BadQueryError
     from fha.web.routes import admin, league, matchup, players, rosters
 
@@ -274,20 +284,61 @@ def create_app(context: AppContext) -> FastAPI:
         )
 
     async def bad_query(request: Request, exc: Exception) -> HTMLResponse:
-        path = request.url.path
+        active = _active(request.url.path)
         return render(
             request,
             "bad_request.html",
             status_code=400,
-            active=_active(path),
+            active=active,
             title="Not understood",
             message=f"{str(exc)[:1].upper()}{str(exc)[1:]}.",
-            back=path,
+            back=f"/{active}" if active else None,
+        )
+
+    async def bad_form(request: Request, exc: Exception) -> HTMLResponse:
+        """A missing or mistyped form field: the 400 page, never FastAPI's JSON (which
+        echoes the input back)."""
+        active = _active(request.url.path)
+        return render(
+            request,
+            "bad_request.html",
+            status_code=400,
+            active=active,
+            title="Not understood",
+            message="A form value was missing or not what the page expected.",
+            back=f"/{active}" if active else None,
+        )
+
+    async def bad_settings(request: Request, exc: Exception) -> HTMLResponse:
+        return render(
+            request,
+            "error.html",
+            status_code=500,
+            active=_active(request.url.path),
+            title="Rating settings invalid",
+            message="The stored rating settings are invalid, so nothing can be rated.",
+            hint="Fix them in Admin, under Rating settings.",
+            link=("/admin#settings", "Open the rating settings"),
+        )
+
+    async def store_down(request: Request, exc: Exception) -> HTMLResponse:
+        log.error("storage failed (%s) on %s", type(exc).__name__, request.url.path)
+        return render(
+            request,
+            "error.html",
+            status_code=503,
+            active=_active(request.url.path),
+            title="Storage unavailable",
+            message="The app's storage couldn't be reached.",
+            hint="Try again in a minute.",
         )
 
     for kind in NO_DATA:
         app.add_exception_handler(kind, no_data)
     app.add_exception_handler(BadQueryError, bad_query)
+    app.add_exception_handler(RequestValidationError, bad_form)
+    app.add_exception_handler(SettingsError, bad_settings)
+    app.add_exception_handler(RepositoryError, store_down)
     for module in (players, rosters, league, matchup, admin):
         app.include_router(module.router)
     return app
@@ -304,6 +355,16 @@ def _security_headers(app: FastAPI) -> None:
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
         return response
+
+
+def _length_ok(length: str) -> bool:
+    """A Content-Length within the limit (digits only; never int() of a huge string)."""
+    return (
+        length.isascii()
+        and length.isdigit()
+        and len(length) <= 12
+        and int(length) <= MAX_BODY_BYTES
+    )
 
 
 def path_is_admin(path: str) -> bool:

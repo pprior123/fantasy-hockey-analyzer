@@ -81,10 +81,6 @@ class ServiceAccountTokens:
     def _assertion(self, now: int) -> str:
         from google.auth import crypt, jwt  # lazy: off the cold-start path
 
-        try:
-            signer = crypt.RSASigner.from_service_account_info(self._info)  # type: ignore[no-untyped-call]
-        except (ValueError, TypeError):
-            raise GoogleAuthError("the service-account private key can't be used") from None
         payload = {
             "iss": self.client_email,
             "scope": self._scopes,
@@ -92,7 +88,11 @@ class ServiceAccountTokens:
             "iat": now,
             "exp": now + LIFETIME,
         }
-        assertion: bytes = jwt.encode(signer, payload)  # type: ignore[no-untyped-call]
+        try:  # signing too: a valid non-RSA key (e.g. EC) only fails here
+            signer = crypt.RSASigner.from_service_account_info(self._info)  # type: ignore[no-untyped-call]
+            assertion: bytes = jwt.encode(signer, payload)  # type: ignore[no-untyped-call]
+        except (ValueError, TypeError, AttributeError):
+            raise GoogleAuthError("the service-account private key can't be used") from None
         return assertion.decode()
 
     async def _fetch(self) -> tuple[str, float]:

@@ -335,3 +335,58 @@ def test_a_blocked_attempt_is_not_hidden_by_a_skip(pytester: pytest.Pytester) ->
     result = pytester.runpytest_inprocess("-p", "no:socket", "-W", "ignore")
     del BLOCKED[before:]
     result.assert_outcomes(failed=1)
+
+
+SPEC_SECRETS = (  # SPEC §8, written out here so dropping one from CLOUD_ENV fails
+    "YAHOO_CLIENT_ID",
+    "YAHOO_CLIENT_SECRET",
+    "APP_PASSWORD",
+    "SESSION_SECRET",
+    "FIRESTORE_PROJECT_ID",
+    "FIRESTORE_SERVICE_ACCOUNT_JSON",
+    "LEAGUE_SHEET_ID",
+)
+
+
+def test_the_scrub_covers_every_spec_secret_and_the_dev_and_platform_names() -> None:
+    from tests.conftest import CLOUD_ENV
+
+    extra = ("FHA_LOCAL_REPOSITORY", "VERCEL", "GOOGLE_APPLICATION_CREDENTIALS")
+    assert set(SPEC_SECRETS) | set(extra) <= set(CLOUD_ENV)
+
+
+SKIP_IN_FIXTURES = """
+import socket
+import pytest
+
+@pytest.fixture
+def tries_then_skips():
+    try:
+        socket.socket(socket.AF_INET)
+    except Exception:
+        pytest.skip("no network")
+
+@pytest.fixture
+def tries_in_teardown():
+    yield
+    try:
+        socket.socket(socket.AF_INET)
+    except Exception:
+        pytest.skip("no network")
+
+def test_setup(tries_then_skips):
+    pass
+
+def test_teardown(tries_in_teardown):
+    pass
+"""
+
+
+def test_a_blocked_attempt_is_not_hidden_by_a_skip_in_setup_or_teardown(
+    pytester: pytest.Pytester,
+) -> None:
+    inner_session(pytester, SKIP_IN_FIXTURES)
+    before = len(BLOCKED)
+    result = pytester.runpytest_inprocess("-p", "no:socket", "-W", "ignore")
+    del BLOCKED[before:]
+    result.assert_outcomes(passed=1, errors=2)  # setup fails; teardown errors after a pass

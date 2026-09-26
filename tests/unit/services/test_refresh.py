@@ -332,3 +332,82 @@ async def test_an_unreadable_cache_is_logged_without_content(
 
 async def test_an_empty_store_has_no_cache() -> None:
     assert await load_cached(InMemoryRepository()) is None
+
+
+class RefusesSaves(InMemoryRepository):
+    async def replace_all(self, collection: str, docs: Any) -> None:
+        raise RepositoryError("Firestore HTTP 403 (PERMISSION_DENIED)")
+
+
+class SlowSource(FakeYahooSource):
+    async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+        for _ in range(20):
+            await asyncio.sleep(0)
+        return await super().fetch_snapshot(last_season=last_season)
+
+
+@pytest.mark.parametrize("stale_cache", [True, False])
+async def test_after_a_failed_save_the_fetched_snapshot_is_served_until_the_ttl(
+    snap: LeagueSnapshot, stale_cache: bool
+) -> None:
+    repo, clock = RefusesSaves(), FakeClock(T0 + 9999)
+    if stale_cache:  # an old snapshot in the store, written before saves started failing
+        repo.collections = (await _saved(replace(snap, available=()), T0)).collections
+    source = SlowSource(snap)
+    refresh = service(source, repo, clock)
+    together = await asyncio.gather(*(refresh.current() for _ in range(5)))
+    later = [await refresh.current() for _ in range(3)]
+    assert len(source.calls) == 1
+    for got in [*together, *later]:
+        assert (got.snapshot, got.fetched_at) == (snap, T0 + 9999)
+        assert got.refresh_error == "not saved: Firestore HTTP 403 (PERMISSION_DENIED)"
+    clock.t += DEFAULT_TTL_SECONDS  # past the TTL: fetch (and try the save) again
+    await refresh.current()
+    assert len(source.calls) == 2
+
+
+async def _saved(snap: LeagueSnapshot, at: float) -> InMemoryRepository:
+    repo = InMemoryRepository()
+    await save_cached(repo, Cached(snap, at))
+    return repo
+
+
+async def test_concurrent_cold_requests_download_the_cache_once(snap: LeagueSnapshot) -> None:
+    repo, clock = CountingReads(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(snap, T0))
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    results = await asyncio.gather(*(refresh.current() for _ in range(4)))
+    assert repo.alls == 1
+    assert all(r == Cached(snap, T0) for r in results)
+
+
+async def test_an_older_stored_cache_never_replaces_a_newer_snapshot_in_memory(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = CountingReads(), FakeClock(T0 + 9999)
+    old = replace(snap, available=())
+    await save_cached(repo, Cached(old, T0))
+    refresh = service(SlowSource(snap), repo, clock)
+    # One request refreshes (slowly) while others arrive and read the old meta.
+    results = await asyncio.gather(*(refresh.current() for _ in range(3)))
+    assert all(r.snapshot == snap for r in results)
+    assert (await refresh.current()) == Cached(snap, T0 + 9999)
+
+
+def test_a_negative_retry_after_is_refused(snap: LeagueSnapshot) -> None:
+    with pytest.raises(ValueError, match="retry_after_seconds must be >= 0"):
+        RefreshService(
+            FakeYahooSource(snap), InMemoryRepository(), FakeClock(), retry_after_seconds=-1
+        )
+
+
+async def test_a_cache_without_a_timestamp_is_logged(
+    snap: LeagueSnapshot, caplog: pytest.LogCaptureFixture
+) -> None:
+    repo = await _saved(snap, T0)
+    meta = await repo.get(CACHE, "meta")
+    assert meta is not None
+    del meta["fetched_at"]
+    await repo.put(CACHE, "meta", meta)
+    assert await load_cached(repo) is None
+    assert caplog.messages == ["stats cache has no usable timestamp; refetching"]

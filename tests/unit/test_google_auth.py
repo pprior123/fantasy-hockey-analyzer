@@ -138,6 +138,18 @@ def test_at_least_one_scope_is_needed() -> None:
         ServiceAccountTokens(key_json(), [], httpx.AsyncClient())
 
 
+async def test_a_valid_non_rsa_key_is_refused_not_a_type_error() -> None:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    ec_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with pytest.raises(GoogleAuthError, match="private key can't be used"):
+        await tokens(Google(), private_key=ec_key.decode())()
+
+
 async def test_a_bad_private_key_is_refused_without_echoing_it() -> None:
     with pytest.raises(GoogleAuthError, match="private key can't be used") as caught:
         await tokens(Google(), private_key="-----BEGIN PRIVATE KEY-----\nnot-a-key\n")()

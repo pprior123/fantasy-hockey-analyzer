@@ -28,8 +28,8 @@ MAX_DEPTH = 20  # Firestore's limit on nested maps and arrays
 INT64 = (-(2**63), 2**63 - 1)
 RESERVED_ID = re.compile(r"__.*__")  # Firestore reserves these IDs
 # Field names: Firestore reserves __x__; the app also keeps every other "__"
-# name out of documents, so a field mask of one of them (the Firestore
-# backend's ID-only listing) can never match a stored field.
+# name out of documents' top-level fields, so the Firestore backend's ID-only
+# listing (a field mask of one of them) can never match a stored field.
 RESERVED_FIELD = re.compile(r"__.*")
 
 
@@ -127,8 +127,11 @@ def _check_value(value: Any, path: str, depth: int) -> None:
         for key, item in value.items():
             if not isinstance(key, str) or not key:
                 raise RepositoryError(f"{path}: keys must be non-empty strings, got {key!r}")
-            if RESERVED_FIELD.fullmatch(key):
-                raise RepositoryError(f"{path}: field name {key!r} is reserved (starts with __)")
+            # Top-level fields: no "__" names (the ID-only listing's mask). Nested
+            # map keys (tab names, row keys): only Firestore's own __x__ rule.
+            if (RESERVED_FIELD if depth == 0 else RESERVED_ID).fullmatch(key):
+                rule = "starts with __" if depth == 0 else "__x__"
+                raise RepositoryError(f"{path}: field name {key!r} is reserved ({rule})")
             _check_value(item, f"{path}.{key}", depth + 1)
         return
     raise RepositoryError(f"{path}: {type(value).__name__} is not a JSON value")

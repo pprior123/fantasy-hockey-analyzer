@@ -81,13 +81,18 @@ class RefreshService:
     ) -> None:
         if ttl_seconds < 0:
             raise ValueError(f"ttl_seconds must be >= 0, got {ttl_seconds}")
+        if retry_after_seconds < 0:
+            raise ValueError(f"retry_after_seconds must be >= 0, got {retry_after_seconds}")
         self._source = source
         self._repo = repo
         self._clock = clock
         self._ttl = ttl_seconds
         self._retry_after = retry_after_seconds
         self._lock = asyncio.Lock()  # one refresh at a time in this process
-        self._memory: Cached | None = None  # the last snapshot decoded or fetched here
+        self._load_lock = asyncio.Lock()  # one full cache download at a time
+        # The newest snapshot this process has: decoded from the store, or fetched
+        # here (then possibly not saved: its refresh_error says so).
+        self._memory: Cached | None = None
         self._failure: tuple[float, str] | None = None  # (when, what) of the last failure
 
     def is_fresh(self, cached: Cached) -> bool:
@@ -130,23 +135,31 @@ class RefreshService:
             self._memory = fresh
             try:
                 await save_cached(self._repo, fresh)
-            except RepositoryError as error:  # serve what Yahoo gave; the next request retries
-                return replace(fresh, refresh_error=f"not saved: {error}")
-            return fresh
+            except RepositoryError as error:
+                # Keep serving what Yahoo gave (from memory) until the TTL, rather
+                # than calling Yahoo again on every request; the next refresh
+                # tries the save again.
+                self._memory = replace(fresh, refresh_error=f"not saved: {error}")
+            return self._memory
 
     async def _stored(self) -> Cached | None:
-        """The cached snapshot: from memory when the stored one is the same fetch, so
-        a request reads one small document instead of the whole cache."""
+        """The newest snapshot: from memory unless the store holds a newer fetch, so a
+        warm request reads one small document instead of the whole cache."""
         meta = await self._repo.get(CACHE, META)
         fetched_at = None if meta is None else _timestamp(meta.get("fetched_at"))
+        memory = self._memory
+        if memory is not None and (fetched_at is None or memory.fetched_at >= fetched_at):
+            return memory  # the same fetch, or a newer one not (yet) saved
         if fetched_at is None:
             return None
-        if self._memory is not None and self._memory.fetched_at == fetched_at:
-            return Cached(self._memory.snapshot, fetched_at)
-        loaded = await load_cached(self._repo)
-        if loaded is not None:
-            self._memory = loaded
-        return loaded
+        async with self._load_lock:  # concurrent cold requests share one download
+            memory = self._memory
+            if memory is not None and memory.fetched_at >= fetched_at:
+                return memory
+            loaded = await load_cached(self._repo)
+            if loaded is not None and (memory is None or loaded.fetched_at > memory.fetched_at):
+                self._memory = loaded
+            return self._memory if loaded is not None else memory
 
 
 def _timestamp(value: object) -> float | None:

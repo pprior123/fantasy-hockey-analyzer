@@ -203,6 +203,8 @@ def test_from_mapping_blank_top_n_means_the_methods_default(unset: object) -> No
         ({"divisor_top_n": True}, "divisor_top_n must be an integer"),
         ({"gp_floor_fraction": True}, "^gp_floor_fraction must be a number, got a bool$"),
         ({"gp_floor_fraction": "2%"}, "^gp_floor_fraction must be a number, got '2%'$"),
+        ({"gp_floor_fraction": "\u0660.\u0665"}, "gp_floor_fraction must be a number"),
+        ({"gp_floor_fraction": "0_5"}, "gp_floor_fraction must be a number"),
         ({"gp_floor_fraction": ""}, "^gp_floor_fraction must be a number, got ''$"),
         ({"gp_floor_fraction": "nan"}, "gp_floor_fraction must be in"),
         ({"gp_floor_fraction": "1.5"}, "gp_floor_fraction must be in"),

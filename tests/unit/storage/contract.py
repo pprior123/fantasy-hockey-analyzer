@@ -130,7 +130,7 @@ class RepositoryContract:
             ({"v": "x" * (MAX_DOCUMENT_BYTES + 1)}, f"over {MAX_DOCUMENT_BYTES}"),
             # Small as JSON, over the limit as Firestore counts it (8 bytes per number).
             ({"v": [0] * (MAX_DOCUMENT_BYTES // 8)}, f"over {MAX_DOCUMENT_BYTES}"),
-            ({"v": {"__x__": 1}}, r"field name '__x__' is reserved"),
+            ({"v": {"__x__": 1}}, r"field name '__x__' is reserved \(__x__\)"),
             ({"__none": 1}, r"field name '__none' is reserved \(starts with __\)"),
             ({"__name__": 1}, r"field name '__name__' is reserved"),
             (_nested(21), "nested deeper than Firestore's 20 levels"),
@@ -155,6 +155,11 @@ class RepositoryContract:
         with pytest.raises(RepositoryError, match=BAD_ID):
             await repo.replace_all("things", {bad: {"v": 1}})
         assert await repo.all("things") == {}
+
+    async def test_nested_keys_may_start_with_underscores(self, repo: Repository) -> None:
+        doc = {"entries": {"__tab": 1, "_x": 2}}  # e.g. a tab named "__tab"
+        await repo.put("things", "a", doc)
+        assert await repo.get("things", "a") == doc
 
     async def test_twenty_levels_of_nesting_are_fine(self, repo: Repository) -> None:
         await repo.put("things", "deep", _nested(20))

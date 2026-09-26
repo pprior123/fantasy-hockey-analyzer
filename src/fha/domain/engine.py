@@ -136,7 +136,9 @@ def _categories(raw: object) -> tuple[object, ...]:
 def _fraction(raw: object) -> object:
     if isinstance(raw, bool):
         return raw  # __post_init__ names the problem
-    if isinstance(raw, int | float | str):
+    # ASCII only: float() also takes other scripts' digits and "_" separators.
+    plain = not isinstance(raw, str) or (raw.isascii() and "_" not in raw)
+    if isinstance(raw, int | float | str) and plain:
         try:
             return float(raw)
         except ValueError:

@@ -42,6 +42,12 @@ def row_key(name: str, position: str | None) -> str:
     return f"{normalize_name(name)}|{group.value if group else '?'}"
 
 
+def auto_how(result: MatchResult) -> str:
+    """How an automatic binding was made, e.g. ``auto:surname`` (stable across label edits)."""
+    step = result.step.name.lower() if result.step is not None else "unknown"
+    return f"auto:{step}"
+
+
 def candidates(players: Iterable[Player]) -> list[Candidate]:
     return [Candidate(p.player_id, p.name, p.nhl_team or None, p.display_position) for p in players]
 
@@ -94,7 +100,7 @@ async def import_free_agent_salaries(
             continue
         result = match(Query(row.name, row.team, row.position), pool_candidates, aliases=aliases)
         if result.status is Status.MATCHED and result.player is not None:
-            bindings[key] = {"player_id": result.player.player_id, "how": f"auto:{result.step}"}
+            bindings[key] = {"player_id": result.player.player_id, "how": auto_how(result)}
             bound += 1
         else:
             reviews.append(Review(key, row, result))

@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "google-auth>=2.58.1",
     "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
 ]
 
 [build-system]
@@ -21,7 +22,6 @@ dev = [
     "hypothesis>=6.168.1",
     "mutmut>=3.8.0",
     "mypy>=2.3.1",
-    "openpyxl>=3.1.5",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",

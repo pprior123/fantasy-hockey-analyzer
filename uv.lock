@@ -186,6 +186,7 @@ source = { editable = "." }
 dependencies = [
     { name = "google-auth" },
     { name = "httpx" },
+    { name = "openpyxl" },
 ]
 
 [package.dev-dependencies]
@@ -193,7 +194,6 @@ dev = [
     { name = "hypothesis" },
     { name = "mutmut" },
     { name = "mypy" },
-    { name = "openpyxl" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -207,6 +207,7 @@ dev = [
 requires-dist = [
     { name = "google-auth", specifier = ">=2.58.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
 ]
 
 [package.metadata.requires-dev]
@@ -214,7 +215,6 @@ dev = [
     { name = "hypothesis", specifier = ">=6.168.1" },
     { name = "mutmut", specifier = ">=3.8.0" },
     { name = "mypy", specifier = ">=2.3.1" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },

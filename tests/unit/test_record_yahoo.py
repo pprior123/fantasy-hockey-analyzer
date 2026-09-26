@@ -174,6 +174,21 @@ async def test_a_failed_refresh_keeps_its_error_if_its_records_leak(tmp_path: Pa
     assert not (tmp_path / "probes" / "failed").exists()
 
 
+async def test_main_reports_a_network_failure_in_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def offline(*args: object, **kw: object) -> rec.Summary:
+        raise httpx.ConnectError("nodename nor servname provided")
+
+    monkeypatch.setenv("YAHOO_CLIENT_ID", "c")
+    monkeypatch.setenv("YAHOO_CLIENT_SECRET", "s")
+    token = await store(tmp_path)
+    monkeypatch.setattr(rec, "JsonFileTokenStore", lambda: token)
+    monkeypatch.setattr(rec, "record", offline)
+    assert await rec._main() == 1
+    assert capsys.readouterr().err == "Failed: nodename nor servname provided\n"
+
+
 async def test_main_prints_the_error_and_its_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

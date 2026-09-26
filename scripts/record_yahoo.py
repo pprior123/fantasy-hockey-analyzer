@@ -260,7 +260,14 @@ async def _main() -> int:
         if await store.load() is None:
             raise SetupError("no token yet: run python -m scripts.yahoo_auth first")
         summary = await record(creds, store, httpx.AsyncHTTPTransport())
-    except (SetupError, SanitizeError, YahooError, YahooAuthError, YahooParseError) as e:
+    except (
+        SetupError,
+        SanitizeError,
+        YahooError,
+        YahooAuthError,
+        YahooParseError,
+        httpx.HTTPError,  # e.g. no network: a line, not a traceback
+    ) as e:
         print(f"Failed: {e}", *getattr(e, "__notes__", ()), sep="\n", file=sys.stderr)
         return 1
     print("\n".join(summary.lines()))

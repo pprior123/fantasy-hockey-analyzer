@@ -1,0 +1,107 @@
+"""The ``Repository`` seam (SPEC §3): a small document store.
+
+Everything the app persists (the stats cache and its timestamp, salaries,
+name bindings, aliases, the Yahoo token, config) is a JSON document in a
+named collection. The typed records live on top of this, so each backend
+(in-memory for tests, a local JSON file for dev, Firestore in production)
+implements only these five operations, and all of them must behave alike.
+``check_document`` and ``check_id`` hold the rules they share, including
+Firestore's limits, so the in-memory and file backends refuse what
+Firestore would.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import math
+import re
+from collections.abc import Mapping
+from typing import Any, Protocol
+
+Document = dict[str, Any]  # JSON: None, bool, int, float, str, list, dict with str keys
+
+MAX_DOCUMENT_BYTES = 900_000  # Firestore allows 1 MiB per document; keep headroom
+MAX_BATCH = 500  # Firestore's limit on writes in one commit
+INT64 = (-(2**63), 2**63 - 1)
+RESERVED_ID = re.compile(r"__.*__")
+
+
+class RepositoryError(Exception):
+    """A backend failed, or refused a document or ID."""
+
+
+class Repository(Protocol):
+    async def get(self, collection: str, doc_id: str) -> Document | None:
+        """The document, or None if there is none."""
+        ...
+
+    async def put(self, collection: str, doc_id: str, doc: Document) -> None:
+        """Create or replace the document."""
+        ...
+
+    async def delete(self, collection: str, doc_id: str) -> None:
+        """Remove the document; no error if there is none."""
+        ...
+
+    async def all(self, collection: str) -> dict[str, Document]:
+        """Every document in the collection, by ID."""
+        ...
+
+    async def replace_all(self, collection: str, docs: Mapping[str, Document]) -> None:
+        """Atomically make the collection exactly ``docs`` (at most ``MAX_BATCH``)."""
+        ...
+
+
+def check_id(value: str, what: str = "document ID") -> str:
+    """A collection name or document ID Firestore accepts."""
+    if not isinstance(value, str) or not value:
+        raise RepositoryError(f"{what} must be a non-empty string, got {value!r}")
+    if "/" in value or value in (".", "..") or RESERVED_ID.fullmatch(value):
+        raise RepositoryError(f"{what} {value!r} is not allowed (no '/', '.', '..', '__x__')")
+    if len(value.encode()) > 1500:
+        raise RepositoryError(f"{what} is longer than 1500 bytes")
+    return value
+
+
+def check_document(doc: Any) -> Document:
+    """A deep copy of ``doc`` if every value is storable; the path of the first that isn't."""
+    if not isinstance(doc, dict):
+        raise RepositoryError(f"a document must be a dict, got {type(doc).__name__}")
+    _check_value(doc, "$")
+    size = len(json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode())
+    if size > MAX_DOCUMENT_BYTES:
+        raise RepositoryError(f"document is {size} bytes, over {MAX_DOCUMENT_BYTES}")
+    return copy.deepcopy(doc)
+
+
+def check_batch(docs: Mapping[str, Document]) -> dict[str, Document]:
+    if len(docs) > MAX_BATCH:
+        raise RepositoryError(f"{len(docs)} documents in one batch, over {MAX_BATCH}")
+    return {check_id(k): check_document(v) for k, v in docs.items()}
+
+
+def _check_value(value: Any, path: str) -> None:
+    if value is None or isinstance(value, bool | str):
+        return
+    if isinstance(value, int):
+        if not INT64[0] <= value <= INT64[1]:
+            raise RepositoryError(f"{path}: integer {value} is outside 64 bits")
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RepositoryError(f"{path}: {value} is not a finite number")
+        return
+    if isinstance(value, list):
+        for i, item in enumerate(value):
+            if isinstance(item, list):
+                raise RepositoryError(f"{path}[{i}]: Firestore can't store a list in a list")
+            _check_value(item, f"{path}[{i}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or not key:
+                raise RepositoryError(f"{path}: keys must be non-empty strings, got {key!r}")
+            _check_value(item, f"{path}.{key}")
+        return
+    raise RepositoryError(f"{path}: {type(value).__name__} is not a JSON value")

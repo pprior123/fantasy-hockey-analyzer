@@ -340,8 +340,15 @@ on the confirmation page, which Yahoo provisions
 ([yfpy #84](https://github.com/uberfastman/yfpy/issues/84)). The owner applied
 in late August 2026 without a Client ID (the app, `OQP5c1XE`, was created
 later), and the confirmation step hasn't happened, so no Client ID is
-provisioned. SPEC §1 said "approved"; corrected. The owner is following up
-with Yahoo. Until then M2's real recording, the PPP answer from real data and
+provisioned. SPEC §1 said "approved"; corrected. Yahoo's only reply was an
+automated acknowledgement on 2026-09-01 ("review typically takes 1-2 weeks"),
+sent to the email on the application, from a no-reply address. Yahoo lists
+no other contact. On 2026-09-26 the owner submitted the confirmation page
+(sports.yahoo.com/developer/application-confirmation/) with the application's
+email, App ID `OQP5c1XE` and its Client ID in the notes. Next: run
+`scripts/yahoo_diagnose.py` periodically; a 200 means access is on and the
+owner runs `scripts/record_yahoo.py`. If nothing happens in a week or two,
+re-apply at sports.yahoo.com/developer/access with the Client ID filled in. Until then M2's real recording, the PPP answer from real data and
 the real refresh timing are blocked; the code is tested against synthetic
 Yahoo-shaped responses. If Yahoo refuses, the fallback (NHL public stats API
 + the league sheet for rosters) is an owner decision and a redesign.

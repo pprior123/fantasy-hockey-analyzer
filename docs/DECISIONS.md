@@ -450,6 +450,7 @@ summary tab (the cap is at `B3`), and two other tabs that aren't team tabs
   IR): they are ignored, and a player in them who is on the Yahoo roster
   shows up as "missing from the tab" in the discrepancy report.
 - Below all of that, each tab has a contact block (a header row, then GM
-  details). The parser never reads past the last IR row. Contact cells sit
-  outside every range it reads, so they never enter a parsed result.
+  details). Below the range, the parser looks only at column A, for the
+  exact labels `IR` / `IR+`; only those rows are read. No cell of any other
+  row enters a parsed result, an error message or a log.
 The synthetic parser fixtures reproduce each of these variants.

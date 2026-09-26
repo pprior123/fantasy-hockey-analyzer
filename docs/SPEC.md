@@ -23,7 +23,9 @@ It replaces an Excel workbook whose core value is a custom player rating,
   IR / IR+ slots and players sent to the minors don't count. A pickup needs cap room first.
   Teams must be compliant from the start of the regular season.
 - **Primary device:** phone browser, installable to home screen (PWA).
-- **Access:** Yahoo Fantasy Sports API, **read-only** (approved; app created).
+- **Access:** Yahoo Fantasy Sports API, **read-only**. App created; access
+  pending Yahoo's approval (see `docs/DECISIONS.md`, 2026-09-26, "Yahoo API
+  access").
 
 ### Phase 1 goal
 

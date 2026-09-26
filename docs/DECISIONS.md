@@ -328,3 +328,20 @@ Assumptions the recording confirms or corrects: that `;season=` returns
 last season's totals for current player keys (the parser refuses stats
 labelled with another season), that the game-level stat list includes a
 skater "GP", and how long a whole-league refresh takes.
+
+## 2026-09-26 — Yahoo API access: pending approval (M2 blocker)
+Consent and token exchange work, but every Fantasy API endpoint, public ones
+included, answers 403 "This application is not authorized to perform this
+action" (`scripts/yahoo_diagnose.py`). Since 2026-07-22 Yahoo refuses apps
+that have only the Yahoo Developer Network "Fantasy Sports: Read" permission;
+access now needs an approved application at sports.yahoo.com/developer,
+then a signed API Access and Use Agreement and the app's Client ID submitted
+on the confirmation page, which Yahoo provisions
+([yfpy #84](https://github.com/uberfastman/yfpy/issues/84)). The owner applied
+in late August 2026 without a Client ID (the app, `OQP5c1XE`, was created
+later), and the confirmation step hasn't happened, so no Client ID is
+provisioned. SPEC §1 said "approved"; corrected. The owner is following up
+with Yahoo. Until then M2's real recording, the PPP answer from real data and
+the real refresh timing are blocked; the code is tested against synthetic
+Yahoo-shaped responses. If Yahoo refuses, the fallback (NHL public stats API
++ the league sheet for rosters) is an owner decision and a redesign.

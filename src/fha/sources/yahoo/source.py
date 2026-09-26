@@ -116,9 +116,12 @@ class HttpYahooSource:
                     keys = [p.player_key for p in players]
                     for batch in _chunks(keys, PAGE_SIZE):
                         for season in seasons:
-                            tasks.create_task(
-                                self._season_stats(batch, season, game.season, lines[season])
-                            )
+                            stats = self._season_stats(batch, season, game.season, lines[season])
+                            try:
+                                tasks.create_task(stats)
+                            except RuntimeError:  # the refresh is failing: no new work
+                                stats.close()
+                                raise
 
                 async def rosters() -> tuple[Team, ...]:
                     teams = parse.parse_teams_rosters(

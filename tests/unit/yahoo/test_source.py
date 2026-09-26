@@ -1,6 +1,7 @@
 """A full refresh through HttpYahooSource against a mocked Yahoo (SPEC §10 M2)."""
 
 import asyncio
+import gc
 from typing import Any
 
 import httpx
@@ -298,3 +299,14 @@ async def test_a_failed_page_cancels_the_requests_still_running(available: int |
         await asyncio.sleep(0)
     assert len(league.paths) == issued
     assert not [p for p in league.paths if ";status=A;" in p and ";start=0;" not in p]
+
+
+@pytest.mark.parametrize("broken", [f"league/{LK}/teams/roster", f"league/{LK}/scoreboard;week=1"])
+async def test_a_failure_beside_the_pages_leaves_nothing_running(broken: str) -> None:
+    league = League()
+    league.overrides[broken] = {"league": []}
+    with pytest.raises(YahooParseError):
+        await source(league, available=60).fetch_snapshot()
+    for _ in range(100):
+        await asyncio.sleep(0)
+    gc.collect()  # a stats coroutine created but never run would warn here (an error)

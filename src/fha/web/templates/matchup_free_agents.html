@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+{{ m.notes(data) }}
+<p><a href="{{ url('/matchup', params, fits=None) }}">Back to the matchup</a></p>
+{% if need is none %}
+<p class="card">No matchup {{ 'next week' if week == 'next' else 'this week' }}, so nothing to help with.</p>
+{% else %}
+<p>Sorted by how much each free agent adds in the categories you're behind or close in:
+  {% for cat in game.comparison.trailing|sort %}<span class="badge">{{ cat.value }}</span> {% else %}<span class="muted">none</span>{% endfor %}</p>
+<nav class="chips" aria-label="Cap">
+  <a class="chip {{ '' if fits else 'on' }}" href="{{ url('/matchup/free-agents', params, fits=None) }}">All</a>
+  <a class="chip {{ 'on' if fits else '' }}" href="{{ url('/matchup/free-agents', params, fits='1') }}">Fits my cap</a>
+</nav>
+{% if fits and need.excluded_unknown %}<p class="muted excluded">{{ need.excluded_unknown }} left out: a cap hit or the room isn't known.</p>{% endif %}
+{{ m.rates_note() }}
+<div class="table-wrap">
+<table class="data need">
+  <thead><tr><th class="first">Free agent</th><th>Pos</th><th class="num">Need</th><th class="num">TTLTST</th><th class="num">AAV</th><th class="num">Fits</th></tr></thead>
+  <tbody>
+  {% for n in need.rows %}
+  <tr>
+    <td class="first">{{ n.player.name }}{% if n.player.status %} <span class="badge">{{ n.player.status }}</span>{% endif %}</td>
+    <td>{{ n.player.position }}</td>
+    <td class="num">{{ n.need|number }}</td>
+    <td class="num">{{ n.player.ttltst|number(3) }}</td>
+    <td class="num">{{ n.player.aav|money }}</td>
+    <td class="num">{% if n.fits is none %}{{ DASH }}{% elif n.fits %}<span class="good">yes</span>{% else %}<span class="over">no</span>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No free agents to show.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

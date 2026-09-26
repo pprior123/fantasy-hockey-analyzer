@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="error">{{ message }}</p>
+<p><a href="{{ back or '/players' }}">Start over</a></p>
+{% endblock %}

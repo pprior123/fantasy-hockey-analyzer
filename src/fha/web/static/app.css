@@ -55,3 +55,25 @@ table.data tr.expand td { background: var(--soft); white-space: normal; }
 .footer { border-top: 1px solid var(--line); padding: .75rem; font-size: .8rem; color: var(--muted);
           display: flex; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
 .footer form { margin: 0; }
+
+/* Rated screens (Players, Rosters, League, Matchup) */
+table.data .first { position: sticky; left: 0; background: var(--bg); z-index: 1; }
+table.data th.first { background: var(--soft); z-index: 2; }
+table.data th.sorted a { color: var(--brand); }
+table.data tr.ir td { color: var(--muted); }
+table.data tr.mine td { font-weight: 600; }
+table.data tr.trailing td, table.data tr.trailing th { background: #fff1f0; }
+table.data tr.total th, table.data tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
+table.data details summary { cursor: pointer; list-style: none; }
+table.data details summary::-webkit-details-marker { display: none; }
+dl.norms { display: grid; grid-template-columns: repeat(4, auto); gap: .1rem .6rem; margin: .3rem 0 0; font-size: .8rem; }
+dl.norms div { display: flex; gap: .25rem; }
+dl.norms dt { color: var(--muted); }
+dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
+.filters label { display: flex; gap: .3rem; align-items: center; font-size: .85rem; }
+.filters input.short { width: 4.5rem; }
+.refresh { margin: 0 0 0 auto; }
+.settings-in-use, .rates-note, .stale-note, .excluded { font-size: .8rem; margin: .2rem 0; }
+.cap-card h2 { font-size: 1.05rem; margin: 0 0 .3rem; }
+.page h2 { font-size: 1.05rem; margin: .9rem 0 .3rem; }
+.page h3 { font-size: .95rem; margin: .6rem 0 .25rem; }

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+{{ m.notes(data) }}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/players", params) }}
+  {{ m.refresh_button(here) }}
+</div>
+
+<nav class="chips owner-chips" aria-label="Owner">
+  {% for owner, label in owner_chips %}
+  <a class="chip {{ 'on' if query.owner == owner and not query.team_key else '' }}" href="{{ url('/players', params, owner=owner.value, team=None) }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<form method="get" action="/players" class="toolbar filters">
+  {% for key in ("owner", "sort", "dir", "season", "view") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
+  <label>Team
+    <select name="team">
+      <option value="">Any</option>
+      {% for t in data.view.teams %}<option value="{{ t.team_key }}"{% if t.team_key == query.team_key %} selected{% endif %}>{{ t.name }}{% if t.is_mine %} (mine){% endif %}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Pos
+    <select name="pos">
+      <option value="">Any</option>
+      {% for p in positions %}<option{% if p == query.position %} selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Min GP <input type="number" name="min_gp" min="0" inputmode="numeric" value="{{ query.min_gp or '' }}" class="short"></label>
+  <button type="submit" class="btn secondary">Apply</button>
+</form>
+
+<nav class="chips view-toggle" aria-label="Columns">
+  <a class="chip {{ 'on' if mode == 'money' else '' }}" href="{{ url('/players', params, view=None) }}">Salary</a>
+  <a class="chip {{ 'on' if mode == 'cats' else '' }}" href="{{ url('/players', params, view='cats') }}">Categories</a>
+</nav>
+
+{% macro header(key, label) -%}
+<th class="{{ 'first' if key == 'name' else '' }}{{ ' num' if key not in ('name', 'pos', 'team', 'owner') else '' }}{{ ' sorted' if sort == key else '' }}">
+  <a href="{{ url('/players', params, sort=key, dir=('asc' if sort == key and query.descending else ('desc' if sort == key else None))) }}">{{ label }}{% if sort == key %} {{ '▼' if query.descending else '▲' }}{% endif %}</a>
+</th>
+{%- endmacro %}
+
+<div class="table-wrap">
+<table class="data players">
+  <thead><tr>
+    {% for key, label in columns %}{{ header(key, label) }}{% endfor %}
+    {% if mode == 'money' %}{% for key, label in money_columns %}{{ header(key, label) }}{% endfor %}
+    {% else %}{% for cat in categories %}{{ header(cat.value, cat.value) }}{% endfor %}{% endif %}
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="{{ 'ir' if r.in_ir_slot else '' }}">
+    <td class="first">
+      {% if r.rating and r.rating.rated %}
+      <details><summary>{{ r.name }}</summary>{{ m.norms_list(r.norms, categories) }}</details>
+      {% else %}{{ r.name }}{% endif %}
+      {% if r.status %} <span class="badge">{{ r.status }}</span>{% endif %}
+    </td>
+    <td>{{ r.position }}</td>
+    <td>{{ r.nhl_team or DASH }}</td>
+    <td>{{ team_names.get(r.owner_key, 'FA') if r.owner_key else 'FA' }}{% if r.slot in ('IR', 'IR+') %} <span class="muted">{{ r.slot }}</span>{% endif %}</td>
+    <td class="num">{{ r.gp }}</td>
+    <td class="num">{{ r.ttltst|number(3) }}</td>
+    <td class="num">{{ r.percentile|pctl }}</td>
+    {% if mode == 'money' %}
+    <td class="num">{{ r.aav|money }}</td>
+    <td class="num">{{ r.value|number(2) }}</td>
+    {% else %}
+    {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
+    {% endif %}
+  </tr>
+  {% else %}
+  <tr><td colspan="12" class="muted">No players match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted">{{ rows|length }} players. Rank and percentile are over the whole league, whatever the filter.</p>
+{% endblock %}

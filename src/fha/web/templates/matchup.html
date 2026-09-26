@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+{{ m.notes(data) }}
+<div class="toolbar">
+  <nav class="chips week-toggle" aria-label="Week">
+    <a class="chip {{ 'on' if week == 'current' else '' }}" href="{{ url('/matchup', params, week=None) }}">This week</a>
+    <a class="chip {{ 'on' if week == 'next' else '' }}" href="{{ url('/matchup', params, week='next') }}">Next week</a>
+  </nav>
+  {{ m.season_toggle(data, "/matchup", params) }}
+  {{ m.refresh_button(here) }}
+</div>
+
+{% if game is none %}
+<p class="card">{% if week == 'next' %}There is no next week: the season's last week is this one.{% else %}Your team isn't in this league's data.{% endif %}</p>
+{% elif game.opponent is none %}
+<p class="card">Week {{ game.week }}: a bye, no opponent.</p>
+{% else %}
+<p>Week {{ game.week }}{% if game.week_start %} ({{ game.week_start }} to {{ game.week_end }}){% endif %}:
+  <strong>{{ game.me.team.name }}</strong> vs <strong>{{ game.opponent.team.name }}</strong></p>
+{{ m.rates_note() }}
+<div class="table-wrap">
+<table class="data matchup">
+  <thead><tr><th class="first">Cat</th><th class="num">Me</th><th class="num">Them</th><th class="num">Diff</th></tr></thead>
+  <tbody>
+  {% for cat in categories %}
+  {% set behind = cat in game.comparison.trailing %}
+  <tr class="{{ 'trailing' if behind else '' }}">
+    <th class="first">{{ cat.value }}{% if behind %} <span class="bad">behind or close</span>{% endif %}</th>
+    <td class="num">{{ game.me.profile.mean_norm.get(cat)|number }}</td>
+    <td class="num">{{ game.opponent.profile.mean_norm.get(cat)|number }}</td>
+    <td class="num">{{ game.comparison.diff.get(cat)|signed }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="total"><th class="first">TTLTST</th><td class="num">{{ game.me.profile.ttltst|number(3) }}</td><td class="num">{{ game.opponent.profile.ttltst|number(3) }}</td><td></td></tr>
+  </tbody>
+</table>
+</div>
+<p><a class="btn" href="{{ url('/matchup/free-agents', params, week=(week if week == 'next' else None)) }}">Free agents who help here</a></p>
+
+<h2>Goalies</h2>
+<p class="muted">Raw stats: goalies aren't rated.</p>
+<h3>{{ game.me.team.name }}</h3>
+{{ m.goalie_table(my_goalies) }}
+<h3>{{ game.opponent.team.name }}</h3>
+{{ m.goalie_table(opp_goalies) }}
+{% endif %}
+{% endblock %}

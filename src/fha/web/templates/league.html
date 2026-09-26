@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+{{ m.notes(data) }}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/league", params) }}
+  {{ m.refresh_button(here) }}
+</div>
+{{ m.rates_note() }}
+<div class="table-wrap">
+<table class="data league">
+  <thead><tr><th class="first">Team</th><th class="num">TTLTST</th>{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}<th class="num">Payroll</th><th class="num">Room</th></tr></thead>
+  <tbody>
+  {% for s in table %}
+  <tr class="{{ 'mine' if s.team.is_mine else '' }}">
+    <td class="first"><a href="{{ url('/rosters', {'season': params.get('season', '')}, team=s.team.team_key) }}">{{ s.team.name }}</a>{% if s.has_discrepancies %} <span class="badge">sheet</span>{% endif %}</td>
+    <td class="num">{{ s.profile.ttltst|number(3) }}</td>
+    {% for cat in categories %}<td class="num">{{ s.profile.mean_norm.get(cat)|number }}</td>{% endfor %}
+    <td class="num">{{ s.payroll|money }}</td>
+    <td class="num {{ 'over' if s.over_cap else '' }}">{{ s.cap_room|money }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted">Payroll and room show "{{ DASH }}" until the team's sheet tab is bound and recognized (Admin).</p>
+{% endblock %}

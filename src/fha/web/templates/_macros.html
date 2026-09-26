@@ -1,0 +1,61 @@
+{# Shared pieces for the rated screens. #}
+{% macro notes(data) -%}
+{% if data.stale_note %}<p class="warn stale-note">{{ data.stale_note }}</p>{% endif %}
+<p class="muted settings-in-use">Ratings: {{ rating_settings(data.config) }}</p>
+{%- endmacro %}
+
+{% macro season_toggle(data, path, params) -%}
+{% if data.view.last_season_available %}
+<nav class="chips season-toggle" aria-label="Season">
+  <a class="chip {{ 'on' if data.view.season.value == 'current' else '' }}" href="{{ url(path, params, season='current') }}">This season</a>
+  <a class="chip {{ 'on' if data.view.season.value == 'last' else '' }}" href="{{ url(path, params, season='last') }}">Last season</a>
+</nav>
+{% endif %}
+{%- endmacro %}
+
+{% macro rates_note() -%}
+<p class="muted rates-note">Profiles compare rates (per-82 norms), not projected weekly totals.</p>
+{%- endmacro %}
+
+{% macro refresh_button(next_url) -%}
+<form method="post" action="/refresh" class="refresh">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <button type="submit" class="btn secondary">Refresh</button>
+</form>
+{%- endmacro %}
+
+{% macro norms_list(norms, categories) -%}
+<dl class="norms">
+  {% for cat in categories %}<div><dt>{{ cat.value }}</dt><dd>{{ norms.get(cat)|number }}</dd></div>{% endfor %}
+</dl>
+{%- endmacro %}
+
+{% macro goalie_table(goalies) -%}
+<div class="table-wrap">
+<table class="data goalies">
+  <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th></tr></thead>
+  <tbody>
+  {% for g in goalies %}
+  <tr>
+    <td class="first">{{ g.name }}{% if g.status %} <span class="badge">{{ g.status }}</span>{% endif %}</td>
+    <td>{{ g.nhl_team or DASH }}</td>
+    <td class="num">{{ g.gp }}</td>
+    <td class="num">{{ g.goalie.get('W')|number(0) }}</td>
+    <td class="num">{{ g.goalie.get('GAA')|number(2) }}</td>
+    <td class="num">{{ g.goalie.get('SV%')|number(3) }}</td>
+    <td class="num">{{ g.aav|money }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">No goalies.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{% macro profile_rows(profile, categories) -%}
+{% for cat in categories %}
+<tr><th class="first">{{ cat.value }}</th><td class="num">{{ profile.mean_norm.get(cat)|number }}</td><td class="num">{{ profile.sd_norm.get(cat)|number }}</td></tr>
+{% endfor %}
+<tr class="total"><th class="first">TTLTST</th><td class="num">{{ profile.ttltst|number(3) }}</td><td></td></tr>
+{%- endmacro %}

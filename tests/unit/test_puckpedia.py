@@ -80,6 +80,23 @@ def test_the_optional_team_column() -> None:
     ]
 
 
+def test_the_optional_cap_hit_with_bonuses_column() -> None:
+    data = csv(
+        "Player,Pos,Cap Hit,cap hit with bonuses",
+        'Ada Testman,C,"$950,000","$3,450,000"',
+        'Bo Sample,D,"$2,000",',
+        "Cy Short,G,$1",
+    )
+    assert parse_salary_csv(data) == [
+        SalaryRow("Ada Testman", "C", None, 950_000, 2, 3_450_000),
+        SalaryRow("Bo Sample", "D", None, 2_000, 3, None),
+        SalaryRow("Cy Short", "G", None, 1, 4, None),  # the row is short
+    ]
+    with pytest.raises(SalaryCsvError, match="line 2: Cap Hit With Bonuses 'lots'"):
+        parse_salary_csv(csv("Player,Pos,Cap Hit,Cap Hit With Bonuses", "A B,C,$1,lots"))
+    assert parse_salary_csv(csv("Player,Pos,Cap Hit", "A B,C,$1"))[0].cap_hit_with_bonuses is None
+
+
 def test_other_columns_are_ignored_whatever_their_headers() -> None:
     data = csv(",Player,,Notes,Notes,Pos,Cap Hit,GM", "x,Ada Testman,y,a,b,C,$5,Someone")
     assert parse_salary_csv(data) == [SalaryRow("Ada Testman", "C", None, 5, 2)]

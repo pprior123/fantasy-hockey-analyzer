@@ -201,3 +201,18 @@ async def test_end_to_end_from_csv_bytes() -> None:
     report = await import_free_agent_salaries(repo, rows, POOL, NO_ALIASES)
     assert report.bound == 1
     assert (await load_free_agent_salaries(repo)).aav == {"1": 1_000_000}
+
+
+async def test_cap_hit_with_bonuses_is_stored_with_the_row() -> None:
+    repo = InMemoryRepository()
+    rows = [SalaryRow("Knight, Ada", "C", None, 950_000, 2, 3_450_000)]
+    await import_free_agent_salaries(repo, rows, POOL, NO_ALIASES)
+    [review_free] = [r for r in (await repo.all("fa_salaries")).values() if "items" in r]
+    assert review_free["items"][0]["cap_hit_with_bonuses"] == 3_450_000
+    assert (await load_free_agent_salaries(repo)).aav == {"1": 950_000}  # base cap hit (SPEC §6)
+
+
+async def test_unknown_team_strings_are_reported() -> None:
+    rows = [row("Knight, Ada", "C", 1, team="Hamilton"), row("Stone, Bo", "D", 2, 3, team="EDM")]
+    report = await import_free_agent_salaries(InMemoryRepository(), rows, POOL, NO_ALIASES)
+    assert report.unknown_teams == ("Hamilton",)

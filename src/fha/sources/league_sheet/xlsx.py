@@ -12,6 +12,7 @@ import io
 import zipfile
 from pathlib import Path
 from typing import Any
+from xml.etree.ElementTree import ParseError
 
 from fha.sources.league_sheet.grid import Cell, Grid, Tab, Value
 from fha.sources.league_sheet.models import LeagueSheetError
@@ -21,7 +22,15 @@ def read_xlsx(source: bytes | str | Path) -> Grid:
     import openpyxl  # lazily: see the module docstring
     from openpyxl.utils.exceptions import InvalidFileException
 
-    unreadable = (OSError, KeyError, ValueError, zipfile.BadZipFile, InvalidFileException)
+    # ParseError: a valid zip holding malformed XML.
+    unreadable = (
+        OSError,
+        KeyError,
+        ValueError,
+        ParseError,
+        zipfile.BadZipFile,
+        InvalidFileException,
+    )
 
     def load(data_only: bool) -> Any:
         stream = io.BytesIO(source) if isinstance(source, bytes) else source

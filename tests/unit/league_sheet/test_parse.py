@@ -281,6 +281,12 @@ def test_the_most_common_cap_reference_wins() -> None:
     assert parsed.cap == CAP
 
 
+def test_an_even_split_between_cap_references_gives_no_cap() -> None:
+    odd = TeamTab("Odd", roster(1), cap_formula="=Summary!B4", cap_value=1)
+    parsed = parse_sheet(grid(TeamTab("A", roster(1)), odd))
+    assert (parsed.cap, parsed.cap_source) == (None, None)
+
+
 def test_no_cap_formula_means_no_cap() -> None:
     parsed = parse_sheet(grid(TeamTab("A", roster(1), cap_formula=None, cap_value=None)))
     assert (parsed.cap, parsed.cap_source, parsed.tabs[0].cap) == (None, None, None)

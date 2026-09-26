@@ -18,7 +18,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from fha.domain.matcher import Aliases, MatchResult, Query, Scope, Status, match
+from fha.domain.matcher import Aliases, MatchResult, Query, Scope, Scored, Status, match
+from fha.domain.names import canonical_team
 from fha.services.clock import Clock
 from fha.services.free_agents import auto_how, candidates, row_key
 from fha.sources.league_sheet.models import ParsedSheet, ParsedTab, SheetRow
@@ -133,6 +134,8 @@ async def load_tab_bindings(repo: Repository) -> dict[str, str]:
 async def bind_tab(repo: Repository, tab: str, team_key: str | None) -> None:
     """Bind ``tab`` to a Yahoo team (``None`` unbinds). A team has at most one tab."""
     bindings = await load_tab_bindings(repo)
+    if bindings.get(tab) == team_key:
+        return  # unchanged: keep the tab's row bindings (the owner's confirmations)
     if team_key is None:
         bindings.pop(tab, None)
     else:
@@ -201,6 +204,9 @@ class TabReport:
     missing_from_tab: tuple[Player, ...]  # on the Yahoo roster, in no row
     not_on_roster: tuple[SheetRow, ...]  # rows matched to no roster player
     matched_counted_total: int  # the numeric salaries of matched counted rows
+    summed_rows: int = 0  # how many salaries that total adds (for the rounding tolerance)
+    sheet_cap: int | None = None  # the summary tab's cap
+    unknown_teams: tuple[str, ...] = ()  # NHL team strings no code matches (SPEC §6)
 
     @property
     def payroll(self) -> int | None:
@@ -209,11 +215,27 @@ class TabReport:
 
     @property
     def payroll_differs(self) -> bool:
-        return self.payroll is not None and self.payroll != self.matched_counted_total
+        """The tab's PAYROLL isn't the sum of its matched counted rows. Each salary and
+        the payroll are rounded to whole dollars separately (at most $0.50 each), so a
+        difference within that is rounding, not a discrepancy."""
+        if self.payroll is None:
+            return False
+        return abs(self.payroll - self.matched_counted_total) > (self.summed_rows + 1) / 2
+
+    @property
+    def cap_differs(self) -> bool:
+        """The tab's CAP isn't the summary tab's cap (SPEC §4a)."""
+        return (
+            self.tab.cap is not None
+            and self.sheet_cap is not None
+            and self.tab.cap != self.sheet_cap
+        )
 
     @property
     def has_discrepancies(self) -> bool:
-        return bool(self.missing_from_tab or self.not_on_roster or self.payroll_differs)
+        return bool(
+            self.missing_from_tab or self.not_on_roster or self.payroll_differs or self.cap_differs
+        )
 
 
 def match_tab(
@@ -221,11 +243,19 @@ def match_tab(
     team: Team | None,
     aliases: Aliases,
     bound_rows: Mapping[str, Mapping[str, str]],
+    sheet_cap: int | None = None,
 ) -> TabReport:
-    """Match ``tab``'s rows within ``team``'s roster (pure). Bound rows keep their player."""
-    if team is None:  # unbound: nothing to compare against yet
-        unbound = tuple(RowMatch(r, _key(r), None, None, None) for r in tab.rows)
-        return TabReport(tab, None, unbound, (), (), 0)
+    """Match ``tab``'s rows within ``team``'s roster (pure). Bound rows keep their player.
+
+    An unbound tab, or an unrecognized one, reports no row discrepancies: there is
+    nothing yet to compare (its status is the report).
+    """
+    unknown = tuple(sorted({r.team for r in tab.rows if r.team and canonical_team(r.team) is None}))
+    if team is None or tab.status != "ok":
+        idle = tuple(RowMatch(r, _key(r), None, None, None) for r in tab.rows)
+        return TabReport(
+            tab, None if team is None else team.team_key, idle, (), (), 0, 0, sheet_cap, unknown
+        )
     roster = {e.player.player_id: e.player for e in team.roster}
     pool = candidates(roster.values())
     matches: list[RowMatch] = []
@@ -245,26 +275,33 @@ def match_tab(
         pid = matches[-1].player_id
         if pid is not None:
             taken[pid] = taken.get(pid, 0) + 1
-    # Two rows on one player: neither is trusted; both go to review.
+    # Two rows on one player: neither is trusted; both go to review, with that player.
     matches = [
         m
         if m.player_id is None or taken[m.player_id] == 1
-        else RowMatch(m.row, m.key, None, None, None)
+        else RowMatch(m.row, m.key, None, None, _contested(roster[m.player_id]))
         for m in matches
     ]
     matched_ids = {m.player_id for m in matches if m.player_id is not None}
+    summed = [
+        m.row.salary for m in matches if m.player_id and m.row.counted and m.row.salary is not None
+    ]
     return TabReport(
         tab=tab,
         team_key=team.team_key,
         rows=tuple(matches),
         missing_from_tab=tuple(p for pid, p in roster.items() if pid not in matched_ids),
         not_on_roster=tuple(m.row for m in matches if m.player_id is None),
-        matched_counted_total=sum(
-            m.row.salary
-            for m in matches
-            if m.player_id and m.row.counted and m.row.salary is not None
-        ),
+        matched_counted_total=sum(summed),
+        summed_rows=len(summed),
+        sheet_cap=sheet_cap,
+        unknown_teams=unknown,
     )
+
+
+def _contested(player: Player) -> MatchResult:
+    [candidate] = candidates([player])
+    return MatchResult(Status.AMBIGUOUS, candidates=(Scored(candidate, 100.0),))
 
 
 async def tab_reports(
@@ -279,7 +316,7 @@ async def tab_reports(
     for tab in sheet.tabs:
         team = by_key.get(tab_bindings.get(tab.name, ""))
         bound = dict(row_bindings.get(tab.name, {}))
-        report = match_tab(tab, team, aliases, bound)
+        report = match_tab(tab, team, aliases, bound, sheet.cap)
         for m in report.rows:
             if m.player_id is not None and bound.get(m.key, {}).get("player_id") != m.player_id:
                 bound[m.key] = {"player_id": m.player_id, "how": m.how}

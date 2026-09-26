@@ -196,7 +196,10 @@ def _row(
 def _summary_cap(grid: Grid, refs: Counter[tuple[str, str]]) -> tuple[int | None, str | None]:
     if not refs:
         return None, None
-    (title, ref), _ = refs.most_common(1)[0]
+    ranked = refs.most_common(2)
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return None, None  # tabs disagree evenly on where the cap is: don't pick one
+    (title, ref), _ = ranked[0]
     summary = grid.tab(title)
     if summary is None:
         return None, f"'{title}'!{ref}"

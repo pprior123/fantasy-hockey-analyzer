@@ -221,6 +221,14 @@ async def test_a_transport_error_is_replaced_not_chained() -> None:
     assert caught.value.__suppress_context__
 
 
+async def test_a_malformed_sheet_id_is_an_error_that_hides_it() -> None:
+    bad_id = SHEET_ID + "\n"  # e.g. a trailing newline in the env var
+    with pytest.raises(LeagueSheetError) as caught:
+        await read_sheets_api(http(Google(200, {})), bad_id, token)
+    assert str(caught.value) == "Sheets API request failed (InvalidURL)"
+    assert SHEET_ID not in str(caught.value)
+
+
 async def test_a_non_json_answer_is_an_error() -> None:
     with pytest.raises(LeagueSheetError, match="isn't JSON"):
         await read_sheets_api(http(Google(body=b"<html>")), SHEET_ID, token)

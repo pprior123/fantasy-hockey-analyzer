@@ -1,6 +1,7 @@
 """The league sheet in the app: store, bind tabs, match rows in roster scope, report."""
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -256,3 +257,75 @@ async def test_stored_sheet_document_shape() -> None:
     doc = await repo.get(COLLECTION, LATEST)
     assert doc is not None
     assert set(doc) == {"read_at", "sheet"}
+
+
+async def test_rebinding_a_tab_to_the_same_team_keeps_confirmed_rows() -> None:
+    repo = InMemoryRepository()
+    await bind_tab(repo, "Pinecone", ONE.team_key)
+    await confirm_row(repo, "Pinecone", "oetterger|G", "3")
+    await bind_tab(repo, "Pinecone", ONE.team_key)  # e.g. the Admin form saved again
+    [report, _] = await tab_reports(repo, sheet(), [ONE, TWO], NO_ALIASES)
+    oet = next(m for m in report.rows if m.row.name == "Oetterger")
+    assert (oet.player_id, oet.how) == ("3", "confirmed")
+
+
+def test_a_cap_that_differs_from_the_summary_is_a_discrepancy() -> None:
+    tab = sheet().tab("Maple")
+    assert tab is not None
+    stale = replace(tab, cap=95_000_000)
+    report = match_tab(stale, TWO, NO_ALIASES, {}, sheet_cap=s.CAP)
+    assert report.cap_differs
+    assert report.has_discrepancies
+    fine = match_tab(tab, TWO, NO_ALIASES, {}, sheet_cap=s.CAP)
+    assert not fine.cap_differs
+    assert not match_tab(stale, TWO, NO_ALIASES, {}).cap_differs  # no summary cap known
+
+
+async def test_tab_reports_check_each_cap_against_the_sheets() -> None:
+    parsed = sheet()
+    stale = replace(parsed, tabs=(replace(parsed.tabs[0], cap=1), parsed.tabs[1]))
+    [first, second] = await tab_reports(InMemoryRepository(), stale, [ONE, TWO], NO_ALIASES)
+    assert (first.cap_differs, second.cap_differs) == (True, False)
+
+
+def test_a_bound_but_unrecognized_tab_reports_no_row_discrepancies() -> None:
+    broken = s.TeamTab("Broken", [s.Player("Dee Hill")], payroll_formula="=F7+F8")
+    tab = parse_sheet(s.grid(broken)).tab("Broken")
+    assert tab is not None
+    report = match_tab(tab, TWO, NO_ALIASES, {})
+    assert report.team_key == TWO.team_key
+    assert (report.missing_from_tab, report.not_on_roster, report.payroll) == ((), (), None)
+    assert not report.has_discrepancies
+
+
+def test_unknown_team_strings_are_listed() -> None:
+    odd = s.TeamTab(
+        "Odd", [s.Player("Dee Hill", team="Hamilton"), s.Player("Eve Moss", team="SEA")]
+    )
+    report = match_tab(parse_sheet(s.grid(odd)).tab("Odd"), TWO, NO_ALIASES, {})
+    assert report.unknown_teams == ("Hamilton",)
+    assert match_tab(parse_sheet(s.grid(odd)).tab("Odd"), None, NO_ALIASES, {}).unknown_teams == (
+        "Hamilton",
+    )
+
+
+def test_two_rows_on_one_player_are_offered_that_player_for_review() -> None:
+    twice = s.TeamTab("Twice", [s.Player("Dee Hill", "C"), s.Player("Hill", "C")])
+    report = match_tab(parse_sheet(s.grid(twice)).tab("Twice"), TWO, NO_ALIASES, {})
+    for m in report.rows:
+        assert m.result is not None
+        assert m.result.status is Status.AMBIGUOUS
+        assert [c.candidate.player_id for c in m.result.candidates] == ["11"]
+
+
+@pytest.mark.parametrize(
+    ("payroll", "differs"),
+    [(3_000_001, False), (2_999_999, False), (3_000_002, True), (2_999_998, True)],
+)
+def test_rounding_to_whole_dollars_is_not_a_discrepancy(payroll: int, differs: bool) -> None:
+    tab = sheet().tab("Maple")
+    assert tab is not None
+    report = match_tab(replace(tab, payroll=payroll), TWO, NO_ALIASES, {})
+    assert report.matched_counted_total == 3_000_000
+    assert report.summed_rows == 2
+    assert report.payroll_differs is differs

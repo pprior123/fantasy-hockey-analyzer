@@ -42,20 +42,45 @@ def test_a_clean_sheet_reports_every_tab_and_passes(
     code, out, _ = run(capsys, [str(path)], {})
     assert code == 0
     assert out.splitlines() == [
-        "Cap: 119,600,000 from 'Summary'!B3",
+        "Cap: 119,600,000 from '<tab>'!B3",
         "Team tabs: 2; other tabs: 2",
-        "Aces: ok; range F7:F9 (salary column F); 3 counted rows, 1 IR rows",
+        "tab 1: ok; range F7:F9 (salary column F); 3 counted rows, 1 IR rows",
         "  payroll 3,750,000 vs parsed salaries 3,750,000: match",
         "  IR rows with no numeric salary: [10]",
         "  cap: 119,600,000",
-        "Bees: ok; range F7:F9 (salary column F); 3 counted rows, 0 IR rows",
+        "tab 2: ok; range F7:F9 (salary column F); 3 counted rows, 0 IR rows",
         "  payroll 2,250,000 vs parsed salaries 2,250,000: match",
         "  counted rows with no numeric salary: [9]",
         "  cap: 119,600,000",
         "All team tabs parse and add up.",
     ]
-    for private in ("Skater", "Ike", "Ben Baker", *CONTACT):
+    for private in ("Skater", "Ike", "Ben Baker", "Aces", "Bees", "Summary", *CONTACT):
         assert private not in out
+
+
+def test_names_shows_tab_titles_for_the_owner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write(tmp_path, TeamTab("Aces", roster(1)))
+    code, out, _ = run(capsys, ["--names", str(path)], {})
+    assert code == 0
+    assert out.splitlines()[0] == "Cap: 119,600,000 from 'Summary'!B3"
+    assert out.splitlines()[2].startswith("Aces: ok;")
+
+
+def test_whole_dollar_rounding_still_adds_up(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rows = [Player("A A", salary=1_000_000.6), Player("B B", salary=2_000_000.6)]
+    path = write(tmp_path, TeamTab("Aces", rows, payroll_value=3_000_001))
+    code, out, _ = run(capsys, [str(path)], {})
+    assert "vs parsed salaries 3,000,002: match" in out
+    assert code == 0
+
+
+def test_redact_hides_quoted_tab_titles() -> None:
+    assert check.redact("='Pat''s Team'!B3 and 'x'!C1") == "='<tab>'!B3 and '<tab>'!C1"
+    assert check.redact("=SUM(F7:F9)") == "=SUM(F7:F9)"
 
 
 def test_problems_fail_the_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -69,7 +94,7 @@ def test_problems_fail_the_check(tmp_path: Path, capsys: pytest.CaptureFixture[s
     code, out, _ = run(capsys, [], {check.ENV: str(path)})
     assert code == 1
     assert "  payroll 9 vs parsed salaries 2,250,000: MISMATCH (off by 2,249,991)" in out
-    assert "Bees: UNRECOGNIZED: PAYROLL sums F7:G9, which spans more than one column" in out
+    assert "tab 2: UNRECOGNIZED: PAYROLL sums F7:G9, which spans more than one column" in out
     assert "  cap: 1 DIFFERS from the summary cap 119,600,000" in out
     assert "  counted rows with a salary but no name: [7]" in out
     assert out.splitlines()[-1] == "PROBLEMS: see above."

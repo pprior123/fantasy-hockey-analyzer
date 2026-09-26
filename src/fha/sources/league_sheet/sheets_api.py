@@ -33,7 +33,7 @@ async def read_sheets_api(http: httpx.AsyncClient, sheet_id: str, token: TokenPr
     params = {"includeGridData": "true", "fields": FIELDS}
     try:
         response = await http.get(API + sheet_id, params=params, headers=headers)
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, httpx.InvalidURL) as e:  # InvalidURL: e.g. a newline in the ID
         raise LeagueSheetError(f"Sheets API request failed ({type(e).__name__})") from None
     if response.status_code != httpx.codes.OK:
         raise LeagueSheetError(f"Sheets API answered HTTP {response.status_code}")

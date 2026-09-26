@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fha.domain.matcher import Aliases, Candidate, MatchResult, Query, Status, match
-from fha.domain.names import normalize_name, position_group
+from fha.domain.names import canonical_team, normalize_name, position_group
 from fha.sources.puckpedia import SalaryRow
 from fha.sources.yahoo.models import Player
 from fha.storage.chunks import load_chunked, save_chunked
@@ -69,6 +69,7 @@ class ImportReport:
     already_bound: int  # rows bound before (kept, not re-matched)
     reviews: tuple[Review, ...]  # REVIEW / AMBIGUOUS / UNMATCHED rows
     conflicts: tuple[str, ...]  # keys given twice with different cap hits: not imported
+    unknown_teams: tuple[str, ...] = ()  # team strings no NHL code matches (SPEC §6)
 
 
 async def import_free_agent_salaries(
@@ -113,6 +114,9 @@ async def import_free_agent_salaries(
         already_bound=already,
         reviews=tuple(reviews),
         conflicts=tuple(sorted(conflicting)),
+        unknown_teams=tuple(
+            sorted({r.team for r in rows if r.team and canonical_team(r.team) is None})
+        ),
     )
 
 
@@ -206,8 +210,11 @@ def _encode_row(key: str, row: SalaryRow) -> dict[str, Any]:
         "team": row.team,
         "aav": row.aav,
         "line": row.line,
+        "cap_hit_with_bonuses": row.cap_hit_with_bonuses,
     }
 
 
 def _decode_row(r: Mapping[str, Any]) -> SalaryRow:
-    return SalaryRow(r["name"], r["position"], r["team"], r["aav"], r["line"])
+    return SalaryRow(
+        r["name"], r["position"], r["team"], r["aav"], r["line"], r.get("cap_hit_with_bonuses")
+    )

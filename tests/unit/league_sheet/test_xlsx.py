@@ -133,6 +133,23 @@ def test_an_unreadable_file_is_a_league_sheet_error(junk: bytes) -> None:
     assert caught.value.__cause__ is None
 
 
+def test_malformed_xml_inside_a_valid_zip_is_a_league_sheet_error() -> None:
+    import io
+    import zipfile
+
+    good = zipfile.ZipFile(io.BytesIO(_save(openpyxl.Workbook())))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for item in good.infolist():
+            junk = item.filename in ("xl/workbook.xml", "xl/worksheets/sheet1.xml")
+            z.writestr(item, b"<<not xml" if junk else good.read(item))
+    with pytest.raises(
+        LeagueSheetError, match=r"not a readable \.xlsx file \(ParseError\)"
+    ) as caught:
+        read_xlsx(out.getvalue())
+    assert caught.value.__cause__ is None
+
+
 def test_a_missing_path_is_a_league_sheet_error(tmp_path: Path) -> None:
     with pytest.raises(LeagueSheetError, match="FileNotFoundError"):
         read_xlsx(tmp_path / "missing.xlsx")

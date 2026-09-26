@@ -21,7 +21,8 @@ from typing import Protocol
 from fha.domain.names import position_group
 
 REQUIRED = ("Player", "Pos", "Cap Hit")
-OPTIONAL = ("Team",)
+BONUSES = "Cap Hit With Bonuses"
+OPTIONAL = ("Team", BONUSES)
 DOLLARS = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)")
 NBSP = "\N{NO-BREAK SPACE}"
 
@@ -35,8 +36,11 @@ class SalaryRow:
     name: str  # as written, whitespace tidied: "Carlsson, Leo"
     position: str  # uppercased, e.g. "C", "D", "G", "C/L"
     team: str | None  # as written, when the file has a Team column
-    aav: int  # the cap hit in dollars
+    aav: int  # the cap hit in dollars (base cap hit: the Phase 1 convention, SPEC §6)
     line: int  # the row's line in the file, for messages
+    # With performance bonuses (entry-level contracts), when the file gives it. Kept
+    # so the convention can change without a migration (SPEC §6).
+    cap_hit_with_bonuses: int | None = None
 
 
 class SalarySource(Protocol):
@@ -120,11 +124,22 @@ def _row(cells: list[str], columns: dict[str, int], line: int) -> SalaryRow:
     position = cell("Pos")
     if position_group(position) is None:
         raise SalaryCsvError(f"line {line}: Pos {position!r} is not a position")
-    cap = cell("Cap Hit")
-    dollars = DOLLARS.fullmatch(cap)
+    aav = _dollars(cell("Cap Hit"), "Cap Hit", line)
+    team = _optional(cells, columns, "Team")
+    bonuses = _optional(cells, columns, BONUSES)
+    with_bonuses = None if bonuses is None else _dollars(bonuses, BONUSES, line)
+    return SalaryRow(name, position.upper(), team, aav, line, with_bonuses)
+
+
+def _dollars(text: str, column: str, line: int) -> int:
+    dollars = DOLLARS.fullmatch(text)
     if dollars is None:
-        raise SalaryCsvError(f"line {line}: Cap Hit {cap!r} is not a dollar amount")
-    team = None
-    if "Team" in columns and columns["Team"] < len(cells):
-        team = cells[columns["Team"]].strip() or None
-    return SalaryRow(name, position.upper(), team, int(dollars[1].replace(",", "")), line)
+        raise SalaryCsvError(f"line {line}: {column} {text!r} is not a dollar amount")
+    return int(dollars[1].replace(",", ""))
+
+
+def _optional(cells: list[str], columns: dict[str, int], name: str) -> str | None:
+    """An optional column's value; None when the column, or this row's cell, is absent."""
+    if name not in columns or columns[name] >= len(cells):
+        return None
+    return cells[columns[name]].strip() or None

@@ -126,6 +126,14 @@ def test_stat_categories_must_be_a_list() -> None:
         parse.parse_game_stat_categories(content)
 
 
+def test_a_single_position_type_given_as_an_object_is_a_parse_error() -> None:
+    content = b.game_stat_categories()
+    stat = content["game"][1]["stat_categories"]["stats"][0]["stat"]
+    stat["stat_position_types"] = {"stat_position_type": {"position_type": "P"}}
+    with pytest.raises(YahooParseError, match="expected an object, got str"):
+        parse.parse_game_stat_categories(content)
+
+
 # ---------------------------------------------------------------- players
 
 
@@ -155,6 +163,18 @@ def test_player_without_a_team_has_an_empty_team() -> None:
     meta = content["league"][1]["players"]["0"]["player"][0]
     meta.remove({"editorial_team_abbr": "TB"})
     assert parse.parse_league_players(content)[0].nhl_team == ""
+
+
+def test_eligible_positions_given_as_an_object_is_a_parse_error() -> None:
+    content = b.league_players([KNIGHT])
+    content["league"][1]["players"]["0"]["player"][0][9] = {"eligible_positions": {"position": "C"}}
+    with pytest.raises(YahooParseError, match="eligible_positions: expected an object"):
+        parse.parse_league_players(content)
+
+
+def test_sub_needs_an_object() -> None:
+    with pytest.raises(YahooParseError, match="t: expected an object, got list"):
+        parse._sub([], "x", "t")
 
 
 def test_player_name_must_have_a_full_name() -> None:

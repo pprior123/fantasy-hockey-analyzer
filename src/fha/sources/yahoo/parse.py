@@ -72,15 +72,21 @@ def _collection(node: Any, item: str, what: str) -> list[Any]:
     return out
 
 
+def _object(obj: Any, what: str) -> dict[str, Any]:
+    if not isinstance(obj, dict):
+        raise YahooParseError(f"{what}: expected an object, got {type(obj).__name__}")
+    return obj
+
+
 def _get(obj: dict[str, Any], key: str, what: str) -> Any:
-    if key not in obj:
+    if key not in _object(obj, what):
         raise YahooParseError(f"{what}: missing {key!r}")
     return obj[key]
 
 
 def _sub(obj: dict[str, Any], key: str, what: str) -> Any:
     """``obj[key]``, or ``obj["0"][key]``: Yahoo nests some subresources under "0"."""
-    if key in obj:
+    if key in _object(obj, what):
         return obj[key]
     inner = obj.get("0")
     if isinstance(inner, dict) and key in inner:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 from xml.etree.ElementTree import ParseError
@@ -30,6 +31,10 @@ def read_xlsx(source: bytes | str | Path) -> Grid:
         ParseError,
         zipfile.BadZipFile,
         InvalidFileException,
+        zlib.error,  # corrupt deflate data: a damaged upload
+        TypeError,  # malformed document properties
+        NotImplementedError,  # an unsupported zip compression method
+        EOFError,
     )
 
     def load(data_only: bool) -> Any:

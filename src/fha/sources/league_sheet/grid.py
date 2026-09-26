@@ -8,6 +8,7 @@ it may and the grid is then discarded.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -32,9 +33,12 @@ class Cell:
 
     @property
     def number(self) -> float | None:
-        """The value if it is a number (bools are not)."""
+        """The value if it is a finite number (bools, inf and nan are not)."""
         v = self.value
-        return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+        if not isinstance(v, int | float) or isinstance(v, bool):
+            return None
+        number = float(v)
+        return number if math.isfinite(number) else None
 
     @property
     def is_blank(self) -> bool:

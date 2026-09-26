@@ -170,3 +170,22 @@ def test_importing_the_sources_does_not_import_openpyxl() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "False"
+
+
+def test_corrupt_compressed_data_is_a_league_sheet_error() -> None:
+    import io
+    import zipfile
+
+    good = zipfile.ZipFile(io.BytesIO(_save(openpyxl.Workbook())))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for item in good.infolist():
+            z.writestr(item.filename, good.read(item), compress_type=zipfile.ZIP_DEFLATED)
+    data = bytearray(out.getvalue())
+    # Flip bytes inside the workbook entry's compressed data (after its local header).
+    at = data.index(b"xl/workbook.xml") + len("xl/workbook.xml") + 4
+    for i in range(at, at + 12):
+        data[i] ^= 0xFF
+    with pytest.raises(LeagueSheetError, match=r"not a readable \.xlsx file") as caught:
+        read_xlsx(bytes(data))
+    assert caught.value.__cause__ is None

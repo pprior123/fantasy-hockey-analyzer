@@ -25,12 +25,13 @@ from fha.sources.league_sheet.xlsx import read_xlsx
 ENV = "LEAGUE_SHEET_XLSX"
 
 
-QUOTED_TAB = re.compile(r"'(?:[^']|'')*'!")
+# A sheet reference: 'Quoted title'! (with '' for a quote) or a bare Title!
+TAB_REFERENCE = re.compile(r"(?:'(?:[^']|'')*'|[^'!=\s(),:+\-*/&^<>;\"]+)!")
 
 
 def redact(text: str) -> str:
-    """Tab titles in a formula or reason (``'Title'!B3``) as ``'<tab>'!B3``."""
-    return QUOTED_TAB.sub("'<tab>'!", text)
+    """Tab titles in a formula or reason (``'Title'!B3``, ``Title!B3``) as ``'<tab>'!B3``."""
+    return TAB_REFERENCE.sub("'<tab>'!", text)
 
 
 def tab_lines(tab: ParsedTab, cap: int | None, label: str, names: bool) -> tuple[list[str], bool]:

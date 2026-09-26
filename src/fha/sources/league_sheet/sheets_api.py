@@ -55,16 +55,32 @@ def grid_from_response(body: Any) -> Grid:
         if not isinstance(title, str):
             raise LeagueSheetError(f"sheet {i}: title is not text")
         cells: dict[tuple[int, int], Cell] = {}
-        for block in sheet.get("data", []):
+        for block in _list(sheet.get("data"), f"{title}: data"):
+            if not isinstance(block, dict):
+                raise LeagueSheetError(f"{title}: a data block is not an object")
             row0 = _int(block.get("startRow", 0), f"{title}: startRow")
             col0 = _int(block.get("startColumn", 0), f"{title}: startColumn")
-            for r, row in enumerate(block.get("rowData", []) or [], start=row0 + 1):
-                for c, raw in enumerate((row or {}).get("values", []) or [], start=col0 + 1):
+            for r, row in enumerate(
+                _list(block.get("rowData"), f"{title}: rowData"), start=row0 + 1
+            ):
+                if row is not None and not isinstance(row, dict):
+                    raise LeagueSheetError(f"{title}: row {r} is not an object")
+                values = _list((row or {}).get("values"), f"{title}: row {r} values")
+                for c, raw in enumerate(values, start=col0 + 1):
                     cell = _cell(raw, f"{title}!{a1(r, c)}")
                     if cell.value is not None or cell.formula:
                         cells[(r, c)] = cell
         tabs.append(Tab(title, cells))
     return Grid(tuple(tabs))
+
+
+def _list(value: Any, what: str) -> list[Any]:
+    """A JSON list, or [] when absent (Google omits empty ones)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise LeagueSheetError(f"{what} is not a list")
+    return value
 
 
 def _cell(raw: Any, where: str) -> Cell:

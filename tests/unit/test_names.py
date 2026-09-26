@@ -308,3 +308,19 @@ def test_position_group(raw: str, group: PositionGroup) -> None:
 @pytest.mark.parametrize("raw", ["", "  ", "BN", "IR", "Util", "C/D", "F,G", "X", None])
 def test_unknown_or_mixed_positions_are_none(raw: str | None) -> None:
     assert position_group(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "code"),
+    [
+        ("LA Kings", "LAK"),
+        ("NJ Devils", "NJD"),
+        ("TB Lightning", "TBL"),
+        ("SJ Sharks", "SJS"),
+        ("TBL Lightning", "TBL"),
+        ("NYR Rangers", "NYR"),
+        ("CBJ Blue Jackets", "CBJ"),
+    ],
+)
+def test_a_code_with_the_nickname_is_the_team(raw: str, code: str) -> None:
+    assert canonical_team(raw) == code

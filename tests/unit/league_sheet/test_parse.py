@@ -366,3 +366,17 @@ def test_contact_details_in_the_name_column_below_the_range_stay_out() -> None:
     tab = one(TeamTab("Aces", roster(2), below=[Player(CONTACT[2])]))
     assert_no_contact(tab)
     assert [r.name for r in tab.rows] == ["Skater 1", "Skater 2"]
+
+
+def test_a_range_far_past_the_last_row_reads_only_the_rows_there() -> None:
+    # Finishes at once (the loop stops at the tab's last row). The range really
+    # does cover every row below, so they are all read as counted rows.
+    tab = one(TeamTab("Vast", roster(2), payroll_formula="=SUM(F7:F99999999999)"))
+    assert tab.status == "ok"
+    assert [r.name for r in tab.counted][:2] == ["Skater 1", "Skater 2"]
+
+
+def test_an_infinite_salary_is_no_salary() -> None:
+    tab = one(TeamTab("Inf", [*roster(1), Player("Ada Big", salary=float("inf"))], payroll_value=1))
+    assert tab.status == "ok"
+    assert [r.salary for r in tab.counted] == [1_000_000, None]

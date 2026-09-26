@@ -157,7 +157,7 @@ def _counted_rows(
     tab: Tab, cols: _Columns, salary_col: int, first: int, last: int
 ) -> list[SheetRow]:
     rows = []
-    for r in range(first, last + 1):
+    for r in range(first, min(last, tab.max_row) + 1):  # past the last cell, all is blank
         name = _text(tab.cell(r, cols.name))
         salary = tab.cell(r, salary_col)
         if not name and salary.is_blank:

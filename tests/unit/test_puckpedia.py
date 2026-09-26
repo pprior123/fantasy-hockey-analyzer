@@ -189,3 +189,8 @@ async def test_fake_salary_source_returns_its_rows() -> None:
     source: SalarySource = FakeSalarySource(rows)
     assert await source.rows() == rows
     assert await source.rows() is not rows  # a copy
+
+
+def test_cap_hits_take_ascii_digits_only() -> None:
+    with pytest.raises(SalaryCsvError, match="is not a dollar amount"):
+        parse_salary_csv(csv("Player,Pos,Cap Hit", "A B,C,$\u0661\u0662\u0663"))

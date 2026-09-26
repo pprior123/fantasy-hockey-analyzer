@@ -78,9 +78,21 @@ def test_whole_dollar_rounding_still_adds_up(
     assert code == 0
 
 
-def test_redact_hides_quoted_tab_titles() -> None:
+def test_redact_hides_quoted_and_bare_tab_titles() -> None:
     assert check.redact("='Pat''s Team'!B3 and 'x'!C1") == "='<tab>'!B3 and '<tab>'!C1"
+    assert check.redact("='O''Brien'!B3") == "='<tab>'!B3"
+    assert check.redact("=SUM(Aces!F7:F9)+Bees!C1") == "=SUM('<tab>'!F7:F9)+'<tab>'!C1"
     assert check.redact("=SUM(F7:F9)") == "=SUM(F7:F9)"
+
+
+def test_an_unrecognized_tabs_reason_is_redacted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write(tmp_path, TeamTab("Aces", roster(1), payroll_formula="=SUM(Bees!F7:F9)"))
+    _, out, _ = run(capsys, [str(path)], {})
+    assert "tab 1: UNRECOGNIZED" in out
+    assert "Bees" not in out
+    assert "Aces" not in out
 
 
 def test_problems_fail_the_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

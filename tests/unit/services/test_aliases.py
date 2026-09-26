@@ -35,3 +35,15 @@ async def test_adding_to_an_existing_salary_name_keeps_both_targets() -> None:
     repo = InMemoryRepository()
     await add_alias(repo, "Matt Boldy II", "Matthew Boldy")
     assert (await load_aliases(repo)).targets("Matthew Boldy") == ("Matt Boldy", "Matt Boldy II")
+
+
+async def test_seeding_again_keeps_the_owners_aliases() -> None:
+    from fha.services.aliases import seed_aliases
+
+    repo = InMemoryRepository()
+    await add_alias(repo, "Bo Stone", "Robert Stonewall")
+    await add_alias(repo, "Matt Boldy Jr", "Matthew Boldy")
+    await seed_aliases(repo)
+    aliases = await load_aliases(repo)
+    assert aliases.targets("Robert Stonewall") == ("Bo Stone",)
+    assert aliases.targets("Matthew Boldy") == ("Matt Boldy", "Matt Boldy Jr")

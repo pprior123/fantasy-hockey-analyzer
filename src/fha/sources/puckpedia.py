@@ -23,7 +23,7 @@ from fha.domain.names import position_group
 REQUIRED = ("Player", "Pos", "Cap Hit")
 BONUSES = "Cap Hit With Bonuses"
 OPTIONAL = ("Team", BONUSES)
-DOLLARS = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)")
+DOLLARS = re.compile(r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)")  # ASCII digits only
 NBSP = "\N{NO-BREAK SPACE}"
 
 

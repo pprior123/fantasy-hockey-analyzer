@@ -216,3 +216,17 @@ async def test_unknown_team_strings_are_reported() -> None:
     rows = [row("Knight, Ada", "C", 1, team="Hamilton"), row("Stone, Bo", "D", 2, 3, team="EDM")]
     report = await import_free_agent_salaries(InMemoryRepository(), rows, POOL, NO_ALIASES)
     assert report.unknown_teams == ("Hamilton",)
+
+
+async def test_cap_hit_with_bonuses_reads_back_and_duplicates_compare_it() -> None:
+    from fha.services.free_agents import _rows
+
+    repo = InMemoryRepository()
+    rows = [
+        SalaryRow("Knight, Ada", "C", None, 950_000, 2, 3_450_000),
+        SalaryRow("Stone, Bo", "D", None, 1, 3, 5),
+        SalaryRow("Stone, Bo", "D", None, 1, 4, 6),  # same cap hit, other bonuses
+    ]
+    report = await import_free_agent_salaries(repo, rows, POOL, NO_ALIASES)
+    assert report.conflicts == ("bo stone|D",)
+    assert (await _rows(repo))["ada knight|F"].cap_hit_with_bonuses == 3_450_000

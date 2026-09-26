@@ -80,7 +80,10 @@ async def import_free_agent_salaries(
     for row in rows:
         key = row_key(row.name, row.position)
         seen = by_key.get(key)
-        if seen is not None and seen.aav != row.aav:
+        if seen is not None and (seen.aav, seen.cap_hit_with_bonuses) != (
+            row.aav,
+            row.cap_hit_with_bonuses,
+        ):
             conflicting.add(key)
         by_key.setdefault(key, row)
     for key in conflicting:

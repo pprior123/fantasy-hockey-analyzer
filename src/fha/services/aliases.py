@@ -37,16 +37,17 @@ async def load_aliases(repo: Repository) -> Aliases:
 
 
 async def seed_aliases(repo: Repository) -> None:
-    """Write the seed aliases, one document per salary name (idempotent)."""
+    """Write the seed aliases, one document per salary name. Idempotent, and it keeps
+    what's stored: the owner's aliases win over a seed entry for the same name."""
     table = Aliases.from_seed(seed_entries()).table
     first_spelling: dict[str, str] = {}
     for entry in seed_entries():
         first_spelling.setdefault(_key(entry["salary_name"]), entry["salary_name"])
-    docs = {
+    seeded = {
         key: {"salary_name": first_spelling[key], "stats_names": list(targets)}
         for key, targets in table.items()
     }
-    await repo.replace_all(COLLECTION, docs)
+    await repo.replace_all(COLLECTION, {**seeded, **await repo.all(COLLECTION)})
 
 
 async def add_alias(repo: Repository, stats_name: str, salary_name: str) -> Aliases:

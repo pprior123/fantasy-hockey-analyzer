@@ -183,6 +183,23 @@ def test_a_formula_with_an_error_value_keeps_its_formula() -> None:
             {"sheets": [{"properties": {"title": "T"}, "data": [{"startColumn": True}]}]},
             "T: startColumn: expected a non-negative integer",
         ),
+        ({"sheets": [{"properties": {"title": "T"}, "data": {}}]}, "T: data is not a list"),
+        (
+            {"sheets": [{"properties": {"title": "T"}, "data": [1]}]},
+            "a data block is not an object",
+        ),
+        (
+            {"sheets": [{"properties": {"title": "T"}, "data": [{"rowData": "x"}]}]},
+            "T: rowData is not a list",
+        ),
+        (
+            {"sheets": [{"properties": {"title": "T"}, "data": [{"rowData": [[1]]}]}]},
+            "T: row 1 is not an object",
+        ),
+        (
+            {"sheets": [{"properties": {"title": "T"}, "data": [{"rowData": [{"values": 3}]}]}]},
+            "T: row 1 values is not a list",
+        ),
     ],
 )
 def test_malformed_responses_are_errors(body: Any, message: str) -> None:

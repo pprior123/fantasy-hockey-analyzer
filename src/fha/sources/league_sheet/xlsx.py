@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +19,15 @@ from fha.sources.league_sheet.models import LeagueSheetError
 
 def read_xlsx(source: bytes | str | Path) -> Grid:
     import openpyxl  # lazily: see the module docstring
+    from openpyxl.utils.exceptions import InvalidFileException
+
+    unreadable = (OSError, KeyError, ValueError, zipfile.BadZipFile, InvalidFileException)
 
     def load(data_only: bool) -> Any:
         stream = io.BytesIO(source) if isinstance(source, bytes) else source
         try:
             return openpyxl.load_workbook(stream, data_only=data_only, read_only=False)
-        except (OSError, KeyError, ValueError) as e:  # zipfile.BadZipFile is an OSError
+        except unreadable as e:
             raise LeagueSheetError(f"not a readable .xlsx file ({type(e).__name__})") from None
 
     formulas, values = load(data_only=False), load(data_only=True)
@@ -37,7 +41,7 @@ def read_xlsx(source: bytes | str | Path) -> Grid:
                 if raw is None:
                     continue
                 formula = raw if isinstance(raw, str) and raw.startswith("=") else None
-                if formula is None and not isinstance(raw, str | int | float | bool | dt.date):
+                if formula is None and not isinstance(raw, (str, int, float, bool, *TIMES)):
                     formula = str(getattr(raw, "text", raw))  # e.g. an array formula
                 value = computed.cell(row=c.row, column=c.column).value
                 cells[(c.row, c.column)] = Cell(_value(value), formula)
@@ -45,9 +49,14 @@ def read_xlsx(source: bytes | str | Path) -> Grid:
     return Grid(tuple(tabs))
 
 
+TIMES = (dt.date, dt.time, dt.timedelta)  # plain values openpyxl gives as objects
+
+
 def _value(raw: Any) -> Value:
     if raw is None or isinstance(raw, str | int | float | bool):
         return raw
-    if isinstance(raw, dt.date | dt.time | dt.timedelta):
-        return raw.isoformat() if not isinstance(raw, dt.timedelta) else str(raw)
-    return str(raw)
+    if isinstance(raw, dt.timedelta):
+        return str(raw)
+    if isinstance(raw, dt.date | dt.time):
+        return raw.isoformat()
+    return str(raw)  # anything else openpyxl might hand back, as text

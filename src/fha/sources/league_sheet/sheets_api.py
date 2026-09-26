@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from fha.sources.league_sheet.grid import Cell, Grid, Tab, Value
+from fha.sources.league_sheet.grid import Cell, Grid, Tab, Value, a1
 from fha.sources.league_sheet.models import LeagueSheetError
 
 API = "https://sheets.googleapis.com/v4/spreadsheets/"
@@ -60,29 +60,38 @@ def grid_from_response(body: Any) -> Grid:
             col0 = _int(block.get("startColumn", 0), f"{title}: startColumn")
             for r, row in enumerate(block.get("rowData", []) or [], start=row0 + 1):
                 for c, raw in enumerate((row or {}).get("values", []) or [], start=col0 + 1):
-                    cell = _cell(raw)
+                    cell = _cell(raw, f"{title}!{a1(r, c)}")
                     if cell.value is not None or cell.formula:
                         cells[(r, c)] = cell
         tabs.append(Tab(title, cells))
     return Grid(tuple(tabs))
 
 
-def _cell(raw: Any) -> Cell:
+def _cell(raw: Any, where: str) -> Cell:
     if not isinstance(raw, dict):
         return Cell()
     entered = raw.get("userEnteredValue") or {}
     formula = entered.get("formulaValue") if isinstance(entered, dict) else None
-    return Cell(_value(raw.get("effectiveValue")), formula if isinstance(formula, str) else None)
+    return Cell(
+        _value(raw.get("effectiveValue"), where), formula if isinstance(formula, str) else None
+    )
 
 
-def _value(ev: Any) -> Value:
-    """An ExtendedValue: number, string or bool; an error value reads as no value."""
+def _value(ev: Any, where: str) -> Value:
+    """An ExtendedValue: number, string or bool; an error value reads as no value.
+    A value of the wrong JSON type is an error (``where`` is a cell address)."""
     if not isinstance(ev, dict):
         return None
-    for key in ("numberValue", "stringValue", "boolValue"):
+    for key, kinds in (
+        ("numberValue", (int, float)),
+        ("stringValue", (str,)),
+        ("boolValue", (bool,)),
+    ):
         if key in ev:
             v = ev[key]
-            return v if isinstance(v, str | int | float | bool) else None
+            if not isinstance(v, kinds) or (key == "numberValue" and isinstance(v, bool)):
+                raise LeagueSheetError(f"{where}: {key} of the wrong type")
+            return v
     return None
 
 

@@ -456,7 +456,9 @@ HttpOnly, Secure session cookie (long-lived). No user table.
   JSON fixtures are committed. League-sheet tests use **synthetic** sheets
   that reproduce each layout variant with made-up names — never real tabs.
   They are built in the test code (openpyxl for the `.xlsx` reader, JSON
-  grids for the parser), so no `.xlsx` is ever committed.
+  grids for the parser), so no `.xlsx` is ever committed. Likewise, sample
+  salary CSVs are built in test code; no `.csv` is committed. Service-account
+  keys and any other downloaded credentials are saved under `private/`.
   No manager names or contact details anywhere in the repo.
 - Firestore rules: deny all client reads and writes. Server uses the service
   account.
@@ -533,7 +535,9 @@ start the next milestone until the current one is accepted.
 
 ### M3 — Storage and salaries
 - `Repository` protocol, `InMemoryRepository`, `FirestoreRepository`
-  (integration-tested against the Firestore emulator), and a dev-only
+  (integration-tested against the Firestore emulator — first close the
+  test network-policy gaps listed in `docs/DECISIONS.md`, "Known network-policy
+  gaps for M3"), and a dev-only
   `LocalJsonRepository` (a file under gitignored `private/`) so the app can
   run locally against
   real data before any cloud setup. Never used in production.

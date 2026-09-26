@@ -113,3 +113,22 @@ argument), as are I/O builtins and `__builtins__`. mutmut's injected
 trampoline import is allowed only under `mutants/`. `check_coverage.py` fails
 on excluded lines or any `# pragma` comment in `domain/`, where the 95% gate
 and mutation testing apply.
+
+## 2026-09-26 — Known network-policy gaps for M3 (review round 4, deferred)
+These only matter once the Firestore-emulator tests exist, and the right fix
+depends on how those tests are written, so they are M3 work, not M0:
+1. In `loopback_only`, only `connect`, `sendto` and `getaddrinfo` are
+   guarded; `connect_ex`, `sendmsg`, `gethostbyname(_ex)` and `getnameinfo`
+   are not (a port-wait helper using `connect_ex` could reach a real host).
+2. gRPC (used by google-cloud-firestore) opens sockets in C, bypassing the
+   Python guard entirely. Scrub `FIRESTORE_EMULATOR_HOST`,
+   `GOOGLE_APPLICATION_CREDENTIALS` and `FIRESTORE_SERVICE_ACCOUNT_JSON` for
+   unmarked tests (autouse fixture); assert the emulator host is loopback
+   for marked ones.
+3. A session/module-scoped emulator fixture torn down during an unmarked
+   test's teardown runs blocked and errors (loudly). Keep emulator fixtures
+   function-scoped or in `pytestmark`-marked modules, or wrap their
+   finalizers in `loopback_only()`.
+4. Code that catches broad exceptions can swallow a `SocketBlockedError`, so
+   a test that forgot to mock still passes (no packets leave). Record blocked
+   attempts and fail the test even if the exception was caught.

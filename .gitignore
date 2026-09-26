@@ -7,6 +7,9 @@ secrets.json
 *firebase-adminsdk*.json
 *service-account*.json
 *serviceaccount*.json
+# GCP console keys download as <project>-<hash>.json: no JSON at the repo root
+/*.json
+!/vercel.json
 
 # Yahoo OAuth tokens (yahoofantasy / yfpy write these)
 .yahoofantasy
@@ -23,7 +26,6 @@ oauth2.json
 
 # Salary imports (may contain league data)
 *.csv
-!tests/fixtures/**/sample_*.csv
 
 # Python
 __pycache__/

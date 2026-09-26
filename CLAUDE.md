@@ -21,13 +21,12 @@ Vercel (serverless) · pytest / hypothesis / respx / mutmut · ruff · mypy --st
 ```
 uv sync                         # install
 uv run pytest                   # tests
-uv run pytest --cov             # tests + coverage
+uv run pytest --cov --cov-report=json && uv run python scripts/check_coverage.py
+                                # tests + per-package coverage gates
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src scripts
 uv run mutmut run               # mutation testing on src/fha/domain
 ```
-
-(Commands become valid once M0 is done.)
 
 ## How to work
 

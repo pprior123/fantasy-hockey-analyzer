@@ -395,8 +395,8 @@ non-breaking spaces in names. The owner is "not married to the format", so:
   the two Sebastian Ahos (a C and a D) resolve separately. A remaining tie is
   a candidate for review. The group is used rather than the exact position
   because sources disagree on C versus wing. (Owner approved, 2026-09-26.)
-- The committed test fixture is synthetic, in the same shape. The real CSV
-  is never committed (hard rule 3).
+- Test CSVs are synthetic, in the same shape, and built in test code (SPEC
+  §8: no `.csv` is committed). The real CSV is never committed (hard rule 3).
 Alternatives: parse PuckPedia's headerless paste by column position
 (rejected: silent breakage when PuckPedia changes its table); require a
 clean three-column file (rejected: more work for the owner on every import).

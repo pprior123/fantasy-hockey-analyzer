@@ -175,3 +175,12 @@ async def test_load_salaries_without_a_sheet_uses_the_cap_override(snap: LeagueS
         {},
         [],
     )
+
+
+def test_row_shortcuts_read_the_rating_and_are_empty_for_goalies(snap: LeagueSnapshot) -> None:
+    view = build_view(snap, DEFAULT_CONFIG, Salaries())
+    skater = view.by_id["1"]
+    assert skater.rating is not None
+    assert (skater.percentile, skater.norms) == (skater.rating.percentile, skater.rating.norms)
+    goalie = view.by_id["3"]
+    assert (goalie.ttltst, goalie.percentile, goalie.value, goalie.norms) == (None, None, None, {})

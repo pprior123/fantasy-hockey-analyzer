@@ -87,7 +87,15 @@ def test_default_config_follows_the_workbook() -> None:
     assert DEFAULT_CONFIG.categories == SKATER_CATEGORIES
     assert DEFAULT_CONFIG.gp_floor_fraction == 0.02
     assert DEFAULT_CONFIG.divisor_method is DivisorMethod.WORKBOOK
-    assert DEFAULT_CONFIG.divisor_top_n == 20
+    assert DEFAULT_CONFIG.top_n == 20
+
+
+@pytest.mark.parametrize(
+    ("method", "top_n"), [(DivisorMethod.WORKBOOK, 20), (DivisorMethod.TOP_PER82, 10)]
+)
+def test_top_n_defaults_per_method(method: DivisorMethod, top_n: int) -> None:
+    assert EngineConfig(divisor_method=method).top_n == top_n
+    assert EngineConfig(divisor_method=method, divisor_top_n=3).top_n == 3
 
 
 @pytest.mark.parametrize(
@@ -112,7 +120,7 @@ def test_config_accepts_fraction_bounds(fraction: float) -> None:
 
 
 def test_config_accepts_top_n_of_one() -> None:
-    assert EngineConfig(divisor_top_n=1).divisor_top_n == 1
+    assert EngineConfig(divisor_top_n=1).top_n == 1
 
 
 # ---------------------------------------------------------------- eligibility
@@ -278,9 +286,10 @@ def test_injected_divisors_are_validated(divisors: dict[Category, float], messag
         rate([sk("a", 82, {G: 10})], ONE_CAT, divisors=divisors)
 
 
-def test_duplicate_player_ids_are_an_error() -> None:
+@pytest.mark.parametrize("goalie", [False, True])
+def test_duplicate_player_ids_are_an_error(goalie: bool) -> None:
     with pytest.raises(ValueError, match=r"^duplicate player_id in the pool$"):
-        rate([sk("a", 82), sk("a", 70)])
+        rate([sk("a", 82), sk("a", 70, goalie=goalie)])
 
 
 # ---------------------------------------------------------------- unrated players
@@ -306,7 +315,7 @@ def test_goalies_are_not_in_the_result() -> None:
 def test_no_eligible_players_is_an_empty_ranking_not_an_error() -> None:
     result = rate([sk("a", 0), sk("b", 0)])
     assert result.eligible_count == 0
-    assert result.pool_size == 2
+    assert result.pool_size == 0
     assert all(not r.rated for r in result.ratings.values())
     assert result.divisors == dict.fromkeys(SKATER_CATEGORIES, 0.0)
 
@@ -330,14 +339,15 @@ def test_competition_ranking_shares_ranks_on_ties() -> None:
     assert {pid: r.rank for pid, r in result.ratings.items()} == {"a": 1, "b": 2, "c": 2, "d": 4}
 
 
-def test_percentile_divides_by_all_skaters_in_the_pool() -> None:
-    # N counts the unrated skater too (the workbook ranks all its rows);
-    # goalies are not counted.
+def test_percentile_divides_by_skaters_who_played() -> None:
+    # N counts the unrated GP-1 skater too (the workbook ranks all its rows);
+    # GP-0 skaters and goalies are not counted.
     players = [
         sk("a", 82, {G: 40}),
         sk("b", 82, {G: 30}),
         sk("c", 82, {G: 20}),
         sk("low", 1),
+        sk("zero", 0),
         sk("g", 82, goalie=True),
     ]
     result = rate(players, ONE_CAT, divisors={G: 10.0})
@@ -345,7 +355,8 @@ def test_percentile_divides_by_all_skaters_in_the_pool() -> None:
     assert result.eligible_count == 3
     pct = {pid: r.percentile for pid, r in result.ratings.items()}
     assert pct == {"a": pytest.approx(75.0), "b": pytest.approx(50.0), "c": pytest.approx(25.0)} | {
-        "low": None
+        "low": None,
+        "zero": None,
     }
 
 

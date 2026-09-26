@@ -221,15 +221,16 @@ norm(cat, p)       = per82(cat, p) / divisor(cat), or 0 if divisor(cat) == 0
 TTLTST(p)          = arithmetic mean of norm over the 7 categories
 rank(p)            = 1 + #{eligible q : TTLTST(q) > TTLTST(p)}   # competition
                      # ranking: equal scores share a rank (1, 2, 2, 4)
-percentile(p)      = (1 - rank(p) / N) * 100,  N = #skaters in the pool
-                     # rated or not, as in the workbook
+percentile(p)      = (1 - rank(p) / N) * 100
+N                  = #skaters in the pool with GP > 0, rated or not
+                     # the workbook counts its unrated rows (all GP >= 1)
 value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST == 0
 ```
 
 The divisor above is the workbook's own formula (`W6:AC6`, found in M1).
 The engine also implements the method this spec first described, the mean
 of the top-10 per-82 rates over eligible players (`DivisorMethod.TOP_PER82`,
-`TOP_N = 10`). Small samples inflate it (M1 report in `docs/DECISIONS.md`).
+whose `TOP_N` defaults to 10, so switching is one config value). Small samples inflate it (M1 report in `docs/DECISIONS.md`).
 The workbook method is the default **pending the owner's confirmation**
 (§11).
 
@@ -245,9 +246,11 @@ Rules:
   norm 0 in that category; the category stays in the mean so TTLTST remains
   comparable.
 - Ranks are computed over all eligible players and N over all skaters in the
-  pool, independent of any UI filter. Unrated skaters count in N (the
-  workbook ranks them last at 0), so the lowest rated player's percentile is
-  above 0 when some skaters are unrated. Display order for equal TTLTST:
+  pool who have played (GP > 0), independent of any UI filter. Unrated
+  skaters who played count in N (the workbook ranks them last at 0), so the
+  lowest rated player's percentile is above 0 when some are unrated. GP-0
+  skaters (IR, prospects, pre-season) don't count, so however many the pool
+  holds, no percentile moves. Display order for equal TTLTST:
   name, then player_id; unrated players last.
 - `PPP = PPG + PPA` unless Yahoo provides PPP directly.
 - Injured players keep their rate stats and stay ranked (owner's explicit call).
@@ -259,7 +262,7 @@ Rules:
   the workbook, updates this section, and records the change in
   `docs/DECISIONS.md`.
 - `GP_FLOOR_FRACTION`, the category list, the divisor method and its top-N
-  (20) are config, not literals.
+  (20 for the workbook method, 10 for per-82) are config, not literals.
 
 ### Baseline season (pre-season and early season)
 
@@ -359,8 +362,10 @@ baseline rule above. Known structure:
   source rows 2–845 and then row 900, skipping 846–899. The golden pool is
   the 845 it rates.
 - `Table2` ranks by position (`LARGE(AD, k)`), so tied scores get consecutive
-  ranks and its name lookup shows the first tied player twice. A score's
-  first rank is the one every player with that score shares.
+  ranks and its name lookup shows the first tied player twice. The extractor
+  gives every player with that score the score's first rank, so the golden
+  percentile of a tied player the lookup hides is the extractor's reading,
+  not a value the workbook displays (one player in 2025-26).
 - Cap hits are looked up by name, so two players with one name (the two Elias
   Petterssons) get the same cap hit. The app binds by player ID (§6).
 

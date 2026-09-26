@@ -80,11 +80,31 @@ for _cat, (_col, _src, _div) in CATEGORIES.items():
     if _col not in EXPECTED_FORMULAS:
         EXPECTED_FORMULAS[_col] = f"=_xlfn.NUMBERVALUE('Stats Data Source'!{_src}@)"
 
-# Divisors: mean of the top 20 totals over mean of the top 20 GP, times 82.
+# The Stats Data Source headers of the columns pulled above (row 1).
+STATS_HEADERS = {
+    "A": "id",
+    "C": "firstname",
+    "D": "lastname",
+    "G": "team",
+    "H": "position",
+    "R": "gp",
+    "S": "goals",
+    "T": "assists",
+    "W": "pim",
+    "X": "shots",
+    "Z": "ppGoals",
+    "AA": "ppAssists",
+    "AD": "hits",
+    "AE": "blocks",
+}
+
+# Divisors: mean of the top 20 totals over mean of the top 20 GP, times 82,
+# each over one column from row 3 to at least the last player row.
 DIVISOR_ROW = 6
+TOP_20 = re.escape("{" + ",".join(str(k) for k in range(1, 21)) + "}")
 DIVISOR_FORMULA = re.compile(
-    r"=AVERAGE\(LARGE\((?P<col>[A-Z]+)\$?3:[A-Z]+\$?\d+,\{1(?:,\d+){19}\}\)\)"
-    r"/AVERAGE\(LARGE\(E\$3:E\$\d+, ?\{1(?:,\d+){19}\}\)\)\*82"
+    rf"=AVERAGE\(LARGE\((?P<col>[A-Z]+)\$?3:(?P=col)\$?(?P<end>\d+),{TOP_20}\)\)"
+    rf"/AVERAGE\(LARGE\(E\$3:E\$(?P<gp_end>\d+), ?{TOP_20}\)\)\*82"
 )
 
 # Table2 (the ranking): AE rank 1..n (literals, then =AE{prev}+1; checked by
@@ -153,7 +173,13 @@ def check_formulas(formulas: Worksheet, rows: range, sources: Sequence[int]) -> 
     for cat, (col, _src, div) in CATEGORIES.items():
         got = formula_text(formulas[f"{div}{DIVISOR_ROW}"].value)
         match = DIVISOR_FORMULA.fullmatch(got)
-        if not match or match["col"] != col:
+        last = rows.stop - 1
+        if (
+            not match
+            or match["col"] != col
+            or int(match["end"]) < last
+            or int(match["gp_end"]) < last
+        ):
             problems.append(f"{div}{DIVISOR_ROW} ({cat}): {got!r}")
     for row in rows:
         for col, template in RANKING_FORMULAS.items():
@@ -181,7 +207,9 @@ def percentiles(values: Worksheet, rows: range) -> dict[float, float]:
 
     ``Table2`` ranks by position (``LARGE(AD, k)``), so tied scores get
     consecutive ranks and its name lookup repeats the first tied player.
-    A score's first row is the rank every player with that score shares.
+    A score's first row is the rank every player with that score shares; for
+    a tied player the name lookup doesn't show, that is the extractor's
+    reading, not a value the workbook displays.
     """
     by_score: dict[float, float] = {}
     for row in rows:
@@ -192,8 +220,11 @@ def percentiles(values: Worksheet, rows: range) -> dict[float, float]:
 
 
 def player_ids(stats: Worksheet, sources: Sequence[int]) -> list[str]:
-    if stats["A1"].value != "id":
-        raise LayoutError(f"{STATS}!A1: expected 'id', got {stats['A1'].value!r}")
+    for col, header in STATS_HEADERS.items():
+        if stats[f"{col}1"].value != header:
+            raise LayoutError(
+                f"{STATS}!{col}1: expected {header!r}, got {stats[f'{col}1'].value!r}"
+            )
     ids = [str(stats[f"A{row}"].value) for row in sources]
     if len(set(ids)) != len(ids):
         raise LayoutError(f"{STATS}: duplicate player ids")

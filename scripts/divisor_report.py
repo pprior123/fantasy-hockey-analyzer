@@ -27,8 +27,8 @@ from fha.domain.engine import (
 from fha.domain.models import SKATER_CATEGORIES, Category, PlayerSeason
 
 LOW_GP_FRACTION = 0.2
-WORKBOOK = EngineConfig(divisor_method=DivisorMethod.WORKBOOK, divisor_top_n=20)
-SPEC = EngineConfig(divisor_method=DivisorMethod.TOP_PER82, divisor_top_n=10)
+WORKBOOK = EngineConfig(divisor_method=DivisorMethod.WORKBOOK)  # top 20
+SPEC = EngineConfig(divisor_method=DivisorMethod.TOP_PER82)  # top 10
 
 
 def load(fixtures: Path) -> tuple[list[PlayerSeason], dict[Category, float]]:
@@ -60,7 +60,7 @@ def low_gp_contributors(
         key = [(p.stats[category], p.gp) for p in eligible]
     else:
         key = [(per82(p, category), p.gp) for p in eligible]
-    top = sorted(key, reverse=True)[: config.divisor_top_n]
+    top = sorted(key, reverse=True)[: config.top_n]
     return sum(1 for _value, gp in top if gp < cutoff)
 
 

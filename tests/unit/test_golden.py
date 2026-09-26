@@ -96,11 +96,14 @@ def test_divisor_recompute_reproduces_the_workbook(computed: RatingResult) -> No
 
 
 def test_parity_holds_with_computed_divisors(computed: RatingResult) -> None:
+    rated = 0
     for g in GOLDEN_PLAYERS:
         rating = computed.ratings[g["player_id"]]
         if rating.rated:
+            rated += 1
             assert rating.ttltst == pytest.approx(g["ttltst"], abs=TTLTST_TOLERANCE)
             assert rating.percentile == pytest.approx(g["percentile"], abs=PERCENTILE_TOLERANCE)
+    assert rated == 827
 
 
 def test_value_uses_the_workbook_cap_hit(injected: RatingResult) -> None:

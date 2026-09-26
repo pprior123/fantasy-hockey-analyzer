@@ -71,8 +71,8 @@ uv run mutmut run               # mutation testing on src/fha/domain
   default pending owner confirmation, SPEC §5); `TTLTST` = mean of
   `per82 / divisor` across the 7.
 - GP floor: rate only players above 2% of the pool's max GP (config).
-- Percentile divides by all skaters in the pool, rated or not; ties share a
-  rank.
+- Percentile divides by the pool's skaters with GP > 0, rated or not; ties
+  share a rank.
 - Divisors recompute every refresh over the app's pool.
 - Injured players stay ranked on rate stats.
 - The league's shared salary sheet is the source of truth for rostered

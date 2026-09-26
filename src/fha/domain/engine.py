@@ -10,7 +10,7 @@ For one season's pool of players::
     norm(c, p)   = per82(c, p) / divisor(c), or 0 if divisor(c) == 0
     TTLTST(p)    = mean of norm over the categories
     rank(p)      = 1 + #{eligible q : TTLTST(q) > TTLTST(p)}   (ties share a rank)
-    percentile   = (1 - rank / N) * 100, N = number of skaters in the pool
+    percentile   = (1 - rank / N) * 100, N = skaters in the pool with GP > 0
     value(p)     = aav / TTLTST / 1e6, None without an AAV or when TTLTST == 0
 
 Ineligible skaters are unrated (all of the above None) but still returned.
@@ -45,20 +45,31 @@ class DivisorMethod(StrEnum):
     TOP_PER82 = "top_per82"
 
 
+# Each method's N when EngineConfig.divisor_top_n is left unset.
+DEFAULT_TOP_N = {DivisorMethod.WORKBOOK: 20, DivisorMethod.TOP_PER82: 10}
+
+
 @dataclass(frozen=True)
 class EngineConfig:
     categories: tuple[Category, ...] = SKATER_CATEGORIES
     gp_floor_fraction: float = 0.02
     divisor_method: DivisorMethod = DivisorMethod.WORKBOOK
-    divisor_top_n: int = 20
+    divisor_top_n: int | None = None  # None: the method's DEFAULT_TOP_N
 
     def __post_init__(self) -> None:
         if not self.categories or len(set(self.categories)) != len(self.categories):
             raise ValueError(f"categories must be non-empty and unique, got {self.categories}")
         if not 0 <= self.gp_floor_fraction <= 1:  # also rejects NaN
             raise ValueError(f"gp_floor_fraction must be in [0, 1], got {self.gp_floor_fraction}")
-        if self.divisor_top_n < 1:
+        if self.divisor_top_n is not None and self.divisor_top_n < 1:
             raise ValueError(f"divisor_top_n must be >= 1, got {self.divisor_top_n}")
+
+    @property
+    def top_n(self) -> int:
+        """How many top players set each divisor."""
+        if self.divisor_top_n is None:
+            return DEFAULT_TOP_N[self.divisor_method]
+        return self.divisor_top_n
 
 
 DEFAULT_CONFIG = EngineConfig()
@@ -85,7 +96,7 @@ class Rating:
 class RatingResult:
     divisors: Mapping[Category, float]
     ratings: Mapping[str, Rating]  # every skater in the pool, by player_id
-    pool_size: int  # N: skaters in the pool, rated or not
+    pool_size: int  # N: skaters in the pool with GP > 0, rated or not
     eligible_count: int
 
 
@@ -125,7 +136,7 @@ def _mean_top(values: Iterable[float], n: int) -> float:
 def _divisor(eligible: Sequence[PlayerSeason], category: Category, config: EngineConfig) -> float:
     if not eligible:
         return 0.0
-    n = config.divisor_top_n
+    n = config.top_n
     if config.divisor_method is DivisorMethod.TOP_PER82:
         return _mean_top((per82(p, category) for p in eligible), n)
     totals = _mean_top((_total(p, category) for p in eligible), n)
@@ -163,10 +174,11 @@ def rate(
     divisors: Mapping[Category, float] | None = None,
 ) -> RatingResult:
     """Rate one season's pool. ``divisors`` overrides the computed ones (golden tests)."""
-    skaters = _skaters(players)
-    ids = [p.player_id for p in skaters]
+    pool = list(players)
+    ids = [p.player_id for p in pool]
     if len(set(ids)) != len(ids):
         raise ValueError("duplicate player_id in the pool")
+    skaters = _skaters(pool)
     eligible = eligible_skaters(skaters, config)
     used = (
         compute_divisors(skaters, config)
@@ -185,7 +197,9 @@ def rate(
     first_rank: dict[float, int] = {}
     for position, score in enumerate(sorted(scores.values(), reverse=True), start=1):
         first_rank.setdefault(score, position)
-    pool_size = len(skaters)
+    # The workbook's N counts its unrated rows (all GP >= 1). GP-0 skaters
+    # (IR, prospects, pre-season) are left out so they can't dilute it.
+    pool_size = sum(1 for p in skaters if p.gp > 0)
 
     ratings = {}
     for p in skaters:

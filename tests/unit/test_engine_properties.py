@@ -17,7 +17,7 @@ from fha.domain.engine import (
     per82,
     rate,
 )
-from fha.domain.models import SKATER_CATEGORIES, Category, PlayerSeason
+from fha.domain.models import SKATER_CATEGORIES, PlayerSeason
 
 TOTALS = st.integers(min_value=0, max_value=400).map(float)
 METHODS = st.sampled_from(list(DivisorMethod))
@@ -168,29 +168,26 @@ def test_ranks_are_competition_ranks_and_percentiles_follow(
     result = rate(pool, config)
     scores = [r.ttltst for r in result.ratings.values() if r.ttltst is not None]
     assert result.eligible_count == len(scores)
-    assert result.pool_size == len(pool)
+    assert result.pool_size == sum(1 for p in pool if p.gp > 0)
     for rating in result.ratings.values():
         if rating.ttltst is None:
             continue
         assert rating.rank == 1 + sum(1 for s in scores if s > rating.ttltst)
-        assert rating.percentile == pytest.approx((1 - rating.rank / len(pool)) * 100)
+        assert rating.percentile == pytest.approx((1 - rating.rank / result.pool_size) * 100)
         assert 0 <= rating.percentile < 100
 
 
 @given(pools(), st.integers(min_value=1, max_value=5), CONFIGS)
-def test_zero_gp_skaters_change_no_rating_or_rank(
+def test_zero_gp_skaters_change_no_skater_output(
     pool: list[PlayerSeason], extra: int, config: EngineConfig
 ) -> None:
-    # They do count in N (percentile), as in the workbook.
+    # IR players, prospects and pre-season rows can't shift anyone's percentile.
     zeros = [player(f"z{i}", 0, [5.0] * 7, False) for i in range(extra)]
     base, padded = rate(pool, config), rate(pool + zeros, config)
     assert base.divisors == padded.divisors
-    for pid, rating in base.ratings.items():
-        assert (padded.ratings[pid].ttltst, padded.ratings[pid].rank) == (
-            rating.ttltst,
-            rating.rank,
-        )
-    assert padded.pool_size == base.pool_size + extra
+    assert base.pool_size == padded.pool_size
+    assert snapshot(base) == snapshot(padded, list(base.ratings))
+    assert all(not padded.ratings[z.player_id].rated for z in zeros)
 
 
 @given(pools(), CONFIGS)
@@ -205,7 +202,3 @@ def test_divisors_are_non_negative_and_cover_the_categories(
 def test_default_config_is_used_when_none_given() -> None:
     pool = [player("a", 82, [10.0] * 7, False), player("b", 1, [1.0] * 7, False)]
     assert snapshot(rate(pool)) == snapshot(rate(pool, DEFAULT_CONFIG))
-
-
-def test_categories_type() -> None:
-    assert all(isinstance(c, Category) for c in SKATER_CATEGORIES)

@@ -18,7 +18,8 @@ hand.
 
 ## Status
 
-Metric engine done (M1), matching the spreadsheet it replaces. Yahoo source next.
+The metric engine (M1) is built and matches the spreadsheet it replaces.
+The Yahoo source (M2) is next.
 
 ## Development
 

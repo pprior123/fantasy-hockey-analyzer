@@ -140,15 +140,22 @@ follows the workbook and the spec was updated:
 1. **Eligibility is strict:** `AD = IF(E > 0.02*MAX(E), …, 0)`, so GP must
    *exceed* 2% of max GP (was `>=`). Same result on this data (max 73, floor
    1.46: the 18 unrated players all have GP 1).
-2. **Percentile's N is every skater in the pool, rated or not:**
+2. **Percentile's N counts unrated skaters too:**
    `(1 - rank / MAX(Table2[Ranking])) * 100`, and `Table2` has one row per
    player row (845), unrated players ranked last at 0. With N = eligible (827)
    percentiles would be off by up to 2.1, far outside the 0.1 tolerance.
+   Every workbook row has GP >= 1, so the data can't tell "all skaters" from
+   "skaters with GP > 0". The engine uses **GP > 0** (review round 1): the
+   app's pool holds GP-0 players (IR, prospects, pre-season), and counting
+   them would let their number move every percentile (400 of them would lift
+   the lowest rated player from 2.1 to 33.6). Both readings give 845 here.
 3. **Ties:** `Table2` ranks by position (`LARGE(AD, k)`), so a tie takes
    consecutive ranks and the name lookup repeats the first tied player. A
    score's first rank is the one every tied player shares, which is SPEC's
    competition ranking; kept. One tie in the data (2 players), covered by a
-   test.
+   test. The second tied player has no `Table2` row (the lookup repeats the
+   first), so its golden percentile is the extractor's reading of the tie,
+   not a displayed workbook value.
 Kept from SPEC, not the workbook: unrated players have TTLTST/rank/
 percentile None rather than the workbook's 0, since 0 would read as a real
 (worst) rating.
@@ -186,10 +193,12 @@ player with 11 PIM rates 301 per 82, and the league leader (144 PIM in 71 GP,
 166 per 82) ranks ninth. The workbook's method has no low-GP contributors in
 any category: a few games rarely add up to a top-20 total. So the engine defaults to the workbook method (`DivisorMethod.WORKBOOK`,
 top 20), which also keeps Phase 1's goal of parity with the spreadsheet. The
-per-82 method stays available (`DivisorMethod.TOP_PER82`, top 10), so either
-choice is one config value. With the workbook method a separate, higher GP
+per-82 method stays available (`DivisorMethod.TOP_PER82`, whose top-N
+defaults to 10), so either choice is one config value. With the workbook method a separate, higher GP
 floor for divisors isn't needed. **Owner decision (SPEC §11.5):** confirm
 the workbook method, or choose per-82 (and then decide on a divisor floor).
+This goes beyond the "parity wins" rule (percentile, ties, eligibility), so
+SPEC marks it provisional until the owner confirms at the M1 boundary.
 Alternatives: follow SPEC's top-10 per-82 as written (rejected pending the
 owner: its premise, stale statics, was false, and it changes ratings by 27
 ranks on average); a separate divisor floor now (rejected: an owner

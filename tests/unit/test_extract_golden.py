@@ -63,7 +63,8 @@ def build(
         wb.create_sheet(eg.ALIASES)
     fa_v, fa_f = values[eg.ANALYSIS], formulas[eg.ANALYSIS]
     st_v = values[eg.STATS]
-    st_v["A1"] = "id"
+    for col, header in eg.STATS_HEADERS.items():
+        st_v[f"{col}1"] = header
     for src_row in range(2, max(sources) + 1 + extra_source):
         st_v[f"A{src_row}"] = f"unused{src_row}"
     ranked = sorted((r.ttltst for r in rows), reverse=True)
@@ -187,6 +188,27 @@ def test_changed_divisor_formula_is_a_layout_error() -> None:
         eg.extract(values, formulas)
 
 
+@pytest.mark.parametrize(
+    "formula",
+    [
+        # end column differs from the start column
+        f"=AVERAGE(LARGE(G3:K902,{TOP20}))/AVERAGE(LARGE(E$3:E$902, {TOP20}))*82",
+        # not the top 20
+        "=AVERAGE(LARGE(G3:G902,{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}))"
+        f"/AVERAGE(LARGE(E$3:E$902, {TOP20}))*82",
+        # stat range stops before the last player row (7)
+        f"=AVERAGE(LARGE(G3:G6,{TOP20}))/AVERAGE(LARGE(E$3:E$902, {TOP20}))*82",
+        # GP range stops before the last player row
+        f"=AVERAGE(LARGE(G3:G902,{TOP20}))/AVERAGE(LARGE(E$3:E$5, {TOP20}))*82",
+    ],
+)
+def test_divisor_formula_must_cover_one_column_and_the_top_20(formula: str) -> None:
+    values, formulas = build(ROWS)
+    formulas[eg.ANALYSIS]["X6"] = ArrayFormula("X6", formula)
+    with pytest.raises(eg.LayoutError, match=r"X6 \(A\)"):
+        eg.extract(values, formulas)
+
+
 def test_changed_ranking_formula_is_a_layout_error() -> None:
     values, formulas = build(ROWS)
     formulas[eg.ANALYSIS]["AG5"] = "=(1-AE5/845)*100"
@@ -213,10 +235,13 @@ def test_duplicate_ids_are_a_layout_error() -> None:
         eg.extract(values, formulas)
 
 
-def test_missing_id_header_is_a_layout_error() -> None:
+@pytest.mark.parametrize(("cell", "label"), [("A1", "player"), ("AD1", "blocks"), ("AE1", "hits")])
+def test_changed_source_header_is_a_layout_error(cell: str, label: str) -> None:
+    # Swapped source columns would pass every parity test (each divisor pairs
+    # with the same column), so the headers are checked.
     values, formulas = build(ROWS)
-    values[eg.STATS]["A1"] = "player"
-    with pytest.raises(eg.LayoutError, match="id"):
+    values[eg.STATS][cell] = label
+    with pytest.raises(eg.LayoutError, match=cell):
         eg.extract(values, formulas)
 
 

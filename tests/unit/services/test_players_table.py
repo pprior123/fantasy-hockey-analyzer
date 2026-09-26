@@ -1,5 +1,6 @@
 """The Players screen's filters and sort (SPEC §7.1)."""
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from fha.services.players_table import (
     _comparable,
     select,
 )
+from fha.sources.yahoo.demo import demo_snapshot
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.yahoo.fake_league import LK
 
@@ -66,12 +68,58 @@ def test_position_and_min_gp(view: LeagueView) -> None:
     assert set(ids(busy)) == {"1", "2"}
 
 
-@pytest.mark.parametrize("key", list(SortKey))
-def test_every_column_sorts_both_ways_with_blanks_last(view: LeagueView, key: SortKey) -> None:
-    down = select(view, PlayersQuery(sort=key, descending=True))
-    up = select(view, PlayersQuery(sort=key, descending=False))
-    assert len(down) == len(up) == len(view.rows)
-    assert set(ids(down)) == set(ids(up))
+def _demo_view() -> LeagueView:
+    """The demo league: many teams, positions and NHL teams, a few salaries."""
+    snap = demo_snapshot()
+    teamless = replace(snap.available[0], nhl_team="")  # Yahoo's "" for no NHL team
+    snap = replace(snap, available=(teamless, *snap.available[1:]))
+    ids_ = [p.player_id for p in snap.pool if not p.is_goalie]
+    salaries = Salaries(
+        rostered={ids_[0]: RosteredSalary(5_000_000, True, "t")},
+        free_agents={pid: 750_000 * (i + 1) for i, pid in enumerate(ids_[-6:])},
+    )
+    return build_view(snap, DEFAULT_CONFIG, salaries)
+
+
+DEMO_VIEW = _demo_view()
+NAMES = {t.team_key: t.name for t in DEMO_VIEW.teams}
+# Each column's value, read straight off the row (not through the code under test).
+COLUMN: dict[SortKey | Category, Any] = {
+    SortKey.NAME: lambda r: r.name.casefold(),
+    SortKey.POS: lambda r: r.position.casefold(),
+    SortKey.TEAM: lambda r: r.nhl_team.casefold() or None,
+    SortKey.OWNER: lambda r: NAMES[r.owner_key].casefold() if r.owner_key else None,
+    SortKey.GP: lambda r: r.gp,
+    SortKey.TTLTST: lambda r: r.ttltst,
+    SortKey.PCTL: lambda r: r.percentile,
+    SortKey.AAV: lambda r: r.aav,
+    SortKey.VALUE: lambda r: r.value,
+    Category.HIT: lambda r: r.norms.get(Category.HIT) if r.rating and r.rating.rated else None,
+}
+
+
+@pytest.mark.parametrize("descending", [True, False])
+@pytest.mark.parametrize("key", list(COLUMN))
+def test_every_column_sorts_in_order_with_ties_by_name_and_blanks_last(
+    key: SortKey | Category, descending: bool
+) -> None:
+    """The exact order (M4R1B-5): by the column's value in the asked direction, ties by
+    name then id, and rows with no value last, in display order."""
+    value = COLUMN[key]
+    rows = select(DEMO_VIEW, PlayersQuery(sort=key, descending=descending))
+    present = [r for r in DEMO_VIEW.rows if value(r) is not None]
+    blank = [r for r in DEMO_VIEW.rows if value(r) is None]
+    assert len({value(r) for r in present}) > 2  # a real sort, not a trivial one
+    expected = sorted(present, key=lambda r: (r.name, r.player_id))
+    expected.sort(key=value, reverse=descending)
+    assert ids(rows) == ids(expected) + ids(blank)
+
+
+def test_blank_columns_are_blanks_not_values() -> None:
+    """Free agents have no owner, one has no NHL team, unrated rows have no TTLTST."""
+    for key in (SortKey.TEAM, SortKey.OWNER, SortKey.TTLTST, SortKey.AAV, SortKey.VALUE):
+        rows = select(DEMO_VIEW, PlayersQuery(sort=key))
+        assert any(COLUMN[key](r) is None for r in rows), key
 
 
 def test_sort_by_aav_puts_unknown_salaries_last(view: LeagueView) -> None:
@@ -118,6 +166,8 @@ def test_params_parse_with_defaults() -> None:
         ({"pos": "W"}, "unknown position 'W'"),
         ({"min_gp": "-1"}, "min_gp must be a whole number"),
         ({"min_gp": "٣"}, "min_gp must be a whole number"),
+        ({"min_gp": "1" * 4301}, r"min_gp must be a whole number up to 9999, got '111111111111…'"),
+        ({"min_gp": "10000"}, "up to 9999"),
         ({"sort": "salary"}, "salary"),
         ({"dir": "up"}, "dir must be asc or desc"),
     ],

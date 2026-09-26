@@ -37,7 +37,7 @@ from fha.services.league_sheet import (
     rostered_salaries,
     tab_reports,
 )
-from fha.sources.yahoo.models import LeagueSnapshot, Player, StatLine, Team
+from fha.sources.yahoo.models import IR_SLOTS, LeagueSnapshot, Player, StatLine, Team
 from fha.sources.yahoo.stat_map import StatMap, build_stat_map, goalie_stats, to_player_season
 from fha.storage.repository import Repository
 
@@ -105,7 +105,7 @@ class PlayerRow:
 
     @property
     def in_ir_slot(self) -> bool:
-        return self.slot in ("IR", "IR+")
+        return self.slot in IR_SLOTS
 
 
 @dataclass(frozen=True)

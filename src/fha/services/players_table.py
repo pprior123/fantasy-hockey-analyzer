@@ -36,6 +36,7 @@ class SortKey(StrEnum):
 
 
 POSITIONS = ("C", "LW", "RW", "D", "G")
+MAX_MIN_GP_DIGITS = 4  # a season is 82 games; this keeps int() off huge strings
 # Sensible first direction per column: best first for ratings, cheapest first for money.
 DESCENDING_FIRST = frozenset({SortKey.GP, SortKey.TTLTST, SortKey.PCTL, SortKey.AAV})
 
@@ -67,8 +68,11 @@ class PlayersQuery:
             if position is not None and position not in POSITIONS:
                 raise QueryError(f"unknown position {position!r}")
             min_gp_text = get("min_gp") or "0"
-            if not (min_gp_text.isascii() and min_gp_text.isdigit()):
-                raise QueryError(f"min_gp must be a whole number, got {min_gp_text!r}")
+            digits = min_gp_text.isascii() and min_gp_text.isdigit()
+            if not digits or len(min_gp_text) > MAX_MIN_GP_DIGITS:
+                shown = min_gp_text if len(min_gp_text) <= 12 else min_gp_text[:12] + "…"
+                raise QueryError(f"min_gp must be a whole number up to 9999, got {shown!r}")
+            min_gp = int(min_gp_text)
             sort_text = get("sort") or SortKey.TTLTST.value
             sort: SortKey | Category
             if sort_text in {c.value for c in Category}:
@@ -85,7 +89,7 @@ class PlayersQuery:
             if direction
             else (isinstance(sort, Category) or sort in DESCENDING_FIRST)
         )
-        return cls(owner, get("team"), position, int(min_gp_text), sort, descending)
+        return cls(owner, get("team"), position, min_gp, sort, descending)
 
 
 def select(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:

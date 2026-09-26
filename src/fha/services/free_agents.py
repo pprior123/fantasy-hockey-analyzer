@@ -137,13 +137,15 @@ async def pending_reviews(
     return out
 
 
-async def confirm(repo: Repository, key: str, player_id: str) -> None:
-    """The owner binds a row to a player (from the review screen)."""
-    if key not in await _rows(repo):
+async def confirm(repo: Repository, key: str, player_id: str) -> SalaryRow:
+    """The owner binds a row to a player (from the review screen); the row, back."""
+    row = (await _rows(repo)).get(key)
+    if row is None:
         raise FreeAgentError(f"no imported row {key!r}")
     bindings = await _load(repo, BINDINGS)
     bindings[key] = {"player_id": player_id, "how": "confirmed"}
     await repo.put(STATE, BINDINGS, {"entries": bindings})
+    return row
 
 
 async def unbind(repo: Repository, key: str) -> None:

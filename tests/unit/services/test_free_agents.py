@@ -149,7 +149,7 @@ async def test_review_then_confirm_binds_the_row() -> None:
     [pending] = await pending_reviews(repo, POOL, NO_ALIASES)
     assert pending.key == "known nobody|F"
     assert len(pending.result.candidates) == 3
-    await confirm(repo, pending.key, "6")
+    assert await confirm(repo, pending.key, "6") == pending.row  # Admin names the alias by it
     assert await pending_reviews(repo, POOL, NO_ALIASES) == []
     assert (await load_free_agent_salaries(repo)).aav["6"] == 800_000
     await unbind(repo, pending.key)

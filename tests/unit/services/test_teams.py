@@ -18,7 +18,7 @@ from fha.services.teams import (
     summarize,
 )
 from fha.sources.league_sheet.models import ParsedTab
-from fha.sources.yahoo.models import LeagueSnapshot, Scoreboard
+from fha.sources.yahoo.models import LeagueSnapshot, Player, Scoreboard
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.yahoo.fake_league import LK
 
@@ -206,3 +206,112 @@ def test_replacing_a_goalie_offers_no_skaters(snap: LeagueSnapshot) -> None:
     swap = replace_view(view_of(snap), "3")  # the only free agents are centres
     assert swap is not None
     assert swap.rows == ()
+
+
+def with_positions(snap: LeagueSnapshot, positions: dict[str, tuple[str, ...]]) -> LeagueSnapshot:
+    """The snapshot with some players' eligible positions changed (by player_id)."""
+
+    def moved(p: Player) -> Player:
+        eligible = positions.get(p.player_id)
+        return (
+            p
+            if eligible is None
+            else replace(p, eligible_positions=eligible, display_position=",".join(eligible))
+        )
+
+    teams = tuple(
+        replace(t, roster=tuple(replace(e, player=moved(e.player)) for e in t.roster))
+        for t in snap.teams
+    )
+    return replace(snap, teams=teams, available=tuple(moved(p) for p in snap.available))
+
+
+def test_replace_takes_free_agents_eligible_at_any_of_the_drops_positions(
+    snap: LeagueSnapshot,
+) -> None:
+    """M4R1B-5: a LW drop gets the C,LW and LW free agents but not the C-only or RW ones;
+    a C,LW drop gets both kinds. Bench and IR slots never count as positions."""
+    moved = with_positions(
+        snap,
+        {
+            "1": ("LW",),
+            "101": ("C", "LW"),
+            "102": ("LW", "IR"),
+            "103": ("RW",),
+            "104": ("C", "BN", "Util"),
+        },
+    )
+    swap = replace_view(view_of(moved), "1")
+    assert swap is not None
+    got = {r.player.player_id for r in swap.rows}
+    assert {"101", "102"} <= got
+    assert not got & {"103", "104"}
+    assert all("LW" in r.player.eligible_positions for r in swap.rows)
+    util = replace_view(view_of(with_positions(moved, {"1": ("LW", "Util")})), "1")
+    assert util is not None
+    assert not {r.player.player_id for r in util.rows} & {"103", "104"}  # Util isn't a position
+    both = replace_view(view_of(with_positions(moved, {"1": ("C", "LW")})), "1")
+    assert both is not None
+    assert {"101", "102", "104"} <= {r.player.player_id for r in both.rows}
+    assert "103" not in {r.player.player_id for r in both.rows}
+
+
+def test_fits_my_cap_includes_a_free_agent_whose_cap_hit_is_exactly_the_room(
+    snap: LeagueSnapshot,
+) -> None:
+    """M4R1B-5: room is $1M; an AAV of exactly $1M fits (<=), a dollar more doesn't."""
+    view = view_of(snap, free_agents={"101": 1_000_000, "102": 1_000_001})
+    now = matchup_view(view)
+    assert now is not None
+    assert now.me.cap_room == 1_000_000
+    fitting = free_agents_by_need(view, now, fits_my_cap=True)
+    ids = {n.player.player_id for n in fitting.rows}
+    assert "101" in ids
+    assert "102" not in ids
+    everyone = {n.player.player_id: n.fits for n in free_agents_by_need(view, now).rows}
+    assert (everyone["101"], everyone["102"]) == (True, False)
+    assert fitting.excluded_unknown == sum(f is None for f in everyone.values())
+
+
+def test_the_swap_ok_toggle_includes_a_swap_that_leaves_exactly_zero_room(
+    snap: LeagueSnapshot,
+) -> None:
+    """Room $1M + the drop's counted $4M = $5M: an add of exactly $5M is a legal swap."""
+    view = view_of(snap, free_agents={"101": 5_000_000, "102": 5_000_001})
+    legal = replace_view(view, "1", swap_ok_only=True)
+    assert legal is not None
+    by_id = {r.player.player_id: r for r in legal.rows}
+    assert by_id["101"].room_after == 0
+    assert "102" not in by_id
+
+
+def test_free_agents_by_need_order_is_need_then_name_then_id(snap: LeagueSnapshot) -> None:
+    view = view_of(snap)
+    now = matchup_view(view)
+    assert now is not None
+    rows = free_agents_by_need(view, now).rows
+    keys = [(-n.need, n.player.name, n.player.player_id) for n in rows]
+    assert keys == sorted(keys)
+    assert len({n.need for n in rows}) > 1
+
+
+def test_equal_scores_are_ordered_by_name_then_id(snap: LeagueSnapshot) -> None:
+    """Free agents 101 and 136 have identical stats (the fake league's stats repeat
+    every 35), so they tie on need and on TTLTST. Renaming 136 so its name sorts
+    first shows that ties go by name, not by id."""
+    renamed = replace(
+        snap,
+        available=tuple(
+            replace(p, name="Aaron Tie") if p.player_id == "136" else p for p in snap.available
+        ),
+    )
+    view = view_of(renamed)
+    assert view.by_id["101"].ttltst == view.by_id["136"].ttltst is not None
+    now = matchup_view(view)
+    assert now is not None
+    need = [n.player.player_id for n in free_agents_by_need(view, now).rows]
+    assert need.index("136") == need.index("101") - 1
+    swap = replace_view(view, "1")
+    assert swap is not None
+    order = [r.player.player_id for r in swap.rows]
+    assert order.index("136") == order.index("101") - 1

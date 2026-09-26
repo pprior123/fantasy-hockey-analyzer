@@ -1148,3 +1148,105 @@ Alternatives:
 - JWTs (rejected: no need for claims or a key-rotation story);
 - a CDN for htmx (rejected: the phone may be offline, and it's one more
   third-party request).
+
+## 2026-09-26 — M4: the rated screens as built (SPEC §7.1-7.4)
+- **Routes and query parameters:**
+  - `GET /players` takes `owner`, `team`, `pos`, `min_gp`, `sort` (a column
+    or a category), `dir`, `season` and `view`. `view=cats` is the
+    Categories toggle; the default is salary.
+  - `POST /refresh` takes `next`, a relative path only, via `safe_next`.
+  - `GET /rosters` takes `team` and `season`.
+  - `GET /rosters/replace` takes `drop`, `swap_ok=1` and `season`.
+  - `GET /league` takes `season`.
+  - `GET /matchup` takes `week=current|next` and `season`.
+  - `GET /matchup/free-agents` takes `week`, `fits=1` and `season`.
+- **No JS needed.**
+  - Filters are links (the chips) plus a GET form (team, position, min GP).
+  - Sorting is header links: tapping the sorted column flips `dir`, and a new
+    column starts in its natural direction (best first, cheapest first for
+    $/TTLTST).
+  - A row's norm breakdown is a `<details>` in the name cell.
+  - htmx isn't used yet. The pages are plain enough that full reloads are
+    fast.
+- **Bad parameters** (an unknown owner, position, view, sort, week, team or
+  toggle value) render a 400 page in the layout with a plain message, never
+  a 500.
+- **Formatting (`fha.web.format`):**
+  - Money is `$7.25M`, with a minus sign for negative room. Unknown money is
+    always "—", never $0 (SPEC §5).
+  - The rating settings in use appear on every rated screen, e.g. "workbook
+    top-20, floor 2%" (SPEC §7.5).
+  - The filters are installed on the app's Jinja environment when the
+    screens are imported (`app.py` includes the routers lazily).
+- **The season toggle** is shown only when last season was fetched. The
+  label always says which season is shown.
+- **Rosters:**
+  - Payroll shows "unavailable" until the team's tab is bound and
+    recognized.
+  - Over the cap shows red ("over the cap").
+  - The "Sheet differs" badge links to Admin.
+  - Replace links appear only on the owner's team. A drop missing from the
+    sheet, or on an IR row, is labelled "frees nothing".
+- **Sorting by a category** shows its column only in the Categories view:
+  the salary view has no room for the norms at 390 px.
+- **The rates note** ("profiles compare rates, not projected weekly
+  totals", SPEC §5) is on Rosters, Replace, League, Matchup and the
+  free-agent list.
+- **At 390 px:**
+  - Tables scroll sideways inside `table-wrap`, and the first column (the
+    name) is sticky.
+  - Chips scroll horizontally.
+  - The filter form wraps.
+
+## 2026-09-26 — M4: the Admin screen (SPEC §7.5)
+One page at `/admin`, in sections: the league sheet, tab bindings,
+discrepancies and row review, the salary CSV, free-agent review, the cap
+hit edit, refresh, rating settings, and configuration.
+- **Post/redirect/get.** Every change is a POST (`/admin/sheet/read`,
+  `/admin/sheet/upload`, `/admin/bind`, `/admin/sheet/confirm`, `/admin/csv`,
+  `/admin/fa/confirm`, `/admin/fa/unbind`, `/admin/aav`, `/admin/settings`)
+  that redirects to `/admin#<section>`. The outcome travels as a `flash`
+  query value: an itsdangerous token signed with `SESSION_SECRET` (salt
+  `fha-admin-flash-v1`), valid for 10 minutes. So a message can't be forged
+  in a link, a reload repeats nothing, and GET changes no state. The one
+  exception is the league sheet's automatic row matches, which every rated
+  screen persists (bind once).
+- **Without Yahoo data** (before access, or during an outage with no
+  cache), the page still renders. The sheet, settings and config sections
+  work; bindings, review, the CSV import and the cap hit search say they
+  need Yahoo data. Invalid stored rating settings also don't break the page,
+  since the settings form is where they're fixed.
+- **Hygiene (SPEC §4a).** Only `ParsedSheet` data is rendered (tab names,
+  statuses, reasons, payroll, cap, counted rows). A test uploads a synthetic
+  sheet with a contact block and asserts none of it appears, before and
+  after binding.
+- **Uploads.** The `.xlsx` is capped at 5 MB and the CSV at 2 MB; the file
+  is read one byte past the cap to tell. An unreadable file, a
+  `LeagueSheetError` or a `SalaryCsvError` becomes a message, never a 500.
+  openpyxl stays lazy (the cold-start test passes).
+- **The cap hit edit.** Typed amounts are `$7,250,000`, `7250000`, `7.25M`
+  or `725K` (M/K in either case, spaces ignored). Commas must group
+  thousands, and a scaled amount must come to whole dollars. Anything else
+  (`7.25`, `1,5`, `7M5`) is refused, not guessed. The search is a GET over
+  the pool by normalized name (at most 20 results). Each result shows its
+  cap hit and source: sheet, override or csv. The owner can clear an
+  override, or unbind the player's CSV row, which sends it back to review.
+- **Rating settings.** The GP floor is entered as a percent ("2" or
+  "2.5%") and stored as the fraction (`Decimal`, so 2.5 is exactly 0.025).
+  A blank divisor count means "the method's default", which is how
+  switching method picks up its usual count without JS: the form shows each
+  method's default and the effective top-N in use. Invalid values show the
+  engine's own message.
+- **Review.** Sheet rows the cascade couldn't bind, and free-agent rows,
+  list their top 3 candidates as one-tap buttons. A free-agent confirm can
+  also save an alias. At most 30 free-agent reviews are shown at a time,
+  with a count of the rest.
+- **Refresh** is a POST to `/refresh` with `next=/admin` (the Players
+  router's route).
+- `fha.services.free_agents` gains `load_bindings` and `load_overrides`,
+  used to show where a cap hit comes from and to offer unbind.
+
+Alternatives: a flash stored in the Repository and cleared on read
+(rejected: a GET with a side effect); rendering the page straight from the
+POST (rejected: a reload resubmits the upload); a JS toggle to pre-fill the
+count (rejected: no JS needed, since blank already means the default).

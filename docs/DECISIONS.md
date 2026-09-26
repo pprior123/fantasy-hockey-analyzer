@@ -454,3 +454,24 @@ summary tab (the cap is at `B3`), and two other tabs that aren't team tabs
   exact labels `IR` / `IR+`; only those rows are read. No cell of any other
   row enters a parsed result, an error message or a log.
 The synthetic parser fixtures reproduce each of these variants.
+
+## 2026-09-26 — M3: the network-policy gaps are closed
+The four gaps recorded before M3 ("Known network-policy gaps for M3"):
+1. **Unguarded calls:** closed. In the loopback window, `connect_ex` and
+   `sendmsg` are guarded along with `connect` and `sendto`. All four
+   name-resolution functions (`getaddrinfo`, `gethostbyname`,
+   `gethostbyname_ex`, `getnameinfo`) allow only loopback, both in that
+   window and while blocked. pytest-socket guarded only two of them while
+   blocked.
+2. **gRPC:** moot, since Firestore goes over httpx (see "Firestore and Google
+   Sheets over REST"). The environment is scrubbed anyway: an autouse fixture
+   removes the Firestore, Google-credential, sheet and Yahoo variables for
+   unmarked tests. Marked (emulator) tests keep `FIRESTORE_EMULATOR_HOST`,
+   which must be loopback or the test fails, but lose every credential.
+3. **Fixture teardown:** avoided by design. The emulator runs outside pytest
+   (CI and local runs start it with `firebase emulators:exec`), so no fixture
+   starts or stops it. Emulator-backed repositories are function-scoped.
+4. **Swallowed errors:** closed. Every blocked attempt is recorded, and the
+   test phase that made it fails even if the code caught the exception. The
+   guard's own tests claim their attempts with `expect_blocked()`. A
+   pytester run proves that a broad `except` still fails its test.

@@ -266,3 +266,52 @@ tested against recorded fixtures anyway. Alternatives: wrap yfpy in a thread
 pool and read the token back after each call (rejected: sync, heavy deps,
 `sys.exit`/env fallbacks in library code); fork yahoofantasy's context
 (rejected: XML and file persistence are its core).
+
+## 2026-09-26 — M2: how the Yahoo source reads the league
+A full refresh (`HttpYahooSource.fetch_snapshot`) runs in four dependent
+stages; each stage's requests go out together, at most 8 in flight:
+1. `games;game_codes=nhl` → the current game (the latest season listed; this
+   works whether Yahoo lists one game or every season's). League key =
+   `{game_key}.l.8076`.
+2. `league/{key}/settings` + `game/{game_key}/stat_categories`.
+3. `league/{key}/teams/roster` (every team with today's slots, one call), the
+   top available players (`players;status=A;sort=AR`, 12 pages of 25), and
+   the scoreboards for the current week and the next (none after the last
+   week).
+4. Season stats for the whole pool by player key, 25 per call, at the game
+   level (`players;player_keys=.../stats;type=season`), current season and
+   last season (`;season={season-1}`, same player keys).
+
+About 60 calls for a full pool, more than SPEC's 20–35 estimate, because
+stats are fetched separately (steps 3 and 4). That keeps GP in hand: a
+league-scoped stats request returns the league's categories, and GP isn't
+one. The recording measures the real time against the 8 s target.
+
+- **Pool (M1 round-2 follow-up):** every rostered player on every team, in
+  any slot (IR, IR+ and NA included), then the top 300 available by Yahoo's
+  current rank (AR), minus any already rostered. So N for percentiles (GP > 0
+  skaters, SPEC §5) is fixed by this definition, not by UI filters. The count
+  and sort are `HttpYahooSource` parameters.
+- **Stat map:** by display name, league settings first, then the game's
+  stat list (GP; PPG and PPA if the league lacked PPP). PPP is Yahoo's own
+  stat when present. The answer for this league is recorded below after the
+  fixtures.
+- **Strictness:** a settings response for another league or season, a
+  scoreboard for another week, stats labelled with another season, or a pool
+  player missing from the stats all fail the refresh loudly rather than
+  producing plausible-looking wrong data.
+- **Token:** `TokenStore` protocol (load/save). The Repository implements it
+  in M3; until then the owner-run scripts use `private/yahoo_token.json`
+  (mode 0600, atomic replace). The whole token is stored (access token and expiry too) so
+  serverless invocations don't refresh on every cold start.
+- **Recording:** `scripts/record_yahoo.py` records only the Fantasy API
+  host (never the token endpoint), sanitizes, re-checks for manager keys,
+  tokens and email addresses, and writes nothing if any check fails. A few
+  extra probe requests (league-scoped stats, last season by last season's
+  game key, preseason rank) go to gitignored `private/yahoo_probes/` to
+  confirm the choices above against real responses.
+
+Assumptions the recording confirms or corrects: that `;season=` returns
+last season's totals for current player keys (the parser refuses stats
+labelled with another season), that the game-level stat list includes a
+skater "GP", and that AR is a sensible pre-season ranking.

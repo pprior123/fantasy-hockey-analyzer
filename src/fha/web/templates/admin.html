@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% macro money(v) %}{% if v is none %}—{% else %}${{ "{:,}".format(v) }}{% endif %}{% endmacro %}
+{% block content %}
+{% if flash %}
+<p class="admin-flash {{ 'good' if flash.kind == 'ok' else 'error' }}" role="status">{{ flash.text }}</p>
+{% endif %}
+{% if data_error %}
+<p class="card warn">No Yahoo data yet, so the sections that need rosters are hidden ({{ data_error }}).</p>
+{% endif %}
+
+<nav class="chips admin-jump" aria-label="Sections">
+  <a class="chip" href="#sheet">Sheet</a>
+  <a class="chip" href="#bindings">Bindings</a>
+  <a class="chip" href="#discrepancies">Discrepancies</a>
+  <a class="chip" href="#csv">Salary CSV</a>
+  <a class="chip" href="#review">Review</a>
+  <a class="chip" href="#aav">Cap hit edit</a>
+  <a class="chip" href="#settings">Rating</a>
+  <a class="chip" href="#config">Config</a>
+</nav>
+
+<section id="sheet" class="card">
+  <h2>League sheet</h2>
+  {% if sheet %}
+  <p>Last read {{ read_ago }}. Cap: <strong>{{ money(sheet.cap) }}</strong>{% if sheet.cap_source %} <span class="muted">from {{ sheet.cap_source }}</span>{% endif %}.
+  {% if sheet.cap_mismatches %}<span class="badge">{{ sheet.cap_mismatches|length }} tab(s) with a different CAP</span>{% endif %}</p>
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th>Tab</th><th>Status</th><th class="num">Payroll</th><th class="num">Rows</th><th>Range</th></tr></thead>
+    <tbody>
+    {% for tab in sheet.tabs %}
+    <tr>
+      <td>{{ tab.name }}</td>
+      {% if tab.status == "ok" %}
+      <td class="good">ok</td>
+      {% else %}
+      <td class="bad admin-wrap">unrecognized: {{ tab.reason }}</td>
+      {% endif %}
+      <td class="num">{{ money(tab.payroll) }}</td>
+      <td class="num">{{ tab.counted|length }} + {{ tab.ir_rows|length }} IR</td>
+      <td>{{ tab.payroll_range or "—" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">Not read yet.</p>
+  {% endif %}
+  <p class="muted">Source: {{ sheet_source }}.</p>
+  <div class="toolbar">
+    {% if sheet_configured %}
+    <form method="post" action="/admin/sheet/read"><button class="btn" type="submit">Read the sheet now</button></form>
+    {% endif %}
+    <form method="post" action="/admin/sheet/upload" enctype="multipart/form-data" class="admin-upload">
+      <label>Or upload a download (.xlsx) <input type="file" name="file" accept=".xlsx"></label>
+      <button class="btn secondary" type="submit">Upload</button>
+    </form>
+  </div>
+</section>
+
+<section id="bindings" class="card">
+  <h2>Tabs and Yahoo teams</h2>
+  {% if not sheet %}
+  <p class="muted">Read the sheet first.</p>
+  {% elif not teams %}
+  <p class="muted">Needs Yahoo data (the teams).</p>
+  {% else %}
+  {% for tab in sheet.tabs %}
+  {% set bound = tab_bindings.get(tab.name) %}
+  {% set suggested = suggestions.get(tab.name) %}
+  <form method="post" action="/admin/bind" class="admin-row">
+    <input type="hidden" name="tab" value="{{ tab.name }}">
+    <span class="admin-label">{{ tab.name }}</span>
+    <select name="team_key" aria-label="Yahoo team for {{ tab.name }}">
+      <option value="">— unbound —</option>
+      {% for t in teams %}
+      <option value="{{ t.team_key }}"{% if t.team_key == (bound or suggested) %} selected{% endif %}>{{ t.name }}{% if t.team_key == suggested and not bound %} (suggested){% endif %}</option>
+      {% endfor %}
+    </select>
+    <button class="btn secondary" type="submit">{{ "Save" if bound else "Bind" }}</button>
+    {% if bound %}<span class="good">bound to {{ team_names.get(bound, bound) }}</span>{% endif %}
+  </form>
+  {% endfor %}
+  {% endif %}
+</section>
+
+<section id="discrepancies" class="card">
+  <h2>Discrepancies</h2>
+  {% if not reports %}
+  <p class="muted">No bound tabs yet.</p>
+  {% endif %}
+  {% for r in reports %}
+  <details{% if r.has_discrepancies %} open{% endif %}>
+    <summary><strong>{{ r.tab.name }}</strong> → {{ team_names.get(r.team_key, r.team_key) }}
+      {% if r.has_discrepancies %}<span class="badge">needs a look</span>{% else %}<span class="good">matches</span>{% endif %}</summary>
+    {% if r.tab.status != "ok" %}
+    <p class="bad">Unrecognized tab: {{ r.tab.reason }}</p>
+    {% else %}
+    <p>Payroll {{ money(r.payroll) }}; matched rows add up to {{ money(r.matched_counted_total) }}{% if r.payroll_differs %} <span class="bad">(differs)</span>{% endif %}.</p>
+    {% if r.cap_differs %}<p class="bad">This tab's CAP ({{ money(r.tab.cap) }}) differs from the summary cap ({{ money(r.sheet_cap) }}).</p>{% endif %}
+    {% if r.unknown_teams %}<p class="warn">Unknown NHL teams: {{ r.unknown_teams|join(", ") }}.</p>{% endif %}
+    {% if r.missing_from_tab %}<p>On the Yahoo roster, missing from the tab: {{ r.missing_from_tab|map(attribute="name")|join(", ") }}.</p>{% endif %}
+    {% for m in r.rows if m.player_id is none %}
+    <div class="admin-review">
+      <p>Row {{ m.row.row }}: <strong>{{ m.row.name or "(no name)" }}</strong> {{ m.row.position }} {{ m.row.team }} {{ money(m.row.salary) }}{% if not m.row.counted %} <span class="muted">({{ m.row.ir }})</span>{% endif %} — not on the Yahoo roster.</p>
+      {% if m.result and m.result.candidates %}
+      <div class="toolbar">
+        {% for c in m.result.candidates %}
+        <form method="post" action="/admin/sheet/confirm">
+          <input type="hidden" name="tab" value="{{ r.tab.name }}">
+          <input type="hidden" name="key" value="{{ m.key }}">
+          <input type="hidden" name="player_id" value="{{ c.candidate.player_id }}">
+          <button class="chip" type="submit">{{ c.candidate.name }} <span class="muted">{{ c.candidate.position }} · {{ "%.0f"|format(c.score) }}</span></button>
+        </form>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+  </details>
+  {% endfor %}
+</section>
+
+<section id="csv" class="card">
+  <h2>Free-agent salaries (PuckPedia CSV)</h2>
+  <p class="muted">A header row naming <strong>Player</strong>, <strong>Pos</strong> and <strong>Cap Hit</strong> (any order; other columns ignored). Optional: <strong>Team</strong>, <strong>Cap Hit With Bonuses</strong>. Skaters and goalies. Re-importing the same file changes nothing.</p>
+  <form method="post" action="/admin/csv" enctype="multipart/form-data" class="admin-upload">
+    <input type="file" name="file" accept=".csv,text/csv" aria-label="Salary CSV">
+    <button class="btn" type="submit"{% if not data %} disabled{% endif %}>Import</button>
+  </form>
+</section>
+
+<section id="review" class="card">
+  <h2>Free-agent match review</h2>
+  {% if not reviews %}
+  <p class="muted">Nothing to review.</p>
+  {% else %}
+  {% if reviews_total > reviews|length %}<p class="muted">Showing {{ reviews|length }} of {{ reviews_total }}.</p>{% endif %}
+  {% for rv in reviews %}
+  <div class="admin-review">
+    <p><strong>{{ rv.row.name }}</strong> {{ rv.row.position }} {{ money(rv.row.aav) }} <span class="muted">line {{ rv.row.line }}{% if rv.result.status == "ambiguous" %}, several players fit{% endif %}</span></p>
+    {% if rv.result.candidates %}
+    <div class="toolbar">
+      {% for c in rv.result.candidates %}
+      <form method="post" action="/admin/fa/confirm" class="admin-inline">
+        <input type="hidden" name="key" value="{{ rv.key }}">
+        <input type="hidden" name="player_id" value="{{ c.candidate.player_id }}">
+        <input type="hidden" name="salary_name" value="{{ rv.row.name }}">
+        <input type="hidden" name="stats_name" value="{{ c.candidate.name }}">
+        <button class="chip" type="submit">{{ c.candidate.name }} <span class="muted">{{ c.candidate.team or "" }} {{ c.candidate.position }} · {{ "%.0f"|format(c.score) }}</span></button>
+        <label class="muted"><input type="checkbox" name="alias" value="1"> alias</label>
+      </form>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No close name in the pool.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>
+
+<section id="aav" class="card">
+  <h2>Cap hit edit</h2>
+  <form method="get" action="/admin#aav" class="toolbar">
+    <input type="text" name="q" value="{{ q }}" placeholder="Player name" aria-label="Find a player">
+    <button class="btn secondary" type="submit">Find</button>
+  </form>
+  {% if q and not found %}<p class="muted">No player matches “{{ q }}”.</p>{% endif %}
+  {% for f in found %}
+  <div class="admin-review">
+    <p><strong>{{ f.name }}</strong> {{ f.team }} <span class="muted">{{ f.owner or "free agent" }}</span> — {{ money(f.aav) }}{% if f.source %} <span class="muted">({{ f.source }})</span>{% endif %}</p>
+    <form method="post" action="/admin/aav" class="toolbar">
+      <input type="hidden" name="player_id" value="{{ f.player_id }}">
+      <input type="hidden" name="q" value="{{ q }}">
+      <input type="text" name="aav" placeholder="$7,250,000 or 7.25M" aria-label="Cap hit for {{ f.name }}" inputmode="decimal">
+      <button class="btn" type="submit">Set</button>
+      {% if f.source == "override" %}<button class="btn secondary" type="submit" name="clear" value="1">Clear override</button>{% endif %}
+    </form>
+    {% if f.bound_key %}
+    <form method="post" action="/admin/fa/unbind">
+      <input type="hidden" name="key" value="{{ f.bound_key }}">
+      <input type="hidden" name="q" value="{{ q }}">
+      <button class="linkish" type="submit">Unbind his CSV row ({{ f.bound_key }})</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+
+<section id="refresh" class="card">
+  <h2>Refresh</h2>
+  <p class="muted">Data from Yahoo is kept {{ (settings.ttl_seconds / 60)|int }} min before it's read again.{% if refreshed_at %} Last read {{ refreshed_at }}.{% endif %}</p>
+  <form method="post" action="/refresh">
+    <input type="hidden" name="next" value="/admin">
+    <button class="btn secondary" type="submit">Refresh from Yahoo now</button>
+  </form>
+</section>
+
+<section id="settings" class="card">
+  <h2>Rating settings</h2>
+  {% if settings_error %}<p class="error">{{ settings_error }}. Saving valid settings below replaces them.</p>{% endif %}
+  {% if config %}
+  <p>In use: {{ methods[config.divisor_method] }}, top {{ config.top_n }}{% if config.divisor_top_n is none %} (the method's default){% endif %}, GP floor {{ floor_percent }}%.</p>
+  {% endif %}
+  <form method="post" action="/admin/settings" class="admin-form">
+    <label>Divisor method
+      <select name="divisor_method">
+        {% for m, label in methods.items() %}
+        <option value="{{ m.value }}"{% if config and config.divisor_method == m %} selected{% endif %}>{{ label }} (default {{ default_top_n[m] }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Divisor count <input type="text" name="divisor_top_n" inputmode="numeric" value="{{ config.divisor_top_n if config and config.divisor_top_n is not none else '' }}" placeholder="blank: the method's default"></label>
+    <label>GP floor (% of the most games played) <input type="text" name="gp_floor_percent" inputmode="decimal" value="{{ floor_percent or '2' }}"></label>
+    <p class="warn">Saving re-rates every player on the next view.</p>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</section>
+
+<section id="config" class="card">
+  <h2>Configuration</h2>
+  <ul class="admin-config">
+    <li>Demo league: {{ "on" if settings.demo else "off" }}</li>
+    <li>Storage: {{ repo_kind }}</li>
+    <li>League sheet: {{ sheet_source }}</li>
+    <li>Cache TTL: {{ (settings.ttl_seconds / 60)|int }} min</li>
+    <li>Baseline season until {{ settings.baseline_min_gp }} GP</li>
+  </ul>
+</section>
+{% endblock %}

@@ -193,6 +193,17 @@ async def load_free_agent_salaries(repo: Repository) -> FreeAgentSalaries:
     return FreeAgentSalaries(aav, tuple(problems))
 
 
+async def load_bindings(repo: Repository) -> dict[str, dict[str, str]]:
+    """Row key -> {"player_id", "how"} for every bound imported row (Admin)."""
+    rows = await _rows(repo)
+    return {k: dict(v) for k, v in (await _load(repo, BINDINGS)).items() if k in rows}
+
+
+async def load_overrides(repo: Repository) -> dict[str, int]:
+    """player_id -> the owner's AAV override (Admin shows where a cap hit comes from)."""
+    return dict(await _load(repo, OVERRIDES))
+
+
 async def _rows(repo: Repository) -> dict[str, SalaryRow]:
     stored = await load_chunked(repo, ROWS)
     if stored is None:

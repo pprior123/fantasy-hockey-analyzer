@@ -77,3 +77,17 @@ dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
 .cap-card h2 { font-size: 1.05rem; margin: 0 0 .3rem; }
 .page h2 { font-size: 1.05rem; margin: .9rem 0 .3rem; }
 .page h3 { font-size: .95rem; margin: .6rem 0 .25rem; }
+/* Admin */
+.admin-flash { padding: .5rem .75rem; border-radius: .4rem; background: var(--soft); margin: .4rem 0; }
+.admin-jump { margin: .3rem 0 .5rem; }
+.admin-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0; }
+.admin-label { min-width: 7rem; font-weight: 600; }
+.admin-review { border-top: 1px solid var(--line); padding: .4rem 0; }
+.admin-review p { margin: .2rem 0; }
+.admin-inline { display: flex; gap: .3rem; align-items: center; }
+.admin-upload { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.admin-form { display: grid; gap: .5rem; max-width: 26rem; }
+.admin-form label { display: grid; gap: .2rem; }
+.admin-config { margin: 0; padding-left: 1.1rem; }
+.admin-wrap { white-space: normal; }
+.card h2 { font-size: 1.05rem; margin: 0 0 .4rem; }

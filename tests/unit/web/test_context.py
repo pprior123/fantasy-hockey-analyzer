@@ -60,6 +60,31 @@ def test_settings_defaults_and_overrides() -> None:
     assert Settings.from_env({**BASE, "CACHE_TTL_MINUTES": " "}).ttl_seconds == 1800.0
 
 
+def test_the_session_secret_must_be_long_enough() -> None:
+    """M4R1A-11: it signs the session cookie; a short one is guessable offline."""
+    with pytest.raises(ConfigError, match=r"^SESSION_SECRET must be at least 32 characters$"):
+        Settings.from_env({**BASE, "SESSION_SECRET": "x" * 31})
+    assert Settings.from_env({**BASE, "SESSION_SECRET": "x" * 32}).session_secret == "x" * 32
+
+
+def test_insecure_cookies_are_refused_on_vercel() -> None:
+    env = {**BASE, "FHA_INSECURE_COOKIES": "1", "VERCEL": "1"}
+    with pytest.raises(ConfigError, match=r"^FHA_INSECURE_COOKIES is for local http only"):
+        Settings.from_env(env)
+    assert Settings.from_env({**BASE, "VERCEL": "1"}).secure_cookies is True
+
+
+def test_the_salary_cap_override() -> None:
+    """M4R1B-4: SALARY_CAP, whole dollars, only a fallback for the sheet's cap."""
+    assert Settings.from_env(BASE).salary_cap is None
+    assert Settings.from_env({**BASE, "SALARY_CAP": " 119600000 "}).salary_cap == 119_600_000
+    assert Settings.from_env({**BASE, "SALARY_CAP": "119,600,000"}).salary_cap == 119_600_000
+    assert Settings.from_env({**BASE, "SALARY_CAP": ""}).salary_cap is None
+    for bad in ("119.6M", "0", "-5", "1" * 13, "١٢"):
+        with pytest.raises(ConfigError, match=r"^SALARY_CAP must be a whole number of dollars"):
+            Settings.from_env({**BASE, "SALARY_CAP": bad})
+
+
 @pytest.mark.parametrize(
     ("value", "message"), [("soon", "must be a number"), ("-1", "must be >= 0")]
 )

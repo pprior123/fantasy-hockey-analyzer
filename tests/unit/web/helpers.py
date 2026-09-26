@@ -38,9 +38,13 @@ def make_app(services: Services | None = None, **settings: Any) -> FastAPI:
     )
 
 
+OPEN: list[TestClient] = []  # entered clients; the web conftest exits them after each test
+
+
 def logged_in(app: FastAPI) -> TestClient:
     client = TestClient(app)
     client.__enter__()  # run the lifespan
+    OPEN.append(client)
     response = client.post(
         "/login", data={"password": PASSWORD, "next": "/players"}, follow_redirects=False
     )

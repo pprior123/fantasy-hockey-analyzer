@@ -23,6 +23,7 @@ from fha.storage.repository import Repository
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
+MIN_SECRET_LENGTH = 32  # characters: it signs the session cookie and Admin's messages
 
 
 class ConfigError(Exception):
@@ -38,6 +39,7 @@ class Settings:
     ttl_seconds: float = DEFAULT_TTL_SECONDS
     baseline_min_gp: int = DEFAULT_BASELINE_MIN_GP
     demo: bool = False
+    salary_cap: int | None = None  # SALARY_CAP: only if the sheet's cap is unreadable (SPEC §5)
 
     def __repr__(self) -> str:  # the password and secret never reach a log
         return f"Settings(demo={self.demo}, secure_cookies={self.secure_cookies})"
@@ -47,13 +49,19 @@ class Settings:
         missing = [n for n in ("APP_PASSWORD", "SESSION_SECRET") if not environ.get(n)]
         if missing:
             raise ConfigError(f"{' and '.join(missing)} not set")
+        if len(environ["SESSION_SECRET"]) < MIN_SECRET_LENGTH:
+            raise ConfigError(f"SESSION_SECRET must be at least {MIN_SECRET_LENGTH} characters")
+        insecure = environ.get("FHA_INSECURE_COOKIES") == "1"
+        if insecure and environ.get("VERCEL"):
+            raise ConfigError("FHA_INSECURE_COOKIES is for local http only, not on Vercel")
         return cls(
             app_password=environ["APP_PASSWORD"],
             session_secret=environ["SESSION_SECRET"],
-            secure_cookies=environ.get("FHA_INSECURE_COOKIES") != "1",
+            secure_cookies=not insecure,
             ttl_seconds=_number(environ, "CACHE_TTL_MINUTES", DEFAULT_TTL_SECONDS / 60) * 60,
             baseline_min_gp=int(_number(environ, "BASELINE_MIN_GP", DEFAULT_BASELINE_MIN_GP)),
             demo=environ.get("FHA_DEMO") == "1",
+            salary_cap=_dollars(environ, "SALARY_CAP"),
         )
 
 
@@ -68,6 +76,16 @@ def _number(environ: Mapping[str, str], name: str, default: float) -> float:
     if value < 0:
         raise ConfigError(f"{name} must be >= 0")
     return value
+
+
+def _dollars(environ: Mapping[str, str], name: str) -> int | None:
+    """A whole number of dollars ("119600000", commas allowed), or None when unset."""
+    raw = (environ.get(name) or "").strip().replace(",", "")
+    if not raw:
+        return None
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 12 or int(raw) == 0:
+        raise ConfigError(f"{name} must be a whole number of dollars, e.g. 119600000")
+    return int(raw)
 
 
 @dataclass

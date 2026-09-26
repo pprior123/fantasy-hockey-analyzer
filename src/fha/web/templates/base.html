@@ -17,9 +17,10 @@
 </head>
 <body>
   {% if active is defined %}
+  {% set season_q = ('?season=' ~ params['season']) if params is defined and params.get('season') in ('current', 'last') else '' %}
   <nav class="topnav" aria-label="Main">
     {% for key, label in nav %}
-    <a href="/{{ key }}" class="{{ 'on' if key == active else '' }}"{% if key == active %} aria-current="page"{% endif %}>{{ label }}</a>
+    <a href="/{{ key }}{{ season_q if key != 'admin' else '' }}" class="{{ 'on' if key == active else '' }}"{% if key == active %} aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
   </nav>
   {% endif %}

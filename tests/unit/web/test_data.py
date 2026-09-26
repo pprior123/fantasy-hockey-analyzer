@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from fha.services.league_view import Season
 from fha.services.refresh import Cached
-from fha.web.data import PageData, page_data, season_param
+from fha.web.data import BadQueryError, PageData, page_data, season_param
 from tests.unit.web.helpers import T0, FakeClock, make_app, make_services
 
 
@@ -82,4 +82,5 @@ def test_season_param() -> None:
     assert season_param("last") is Season.LAST
     assert season_param(None) is None
     assert season_param("") is None
-    assert season_param("bogus") is None
+    with pytest.raises(BadQueryError, match="season must be current or last, got 'bogus'"):
+        season_param("bogus")

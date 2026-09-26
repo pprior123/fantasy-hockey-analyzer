@@ -145,8 +145,6 @@
       <form method="post" action="/admin/fa/confirm" class="admin-inline">
         <input type="hidden" name="key" value="{{ rv.key }}">
         <input type="hidden" name="player_id" value="{{ c.candidate.player_id }}">
-        <input type="hidden" name="salary_name" value="{{ rv.row.name }}">
-        <input type="hidden" name="stats_name" value="{{ c.candidate.name }}">
         <button class="chip" type="submit">{{ c.candidate.name }} <span class="muted">{{ c.candidate.team or "" }} {{ c.candidate.position }} · {{ "%.0f"|format(c.score) }}</span></button>
         <label class="muted"><input type="checkbox" name="alias" value="1"> alias</label>
       </form>
@@ -226,6 +224,7 @@
     <li>League sheet: {{ sheet_source }}</li>
     <li>Cache TTL: {{ (settings.ttl_seconds / 60)|int }} min</li>
     <li>Baseline season until {{ settings.baseline_min_gp }} GP</li>
+    <li>Cap override (SALARY_CAP, used only if the sheet has no cap): {{ "${:,}".format(settings.salary_cap) if settings.salary_cap else "not set" }}</li>
   </ul>
 </section>
 {% endblock %}

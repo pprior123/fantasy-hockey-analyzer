@@ -9,6 +9,11 @@ rated screen persists: bind once, SPEC §6).
 
 Hygiene (SPEC §4a): only ``ParsedSheet`` data is shown. The grid, with the
 GMs' contact details, never leaves the parser.
+
+The forms' values aren't trusted: a tab must be one the stored sheet has, a
+team or player one the Yahoo data has, and an alias is named from the stored
+row and the pool, never from the form. A value the store refuses (e.g. a tab
+named ``__x__``) is a message, not a 500.
 """
 
 from __future__ import annotations
@@ -45,29 +50,24 @@ from fha.services.league_sheet import (
     read_league_sheet,
     suggest_bindings,
 )
-from fha.services.league_view import ViewError
-from fha.services.refresh import RefreshError
 from fha.services.settings import SettingsError, load_rating_settings, save_rating_settings
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.source import XlsxLeagueSheet
 from fha.sources.puckpedia import SalaryCsvError, parse_salary_csv
-from fha.sources.yahoo.client import YahooError
-from fha.sources.yahoo.oauth import YahooAuthError
-from fha.sources.yahoo.parse import YahooParseError
-from fha.storage.repository import Repository
+from fha.storage.repository import Repository, RepositoryError
 from fha.web.app import render, services
-from fha.web.data import PageData, page_data
+from fha.web.data import NO_DATA, PageData, page_data
+from fha.web.format import ago
 
 router = APIRouter()
 
-MAX_SHEET_BYTES = 5 * 1024 * 1024  # a league sheet download is ~100 KB
+MAX_SHEET_BYTES = 4 * 1024 * 1024  # a league sheet download is ~100 KB; under Vercel's 4.5 MB
 MAX_CSV_BYTES = 2 * 1024 * 1024  # every PuckPedia page pasted is ~200 KB
 REVIEW_LIMIT = 30  # review rows shown at once; the rest wait for the next visit
 SEARCH_LIMIT = 20
 FLASH_SALT = "fha-admin-flash-v1"
 FLASH_MAX_AGE = 600  # seconds: a message belongs to the redirect that carried it
-# Without Yahoo data (e.g. before access), the sections that need no snapshot still work.
-NO_DATA = (YahooError, YahooAuthError, YahooParseError, RefreshError, ViewError)
+MAX_CAP_HIT = 1_000_000_000  # dollars: far above any real cap hit (the cap is ~$120M)
 
 DOLLARS = re.compile(r"\$?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)")
 SCALED = re.compile(r"\$?([0-9]+(?:\.[0-9]+)?)([MmKk])")
@@ -86,16 +86,25 @@ def parse_dollars(text: str) -> int:
     """A cap hit typed by the owner: "$7,250,000", "7250000" or "7.25M" / "725K".
 
     Commas must group thousands; a scaled amount must come to whole dollars;
-    anything else ("7.25", "1,5", "7M5") is refused rather than guessed.
+    anything else ("7.25", "1,5", "7M5") is refused rather than guessed, and
+    so is an amount over ``MAX_CAP_HIT`` (or a huge string: nothing is parsed
+    past 20 characters).
     """
     raw = text.strip().replace(" ", "")
-    if m := DOLLARS.fullmatch(raw):
-        return int(m[1].replace(",", ""))
-    if m := SCALED.fullmatch(raw):
-        amount = Decimal(m[1]) * (1_000_000 if m[2] in "Mm" else 1_000)
-        if amount == amount.to_integral_value():
-            return int(amount)
-    raise InputError(f"enter a cap hit like $7,250,000, 7250000 or 7.25M (got {text!r})")
+    amount: int | Decimal | None = None
+    if len(raw) > 20:
+        pass
+    elif m := DOLLARS.fullmatch(raw):
+        amount = int(m[1].replace(",", ""))
+    elif m := SCALED.fullmatch(raw):
+        scaled = Decimal(m[1]) * (1_000_000 if m[2] in "Mm" else 1_000)
+        if scaled == scaled.to_integral_value():
+            amount = scaled
+    if amount is None:
+        raise InputError(f"enter a cap hit like $7,250,000, 7250000 or 7.25M (got {text!r})")
+    if amount > MAX_CAP_HIT:
+        raise InputError(f"a cap hit can't be over ${MAX_CAP_HIT:,} (got {text!r})")
+    return int(amount)
 
 
 def parse_percent(text: str) -> str:
@@ -201,7 +210,7 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         data_error=data_error,
         sheet=sheet,
         read_at=read_at,
-        read_ago=_ago(svc.clock.now() - read_at) if read_at is not None else None,
+        read_ago=ago(svc.clock.now() - read_at) if read_at is not None else None,
         sheet_source=_sheet_source(svc.sheet),
         sheet_configured=svc.sheet is not None,
         tab_bindings=tab_bindings,
@@ -221,17 +230,6 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         settings=settings,
         repo_kind=type(svc.repo).__name__,
     )
-
-
-def _ago(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    if seconds < 60:
-        return "just now"
-    if seconds < 3600:
-        return f"{int(seconds // 60)} min ago"
-    if seconds < 48 * 3600:
-        return f"{int(seconds // 3600)} h ago"
-    return f"{int(seconds // 86400)} days ago"
 
 
 def _sheet_source(sheet: object | None) -> str:
@@ -289,6 +287,8 @@ async def sheet_read(request: Request) -> RedirectResponse:
         sheet = await read_league_sheet(svc.repo, svc.sheet, svc.clock)
     except LeagueSheetError as e:
         return _back(request, "error", f"The sheet couldn't be read: {e}", anchor="sheet")
+    except RepositoryError as e:
+        return _back(request, "error", f"The sheet couldn't be saved: {e}.", anchor="sheet")
     return _back(request, "ok", _sheet_summary(sheet), anchor="sheet")
 
 
@@ -304,6 +304,8 @@ async def sheet_upload(request: Request, file: UploadFile) -> RedirectResponse:
         return _back(
             request, "error", f"That file isn't a league sheet we can read: {e}", anchor="sheet"
         )
+    except RepositoryError as e:
+        return _back(request, "error", f"The sheet couldn't be saved: {e}.", anchor="sheet")
     return _back(request, "ok", _sheet_summary(sheet), anchor="sheet")
 
 
@@ -314,12 +316,28 @@ def _sheet_summary(sheet: Any) -> str:
     return text + (f", {bad} unrecognized." if bad else ".")
 
 
+async def _data_for(request: Request, what: str) -> PageData:
+    """The rated view a form needs to check its values against; InputError without it."""
+    try:
+        return await page_data(request)
+    except NO_DATA as e:
+        raise InputError(f"{what} needs Yahoo data first ({type(e).__name__})") from None
+
+
 @router.post("/admin/bind")
 async def bind(request: Request, tab: str = Form(), team_key: str = Form("")) -> RedirectResponse:
     svc = services(request)
     try:
+        stored = await load_league_sheet(svc.repo)
+        tabs = {t.name for t in stored[0].tabs} if stored else set()
+        if tab not in tabs and tab not in await load_tab_bindings(svc.repo):
+            raise InputError("that tab isn't in the stored sheet")
+        if team_key:
+            data = await _data_for(request, "Binding")
+            if data.view.team(team_key) is None:
+                raise InputError("that team isn't in the league")
         await bind_tab(svc.repo, tab, team_key or None)
-    except LeagueSheetServiceError as e:
+    except (InputError, LeagueSheetServiceError, RepositoryError) as e:
         return _back(request, "error", f"{tab}: {e}.", anchor="bindings")
     text = f"{tab} is now bound." if team_key else f"{tab} is unbound."
     return _back(request, "ok", text, anchor="bindings")
@@ -331,8 +349,17 @@ async def sheet_confirm(
 ) -> RedirectResponse:
     svc = services(request)
     try:
+        data = await _data_for(request, "Matching a row")
+        report = next((r for r in data.reports if r.tab.name == tab), None)
+        if report is None or report.team_key is None:
+            raise InputError(f"tab {tab!r} isn't bound to a team yet")
+        if key not in {m.key for m in report.rows}:
+            raise InputError("that row isn't on the tab")
+        team = data.view.team(report.team_key)
+        if team is None or player_id not in team.player_ids:
+            raise InputError("that player isn't on the tab's Yahoo roster")
         await confirm_row(svc.repo, tab, key, player_id)
-    except LeagueSheetServiceError as e:
+    except (InputError, LeagueSheetServiceError, RepositoryError) as e:
         return _back(request, "error", f"{tab}: {e}.", anchor="discrepancies")
     return _back(request, "ok", f"{tab}: row matched.", anchor="discrepancies")
 
@@ -355,9 +382,12 @@ async def csv_import(request: Request, file: UploadFile) -> RedirectResponse:
         return _back(
             request, "error", f"Import needs Yahoo data first ({type(e).__name__}).", anchor="csv"
         )
-    report = await import_free_agent_salaries(
-        svc.repo, rows, data.view.snapshot.pool, await load_aliases(svc.repo)
-    )
+    try:
+        report = await import_free_agent_salaries(
+            svc.repo, rows, data.view.snapshot.pool, await load_aliases(svc.repo)
+        )
+    except RepositoryError as e:
+        return _back(request, "error", f"The CSV couldn't be saved: {e}.", anchor="csv")
     if not report.changed:
         text = f"No changes: the same {report.rows} rows as last time."
     else:
@@ -374,28 +404,31 @@ async def csv_import(request: Request, file: UploadFile) -> RedirectResponse:
 
 @router.post("/admin/fa/confirm")
 async def fa_confirm(
-    request: Request,
-    key: str = Form(),
-    player_id: str = Form(),
-    alias: str = Form(""),
-    salary_name: str = Form(""),
-    stats_name: str = Form(""),
+    request: Request, key: str = Form(), player_id: str = Form(), alias: str = Form("")
 ) -> RedirectResponse:
+    """Bind a CSV row to a pool player; with ``alias``, also save that the row's name
+    means the player's (both names from the store and the pool, not the form)."""
     svc = services(request)
     try:
-        await confirm(svc.repo, key, player_id)
-    except FreeAgentError as e:
+        player = (await _data_for(request, "Matching")).view.by_id.get(player_id)
+        if player is None:
+            raise InputError("that player isn't in the pool")
+        row = await confirm(svc.repo, key, player_id)
+        text = "Matched."
+        if alias and normalize_name(row.name) != normalize_name(player.name):
+            await add_alias(svc.repo, player.name, row.name)
+            text += f" Alias saved: {row.name} = {player.name}."
+    except (InputError, FreeAgentError, RepositoryError) as e:
         return _back(request, "error", f"{e}.", anchor="review")
-    text = "Matched."
-    if alias and salary_name and stats_name:
-        await add_alias(svc.repo, stats_name, salary_name)
-        text += f" Alias saved: {salary_name} = {stats_name}."
     return _back(request, "ok", text, anchor="review")
 
 
 @router.post("/admin/fa/unbind")
 async def fa_unbind(request: Request, key: str = Form(), q: str = Form("")) -> RedirectResponse:
-    await unbind(services(request).repo, key)
+    try:
+        await unbind(services(request).repo, key)
+    except RepositoryError as e:
+        return _back(request, "error", f"{e}.", anchor="aav", q=q)
     return _back(request, "ok", "Unbound: that row waits for review again.", anchor="aav", q=q)
 
 
@@ -410,8 +443,12 @@ async def aav(
     svc = services(request)
     try:
         value = None if clear else parse_dollars(aav)
+        if value is not None:
+            pool = (await _data_for(request, "A cap hit")).view.by_id
+            if player_id not in pool:
+                raise InputError("that player isn't in the pool")
         await set_aav_override(svc.repo, player_id, value)
-    except (InputError, FreeAgentError) as e:
+    except (InputError, FreeAgentError, RepositoryError) as e:
         return _back(request, "error", f"{e}.", anchor="aav", q=q)
     text = "Override cleared." if value is None else f"Cap hit set to ${value:,}."
     return _back(request, "ok", text, anchor="aav", q=q)
@@ -438,7 +475,7 @@ async def rating_settings(
                 "gp_floor_fraction": fraction,
             },
         )
-    except (InputError, SettingsError) as e:
+    except (InputError, SettingsError, RepositoryError) as e:
         return _back(request, "error", f"Not saved: {e}.", anchor="settings")
     text = (
         f"Saved: {METHOD_LABELS[config.divisor_method]}, top {config.top_n}, "

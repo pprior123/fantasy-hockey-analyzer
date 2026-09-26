@@ -31,10 +31,10 @@
   <button type="submit" class="btn secondary">Apply</button>
 </form>
 
-<nav class="chips view-toggle" aria-label="Columns">
-  <a class="chip {{ 'on' if mode == 'money' else '' }}" href="{{ url('/players', params, view=None) }}">Salary</a>
-  <a class="chip {{ 'on' if mode == 'cats' else '' }}" href="{{ url('/players', params, view='cats') }}">Categories</a>
-</nav>
+{{ m.view_toggle("/players", params, mode) }}
+
+{# Above the table, so the page ends with it: scrolled to the end, its header stays in view. #}
+<p class="muted">{{ rows|length }} players. Rank and percentile are over the whole league, whatever the filter.</p>
 
 {% macro header(key, label) -%}
 <th class="{{ 'first' if key == 'name' else '' }}{{ ' num' if key not in ('name', 'pos', 'team', 'owner') else '' }}{{ ' sorted' if sort == key else '' }}">
@@ -72,10 +72,9 @@
     {% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="12" class="muted">No players match.</td></tr>
+  <tr><td colspan="{{ columns|length + (money_columns|length if mode == 'money' else categories|length) }}" class="muted">No players match.</td></tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
-<p class="muted">{{ rows|length }} players. Rank and percentile are over the whole league, whatever the filter.</p>
 {% endblock %}

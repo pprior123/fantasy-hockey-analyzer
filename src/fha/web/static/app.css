@@ -6,10 +6,13 @@
   color: var(--ink); background: var(--bg);
 }
 * { box-sizing: border-box; }
-body { margin: 0; font-size: 15px; line-height: 1.35; }
+body { margin: 0; font-size: 15px; line-height: 1.35;
+       /* viewport-fit=cover: keep clear of the notch and the home bar when installed */
+       padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 a { color: var(--brand); }
 
-.topnav { display: flex; overflow-x: auto; background: var(--brand); position: sticky; top: 0; z-index: 3; }
+.topnav { display: flex; overflow-x: auto; background: var(--brand); position: sticky; top: 0; z-index: 4;
+          padding-top: env(safe-area-inset-top); }
 .topnav a { color: #fff; text-decoration: none; padding: .75rem .7rem; white-space: nowrap; opacity: .8; }
 .topnav a.on { opacity: 1; font-weight: 600; box-shadow: inset 0 -3px 0 #fff; }
 
@@ -29,13 +32,21 @@ a { color: var(--brand); }
 .btn.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
 .linkish { background: none; border: 0; color: var(--brand); cursor: pointer; font: inherit; padding: 0; }
 select, input[type=text], input[type=number], input[type=password] {
-  font-size: 1rem; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: .35rem; }
+  font-size: 1rem; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: .35rem;
+  max-width: 100%; } /* a long option mustn't widen the page past 390 px */
 
-/* Tables: scroll sideways inside their box, sticky header, numbers right-aligned */
-.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: .4rem; }
+/* Tables scroll inside their box, both ways, so the header row can stick to the box's
+   top (a box that scrolls sideways is a scroll container, and sticky cells stick to it,
+   not to the page). The box is at most a screen tall less the sticky nav (2.8rem) and
+   the footer (~4rem, and the home bar's inset), so even scrolled to the page's end the
+   header row is below the nav. Numbers right-aligned. */
+.table-wrap { overflow: auto; border: 1px solid var(--line);
+              max-height: calc(100dvh - 9.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+              border-radius: .4rem; -webkit-overflow-scrolling: touch; }
 table.data { border-collapse: collapse; width: 100%; font-size: .85rem; }
 table.data th, table.data td { padding: .35rem .45rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
-table.data th { position: sticky; top: 0; background: var(--soft); text-align: left; font-weight: 600; }
+table.data th { background: var(--soft); text-align: left; font-weight: 600; }
+table.data thead th { position: sticky; top: 0; z-index: 2; }
 table.data th a { color: inherit; text-decoration: none; }
 table.data tr.expand td { background: var(--soft); white-space: normal; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -58,7 +69,8 @@ table.data tr.expand td { background: var(--soft); white-space: normal; }
 
 /* Rated screens (Players, Rosters, League, Matchup) */
 table.data .first { position: sticky; left: 0; background: var(--bg); z-index: 1; }
-table.data th.first { background: var(--soft); z-index: 2; }
+table.data th.first { background: var(--soft); }
+table.data thead th.first { z-index: 3; }
 table.data th.sorted a { color: var(--brand); }
 table.data tr.ir td { color: var(--muted); }
 table.data tr.mine td { font-weight: 600; }
@@ -66,7 +78,8 @@ table.data tr.trailing td, table.data tr.trailing th { background: #fff1f0; }
 table.data tr.total th, table.data tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
 table.data details summary { cursor: pointer; list-style: none; }
 table.data details summary::-webkit-details-marker { display: none; }
-dl.norms { display: grid; grid-template-columns: repeat(4, auto); gap: .1rem .6rem; margin: .3rem 0 0; font-size: .8rem; }
+/* Two columns, so an open breakdown doesn't widen the sticky name column much */
+dl.norms { display: grid; grid-template-columns: repeat(2, auto); gap: .1rem .6rem; margin: .3rem 0 0; font-size: .8rem; }
 dl.norms div { display: flex; gap: .25rem; }
 dl.norms dt { color: var(--muted); }
 dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
@@ -84,10 +97,10 @@ dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
 .admin-label { min-width: 7rem; font-weight: 600; }
 .admin-review { border-top: 1px solid var(--line); padding: .4rem 0; }
 .admin-review p { margin: .2rem 0; }
-.admin-inline { display: flex; gap: .3rem; align-items: center; }
+.admin-inline { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 .admin-upload { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
-.admin-form { display: grid; gap: .5rem; max-width: 26rem; }
-.admin-form label { display: grid; gap: .2rem; }
+.admin-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; max-width: 26rem; }
+.admin-form label { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; min-width: 0; }
 .admin-config { margin: 0; padding-left: 1.1rem; }
 .admin-wrap { white-space: normal; }
 .card h2 { font-size: 1.05rem; margin: 0 0 .4rem; }

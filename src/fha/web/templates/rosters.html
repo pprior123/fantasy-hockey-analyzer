@@ -2,16 +2,19 @@
 {% import "_macros.html" as m %}
 {% block content %}
 {{ m.notes(data) }}
-<form method="get" action="/rosters" class="toolbar">
-  {% if params.get('season') %}<input type="hidden" name="season" value="{{ params['season'] }}">{% endif %}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/rosters", params) }}
+  {{ m.refresh_button(here) }}
+</div>
+{# The picker is its own form: the Refresh POST can't sit inside it (nested forms don't work). #}
+<form method="get" action="/rosters" class="toolbar team-picker">
+  {% for key in ("season", "view") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
   <label>Team
     <select name="team">
       {% for t in data.view.teams %}<option value="{{ t.team_key }}"{% if t.team_key == team.team_key %} selected{% endif %}>{{ t.name }}{% if t.is_mine %} (mine){% endif %}</option>{% endfor %}
     </select>
   </label>
   <button type="submit" class="btn secondary">Show</button>
-  {{ m.season_toggle(data, "/rosters", params) }}
-  {{ m.refresh_button(here) }}
 </form>
 
 <section class="card cap-card">
@@ -26,9 +29,12 @@
 </section>
 
 <h2>Skaters</h2>
+{{ m.view_toggle("/rosters", params, mode) }}
 <div class="table-wrap">
 <table class="data roster">
-  <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th><th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th><th class="num">AAV</th><th class="num">$/TTLTST</th>{% if team.is_mine %}<th></th>{% endif %}</tr></thead>
+  <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th><th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th>
+    {% if mode == 'money' %}<th class="num">AAV</th><th class="num">$/TTLTST</th>{% else %}{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}{% endif %}
+    {% if team.is_mine %}<th></th>{% endif %}</tr></thead>
   <tbody>
   {% for r in skaters %}
   <tr class="{{ 'ir' if r.in_ir_slot else '' }}">
@@ -38,12 +44,16 @@
     <td class="num">{{ r.gp }}</td>
     <td class="num">{{ r.ttltst|number(3) }}</td>
     <td class="num">{{ r.percentile|pctl }}</td>
+    {% if mode == 'money' %}
     <td class="num">{{ r.aav|money }}</td>
     <td class="num">{{ r.value|number(2) }}</td>
-    {% if team.is_mine %}<td><a href="{{ url('/rosters/replace', {'season': params.get('season', '')}, drop=r.player_id) }}">Replace</a></td>{% endif %}
+    {% else %}
+    {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
+    {% endif %}
+    {% if team.is_mine %}<td><a href="{{ url('/rosters/replace', {'season': params.get('season', ''), 'view': params.get('view', '')}, drop=r.player_id) }}">Replace</a></td>{% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="9" class="muted">No skaters.</td></tr>
+  <tr><td colspan="{{ 6 + (2 if mode == 'money' else categories|length) + (1 if team.is_mine else 0) }}" class="muted">No skaters.</td></tr>
   {% endfor %}
   </tbody>
 </table>

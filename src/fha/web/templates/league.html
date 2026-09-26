@@ -7,17 +7,22 @@
   {{ m.refresh_button(here) }}
 </div>
 {{ m.rates_note() }}
+{{ m.view_toggle("/league", params, mode) }}
 <div class="table-wrap">
 <table class="data league">
-  <thead><tr><th class="first">Team</th><th class="num">TTLTST</th>{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}<th class="num">Payroll</th><th class="num">Room</th></tr></thead>
+  <thead><tr><th class="first">Team</th><th class="num">TTLTST</th>
+    {% if mode == 'money' %}<th class="num">Payroll</th><th class="num">Room</th>{% else %}{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}{% endif %}</tr></thead>
   <tbody>
   {% for s in table %}
   <tr class="{{ 'mine' if s.team.is_mine else '' }}">
-    <td class="first"><a href="{{ url('/rosters', {'season': params.get('season', '')}, team=s.team.team_key) }}">{{ s.team.name }}</a>{% if s.has_discrepancies %} <span class="badge">sheet</span>{% endif %}</td>
+    <td class="first"><a href="{{ url('/rosters', {'season': params.get('season', ''), 'view': params.get('view', '')}, team=s.team.team_key) }}">{{ s.team.name }}</a>{% if s.has_discrepancies %} <span class="badge">sheet</span>{% endif %}</td>
     <td class="num">{{ s.profile.ttltst|number(3) }}</td>
-    {% for cat in categories %}<td class="num">{{ s.profile.mean_norm.get(cat)|number }}</td>{% endfor %}
+    {% if mode == 'money' %}
     <td class="num">{{ s.payroll|money }}</td>
     <td class="num {{ 'over' if s.over_cap else '' }}">{{ s.cap_room|money }}</td>
+    {% else %}
+    {% for cat in categories %}<td class="num">{{ s.profile.mean_norm.get(cat)|number }}</td>{% endfor %}
+    {% endif %}
   </tr>
   {% endfor %}
   </tbody>

@@ -6,7 +6,7 @@
 <section class="card">
   <p><strong>{{ drop.name }}</strong> ({{ drop.position }}) · TTLTST {{ drop.ttltst|number(3) }} · AAV {{ drop.aav|money }}
     {% if drop.counts is none %}<span class="muted">(not on the sheet: frees nothing)</span>{% elif not drop.counts %}<span class="muted">(IR row: frees nothing)</span>{% endif %}</p>
-  <p><a href="{{ url('/rosters', {'season': params.get('season', '')}) }}">Back to my roster</a></p>
+  <p><a href="{{ url('/rosters', {'season': params.get('season', ''), 'view': params.get('view', '')}) }}">Back to my roster</a></p>
 </section>
 
 <nav class="chips" aria-label="Filter">
@@ -15,10 +15,12 @@
 </nav>
 {% if swap_only and swap.excluded_unknown %}<p class="muted excluded">{{ swap.excluded_unknown }} left out: a cap hit or the room isn't known.</p>{% endif %}
 {{ m.rates_note() }}
+{{ m.view_toggle("/rosters/replace", params, mode) }}
 
 <div class="table-wrap">
 <table class="data replace">
-  <thead><tr><th class="first">Free agent</th><th>Pos</th><th class="num">TTLTST</th><th class="num">ΔTTLTST</th><th class="num">AAV</th><th class="num">Room after</th>{% for cat in categories %}<th class="num">Δ{{ cat.value }}</th>{% endfor %}</tr></thead>
+  <thead><tr><th class="first">Free agent</th><th>Pos</th><th class="num">TTLTST</th><th class="num">ΔTTLTST</th>
+    {% if mode == 'money' %}<th class="num">AAV</th><th class="num">Room after</th>{% else %}{% for cat in categories %}<th class="num">Δ{{ cat.value }}</th>{% endfor %}{% endif %}</tr></thead>
   <tbody>
   {% for row in swap.rows %}
   {% set fa = row.player %}
@@ -27,12 +29,15 @@
     <td>{{ fa.position }}</td>
     <td class="num">{{ fa.ttltst|number(3) }}</td>
     <td class="num {{ 'good' if row.delta_ttltst and row.delta_ttltst > 0 else '' }}">{{ row.delta_ttltst|signed(3) }}</td>
+    {% if mode == 'money' %}
     <td class="num">{{ fa.aav|money }}</td>
     <td class="num {{ 'over' if row.swap_ok == false else '' }}">{{ row.room_after|money }}</td>
+    {% else %}
     {% for cat in categories %}<td class="num">{{ row.delta_norms.get(cat)|signed }}</td>{% endfor %}
+    {% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="13" class="muted">No free agents at {{ drop.position }}{% if swap_only %} fit the cap{% endif %}.</td></tr>
+  <tr><td colspan="{{ 4 + (2 if mode == 'money' else categories|length) }}" class="muted">No free agents at {{ drop.position }}{% if swap_only %} fit the cap{% endif %}.</td></tr>
   {% endfor %}
   </tbody>
 </table>

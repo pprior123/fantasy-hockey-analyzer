@@ -1,8 +1,11 @@
 """Single-password login, the signed session cookie, redirects and throttling (SPEC §7)."""
 
 import logging
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from fha.web.auth import COOKIE, LoginThrottle, Sessions, password_ok, safe_next
@@ -141,3 +144,53 @@ def test_the_password_never_reaches_the_log(caplog: pytest.LogCaptureFixture) ->
     client.post("/login", data={"password": "wrong-guess-123"})
     assert PASSWORD not in caplog.text
     assert "wrong-guess-123" not in caplog.text
+
+
+def test_a_post_after_the_session_expired_returns_to_the_page_it_came_from() -> None:
+    """M4R1A-7: /refresh has no GET, so ``next`` is the Referer (same site only)."""
+    with TestClient(make_app()) as anonymous:
+        here = anonymous.post(
+            "/refresh",
+            data={"next": "/rosters"},
+            headers={"referer": "http://testserver/rosters?season=last"},
+            follow_redirects=False,
+        )
+        foreign = anonymous.post(
+            "/refresh",
+            headers={"referer": "https://evil.example/rosters"},
+            follow_redirects=False,
+        )
+        none = anonymous.post("/admin/aav", follow_redirects=False)
+    assert here.headers["location"] == "/login?next=%2Frosters%3Fseason%3Dlast"
+    assert foreign.headers["location"] == "/login?next=%2Fplayers"
+    assert none.headers["location"] == "/login?next=%2Fplayers"
+
+
+def api_routes(routes: Any) -> Iterator[APIRoute]:
+    """Every APIRoute, including those of included routers (the routers carry no prefix)."""
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+        elif hasattr(route, "original_router"):
+            yield from api_routes(route.original_router.routes)
+
+
+def test_every_route_but_the_public_ones_needs_a_login() -> None:
+    """Swept from the app's own routes, POSTs included, so a new route can't slip by."""
+    app = make_app()
+    public = {"/login", "/manifest.webmanifest"}
+    checked = 0
+    with TestClient(app) as anonymous:
+        for route in api_routes(app.routes):
+            if route.path in public:
+                continue
+            for method in route.methods:
+                response = anonymous.request(method, route.path, follow_redirects=False)
+                assert response.status_code == 303, (method, route.path)
+                assert response.headers["location"].startswith("/login?next="), route.path
+                htmx = anonymous.request(
+                    method, route.path, headers={"HX-Request": "true"}, follow_redirects=False
+                )
+                assert htmx.status_code == 401
+                checked += 1
+    assert checked >= 16

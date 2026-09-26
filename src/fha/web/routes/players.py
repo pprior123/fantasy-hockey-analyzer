@@ -9,11 +9,10 @@ from fha.services.players_table import POSITIONS, Owner, PlayersQuery, QueryErro
 from fha.web import format as _format  # noqa: F401 - installs the template filters
 from fha.web.app import render, services
 from fha.web.auth import safe_next
-from fha.web.data import page_data, season_param
+from fha.web.data import page_data, season_param, view_param
 
 router = APIRouter()
 
-VIEWS = ("money", "cats")  # the Categories toggle: salary columns, or the 7 norms
 COLUMNS = (
     ("name", "Name"),
     ("pos", "Pos"),
@@ -53,9 +52,7 @@ async def players(request: Request) -> HTMLResponse:
         return bad_request(
             request, f"That filter isn't one the Players screen knows: {e}.", "/players", "players"
         )
-    mode = params.get("view") or "money"
-    if mode not in VIEWS:
-        return bad_request(request, f"Unknown view {mode!r}.", "/players", "players")
+    mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     if query.team_key is not None and view.team(query.team_key) is None:

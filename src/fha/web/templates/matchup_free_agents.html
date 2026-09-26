@@ -28,7 +28,7 @@
     <td class="num">{% if n.fits is none %}{{ DASH }}{% elif n.fits %}<span class="good">yes</span>{% else %}<span class="over">no</span>{% endif %}</td>
   </tr>
   {% else %}
-  <tr><td colspan="6" class="muted">No free agents to show.</td></tr>
+  <tr><td colspan="6" class="muted">{% if game.comparison is none %}No opponent this week, so no category to help with.{% elif not game.comparison.trailing %}You lead everywhere, by more than the close margin: no category to help with.{% else %}No free agents to show.{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

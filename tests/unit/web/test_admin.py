@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import URLSafeTimedSerializer
@@ -12,17 +13,21 @@ from itsdangerous import URLSafeTimedSerializer
 from fha.services.refresh import RefreshService
 from fha.services.settings import COLLECTION as SETTINGS_COLLECTION
 from fha.services.settings import RATING
+from fha.sources.google_auth import GoogleAuthError
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.sources.league_sheet.parse import parse_sheet
-from fha.sources.league_sheet.source import FakeLeagueSheet
+from fha.sources.league_sheet.source import FakeLeagueSheet, SheetsApiLeagueSheet
 from fha.sources.yahoo.client import YahooHTTPError
 from fha.sources.yahoo.demo import demo_snapshot
+from fha.sources.yahoo.fake import FakeYahooSource
 from fha.sources.yahoo.models import LeagueSnapshot, Team
+from fha.storage.memory import InMemoryRepository
+from fha.storage.repository import RepositoryError
+from fha.web.format import ago
 from fha.web.routes import admin
 from fha.web.routes.admin import (
     FLASH_SALT,
     InputError,
-    _ago,
     _sheet_source,
     parse_dollars,
     parse_percent,
@@ -216,6 +221,38 @@ def test_tabs_are_suggested_and_bound() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("form", "text"),
+    [
+        (
+            {"tab": "Pinecone", "team_key": "nope.l.1.t.9"},
+            "Pinecone: that team isn't in the league.",
+        ),
+        (
+            {"tab": "Nowhere", "team_key": TEAM1.team_key},
+            "Nowhere: that tab isn't in the stored sheet.",
+        ),
+        ({"tab": "__x__", "team_key": ""}, "__x__: that tab isn't in the stored sheet."),
+    ],
+)
+def test_binding_checks_the_tab_and_the_team(form: dict[str, str], text: str) -> None:
+    """M4R1A-8: a posted tab or team must exist; nothing is stored otherwise."""
+    c = client()
+    upload_sheet(c)
+    assert post(c, "/admin/bind", data=form) == {"kind": "error", "text": text}
+    assert "bound to" not in c.get("/admin").text
+
+
+def test_a_value_the_store_refuses_is_a_message_not_a_500() -> None:
+    """A tab name Firestore can't hold as a map key (``__x__``) fails in the store."""
+    c = client()
+    upload_sheet(c, to_xlsx(s.grid(sheet_tab("__x__", TEAM1))))
+    result = post(c, "/admin/bind", data={"tab": "__x__", "team_key": TEAM1.team_key})
+    assert result["kind"] == "error"
+    assert result["text"].startswith("__x__: ")
+    assert "is reserved" in result["text"]
+
+
 def test_the_discrepancy_report_and_row_review() -> None:
     c = client()
     upload_sheet(c)
@@ -237,6 +274,34 @@ def test_the_discrepancy_report_and_row_review() -> None:
     assert post(c, "/admin/sheet/confirm", data=form) == {
         "kind": "error",
         "text": "Maple: tab 'Maple' isn't bound to a team yet.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("change", "text"),
+    [
+        ({"key": "nobody|F"}, "Pinecone: that row isn't on the tab."),
+        (
+            {"player_id": TEAM2.roster[0].player.player_id},
+            "Pinecone: that player isn't on the tab's Yahoo roster.",
+        ),
+    ],
+)
+def test_a_row_match_must_be_a_tab_row_and_a_roster_player(
+    change: dict[str, str], text: str
+) -> None:
+    """M4R1A-8: the row must be on the tab, the player on the bound team's roster."""
+    c = client()
+    upload_sheet(c)
+    post(c, "/admin/bind", data={"tab": "Pinecone", "team_key": TEAM1.team_key})
+    form = {
+        "tab": "Pinecone",
+        "key": "zed nobody|F",
+        "player_id": TEAM1.roster[-1].player.player_id,
+    }
+    assert post(c, "/admin/sheet/confirm", data={**form, **change}) == {
+        "kind": "error",
+        "text": text,
     }
 
 
@@ -311,18 +376,44 @@ def test_review_then_confirm_with_an_alias() -> None:
     assert target.name in review
     key = re.search(r'name="key" value="([^"]+)"', review)
     assert key is not None
+    form = {"key": key[1], "player_id": target.player_id, "alias": "1"}
+    assert post(c, "/admin/fa/confirm", data=form) == {
+        "kind": "ok",
+        "text": f"Matched. Alias saved: {last_first(typo)[1:-1]} = {target.name}.",
+    }
+    assert "Nothing to review." in c.get("/admin").text
+
+
+def test_an_alias_is_named_from_the_stored_row_and_the_pool_not_the_form() -> None:
+    """M4R1A-8: the form's names are ignored; the alias is the imported row's name for
+    the chosen pool player's name, whatever else is posted."""
+    target = FREE[0]
+    typo = target.name[:-1] + "q"
+    c = client()
+    upload_csv(c, csv_row(typo, target.display_position[0], "$2,000,000"))
+    key = re.search(r'name="key" value="([^"]+)"', c.get("/admin").text)
+    assert key is not None
     form = {
         "key": key[1],
         "player_id": target.player_id,
         "alias": "1",
-        "salary_name": typo,
-        "stats_name": target.name,
+        "salary_name": "Wayne Gretzky",
+        "stats_name": "Connor McDavid",
     }
-    assert post(c, "/admin/fa/confirm", data=form) == {
-        "kind": "ok",
-        "text": f"Matched. Alias saved: {typo} = {target.name}.",
+    result = post(c, "/admin/fa/confirm", data=form)
+    assert result["text"] == f"Matched. Alias saved: {last_first(typo)[1:-1]} = {target.name}."
+    assert "Gretzky" not in c.get("/admin").text
+
+
+def test_confirming_a_player_outside_the_pool_is_refused() -> None:
+    c = client()
+    upload_csv(c, csv_row("Qqq Xxzzy", "C", "$1"))
+    key = re.search(r'name="key" value="([^"]+)"', c.get("/admin").text)
+    assert key is not None
+    assert post(c, "/admin/fa/confirm", data={"key": key[1], "player_id": "nobody"}) == {
+        "kind": "error",
+        "text": "that player isn't in the pool.",
     }
-    assert "Nothing to review." in c.get("/admin").text
 
 
 def test_confirming_without_an_alias() -> None:
@@ -339,7 +430,8 @@ def test_confirming_an_unknown_row_is_an_error_and_many_reviews_are_capped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     c = client()
-    assert post(c, "/admin/fa/confirm", data={"key": "nope|F", "player_id": "1"}) == {
+    pid = FREE[0].player_id
+    assert post(c, "/admin/fa/confirm", data={"key": "nope|F", "player_id": pid}) == {
         "kind": "error",
         "text": "no imported row 'nope|F'.",
     }
@@ -375,6 +467,8 @@ def test_find_set_and_clear_an_override() -> None:
     bad = post(c, "/admin/aav", data={"player_id": p.player_id, "aav": "7.25"})
     assert bad["kind"] == "error"
     assert "enter a cap hit like $7,250,000" in bad["text"]
+    outside = post(c, "/admin/aav", data={"player_id": "nobody", "aav": "1M"})
+    assert outside == {"kind": "error", "text": "that player isn't in the pool."}
 
 
 def test_a_redirect_keeps_the_search() -> None:
@@ -514,7 +608,46 @@ def test_without_yahoo_data_the_page_still_works_and_imports_wait() -> None:
     assert "Needs Yahoo data (the teams)." in c.get("/admin").text
     assert upload_csv(c, csv_row("Ada Big", "C", "$1")) == {
         "kind": "error",
-        "text": "Import needs Yahoo data first (RefreshError).",  # within the retry backoff
+        "text": "Import needs Yahoo data first (RefreshError).",
+    }
+    bind = post(c, "/admin/bind", data={"tab": "Pinecone", "team_key": TEAM1.team_key})
+    assert bind == {
+        "kind": "error",
+        "text": "Pinecone: Binding needs Yahoo data first (RefreshError).",
+    }
+
+
+def test_a_transport_error_without_a_cache_still_renders_admin() -> None:
+    """M4R1A-1: not only Yahoo's HTTP errors; a timeout with no cache is "no data" too."""
+
+    class TimingOut:
+        async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+            raise httpx.ConnectTimeout("timed out")
+
+    services = make_services()
+    services = replace(services, refresh=RefreshService(TimingOut(), services.repo, services.clock))
+    c = client(services)
+    for path in ("/admin", "/admin?q=x"):
+        response = c.get(path)
+        assert response.status_code == 200
+        assert "No Yahoo data yet" in response.text
+        assert "ConnectTimeout: timed out" in response.text
+    assert upload_csv(c, csv_row("Ada Big", "C", "$1"))["kind"] == "error"
+
+
+def test_a_refused_service_account_is_a_message() -> None:
+    """M4R1A-2: a revoked key fails in the token call; the read says so, not a 500."""
+
+    async def refused() -> str:
+        raise GoogleAuthError("Google refused the token request: HTTP 400 (invalid_grant)")
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    sheet = SheetsApiLeagueSheet(http, "sheet-id", refused)
+    c = client(replace(make_services(), sheet=sheet))
+    assert post(c, "/admin/sheet/read") == {
+        "kind": "error",
+        "text": "The sheet couldn't be read: service-account auth failed: "
+        "Google refused the token request: HTTP 400 (invalid_grant)",
     }
 
 
@@ -545,6 +678,19 @@ def test_parse_dollars(text: str, dollars: int) -> None:
 def test_parse_dollars_refuses_anything_ambiguous(text: str) -> None:
     with pytest.raises(InputError, match="enter a cap hit like"):
         parse_dollars(text)
+
+
+def test_parse_dollars_refuses_huge_amounts_and_strings() -> None:
+    """M4R1A-4: 5000 digits was a 500 (int() refuses over 4300), and 23 digits a
+    RepositoryError (Firestore integers are 64-bit)."""
+    assert parse_dollars("1,000,000,000") == 1_000_000_000
+    with pytest.raises(InputError, match=r"can't be over \$1,000,000,000"):
+        parse_dollars("1000000001")
+    with pytest.raises(InputError, match=r"can't be over"):
+        parse_dollars("99999999999999999999")  # 20 digits: parsed, then refused
+    for huge in ("9" * 5000, "9" * 21, "1" * 18 + ".5M"):
+        with pytest.raises(InputError, match="enter a cap hit like"):
+            parse_dollars(huge)
 
 
 def test_parse_dollars_refuses_fractional_dollars() -> None:
@@ -587,4 +733,48 @@ def test_the_sheet_source_names_each_kind() -> None:
     ],
 )
 def test_ago(seconds: float, label: str) -> None:
-    assert _ago(seconds) == label
+    assert ago(seconds) == label
+
+
+class Refusing(InMemoryRepository):
+    """A store that refuses every write once ``refuse`` is set (e.g. Firestore down)."""
+
+    refuse = False
+
+    async def put(self, collection: str, doc_id: str, doc: Any) -> None:
+        if self.refuse:
+            raise RepositoryError("Firestore answered HTTP 503")
+        await super().put(collection, doc_id, doc)
+
+    async def replace_all(self, collection: str, docs: Any) -> None:
+        if self.refuse:
+            raise RepositoryError("Firestore answered HTTP 503")
+        await super().replace_all(collection, docs)
+
+
+def test_a_store_that_refuses_writes_is_a_message_on_every_admin_post() -> None:
+    repo = Refusing()
+    base = make_services()
+    services = replace(
+        base,
+        repo=repo,
+        refresh=RefreshService(FakeYahooSource(DEMO), repo, base.clock),
+        sheet=FakeLeagueSheet(parse_sheet(GRID)),
+    )
+    c = client(services)
+    p = FREE[2]
+    upload_csv(c, csv_row(p.name, p.display_position[0], "$1,500,000", p.nhl_team))
+    key = re.search(r"Unbind his CSV row \(([^)]+)\)", c.get("/admin", params={"q": p.name}).text)
+    assert key is not None
+    repo.refuse = True
+    refused = "Firestore answered HTTP 503"
+    assert post(c, "/admin/sheet/read")["text"] == f"The sheet couldn't be saved: {refused}."
+    assert upload_sheet(c)["text"] == f"The sheet couldn't be saved: {refused}."
+    csv = upload_csv(c, csv_row(p.name, p.display_position[0], "$2,000,000", p.nhl_team))
+    assert csv["text"] == f"The CSV couldn't be saved: {refused}."
+    unbound = post(c, "/admin/fa/unbind", data={"key": key[1]})
+    assert unbound == {"kind": "error", "text": f"{refused}."}
+    aav = post(c, "/admin/aav", data={"player_id": p.player_id, "aav": "1M"})
+    assert aav == {"kind": "error", "text": f"{refused}."}
+    form = {"divisor_method": "workbook", "divisor_top_n": "", "gp_floor_percent": "2"}
+    assert post(c, "/admin/settings", data=form)["text"] == f"Not saved: {refused}."

@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fha.services.teams import discrepancy_flags, replace_view, summarize
 from fha.web import format as _format  # noqa: F401 - installs the template filters
 from fha.web.app import render
-from fha.web.data import page_data, season_param
+from fha.web.data import page_data, season_param, view_param
 from fha.web.routes.players import bad_request
 
 router = APIRouter()
@@ -21,6 +21,7 @@ def _here(request: Request) -> str:
 @router.get("/rosters", response_class=HTMLResponse)
 async def rosters(request: Request) -> HTMLResponse:
     params = dict(request.query_params)
+    mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     wanted = params.get("team") or None
@@ -46,6 +47,7 @@ async def rosters(request: Request) -> HTMLResponse:
         goalies=[r for r in roster if r.is_goalie],
         categories=view.config.categories,
         cap=view.cap,
+        mode=mode,
         here=_here(request),
     )
 
@@ -56,6 +58,7 @@ async def replace(request: Request) -> HTMLResponse:
     swap_only = params.get("swap_ok") or ""
     if swap_only not in ("", "1"):
         return bad_request(request, "swap_ok must be 1 or left out.", "/rosters", "rosters")
+    mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     swap = replace_view(data.view, params.get("drop") or "", swap_ok_only=swap_only == "1")
     if swap is None:
@@ -74,5 +77,6 @@ async def replace(request: Request) -> HTMLResponse:
         swap=swap,
         swap_only=swap_only == "1",
         categories=data.view.config.categories,
+        mode=mode,
         here=_here(request),
     )

@@ -4,6 +4,10 @@
 the Refresh button forces it), reads the rating settings and the salaries,
 and rates the chosen season. The labels say which season is shown and how
 fresh the data is; the UI always shows both (SPEC §5).
+
+Without Yahoo data (no cache and a failed refresh) or with a snapshot that
+can't be rated, ``page_data`` raises one of ``NO_DATA``; the app shows that
+as a "no Yahoo data" page, and Admin keeps working around it.
 """
 
 from __future__ import annotations
@@ -14,10 +18,17 @@ from fastapi import Request
 
 from fha.domain.engine import EngineConfig
 from fha.services.league_sheet import TabReport
-from fha.services.league_view import LeagueView, Season, build_view, load_salaries
-from fha.services.refresh import Cached
+from fha.services.league_view import LeagueView, Season, ViewError, build_view, load_salaries
+from fha.services.refresh import Cached, RefreshError
 from fha.services.settings import load_rating_settings
 from fha.web.app import services
+from fha.web.format import ago
+
+NO_DATA = (RefreshError, ViewError)
+
+
+class BadQueryError(ValueError):
+    """A query-string value a screen doesn't know; the app shows a 400 page."""
 
 
 @dataclass(frozen=True)
@@ -30,7 +41,7 @@ class PageData:
 
     @property
     def season_label(self) -> str:
-        """e.g. "Last season (2025-26)", with "default" when not toggled."""
+        """The season shown, e.g. "Last season (2025-26)"."""
         year = self.view.season_year
         which = "This season" if self.view.season is Season.CURRENT else "Last season"
         return f"{which} ({year}-{(year + 1) % 100:02d})"
@@ -38,14 +49,7 @@ class PageData:
     @property
     def refreshed_label(self) -> str:
         """How old the data is ("just now", "12 min ago", "3 h ago")."""
-        age = max(0.0, self.now - self.cached.fetched_at)
-        if age < 60:
-            return "just now"
-        if age < 3600:
-            return f"{int(age // 60)} min ago"
-        if age < 48 * 3600:
-            return f"{int(age // 3600)} h ago"
-        return f"{int(age // 86400)} days ago"
+        return ago(self.now - self.cached.fetched_at)
 
     @property
     def stale_note(self) -> str | None:
@@ -59,11 +63,22 @@ class PageData:
 
 
 def season_param(raw: str | None) -> Season | None:
-    """The season toggle from the URL: "current", "last", or the default."""
+    """The season toggle from the URL: "current", "last", or blank for the default."""
     try:
         return Season(raw) if raw else None
     except ValueError:
-        return None
+        raise BadQueryError(f"season must be current or last, got {raw!r}") from None
+
+
+VIEWS = ("money", "cats")  # the Categories toggle (SPEC §7): salary columns, or the 7 norms
+
+
+def view_param(raw: str | None) -> str:
+    """The Categories toggle from the URL: "cats", or blank for the salary columns."""
+    mode = raw or "money"
+    if mode not in VIEWS:
+        raise BadQueryError(f"view must be cats or left out, got {raw!r}")
+    return mode
 
 
 async def page_data(
@@ -73,7 +88,9 @@ async def page_data(
     settings = request.app.state.context.settings
     cached = await svc.refresh.current(force=force)
     config = await load_rating_settings(svc.repo)
-    salaries, reports = await load_salaries(svc.repo, cached.snapshot)
+    salaries, reports = await load_salaries(
+        svc.repo, cached.snapshot, cap_override=settings.salary_cap
+    )
     if season is Season.LAST and cached.snapshot.last_season_stats is None:
         season = None
     view = build_view(

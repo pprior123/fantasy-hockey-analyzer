@@ -13,6 +13,14 @@
 {% endif %}
 {%- endmacro %}
 
+{% macro view_toggle(path, params, mode) -%}
+{# The Categories toggle (SPEC §7): the salary columns, or the 7 category norms. #}
+<nav class="chips view-toggle" aria-label="Columns">
+  <a class="chip {{ 'on' if mode == 'money' else '' }}" href="{{ url(path, params, view=None) }}">Salary</a>
+  <a class="chip {{ 'on' if mode == 'cats' else '' }}" href="{{ url(path, params, view='cats') }}">Categories</a>
+</nav>
+{%- endmacro %}
+
 {% macro rates_note() -%}
 <p class="muted rates-note">Profiles compare rates (per-82 norms), not projected weekly totals.</p>
 {%- endmacro %}

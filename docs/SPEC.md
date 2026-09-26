@@ -70,9 +70,11 @@ Phone browser ──HTTPS──▶ Vercel (Python serverless, FastAPI)
 
 ### Serverless constraints (design for these from day one)
 
-- Short function time limits. A full refresh is ~20–35 Yahoo calls; they must
-  run **concurrently** (async `httpx`, bounded concurrency, e.g. 8), never
-  sequentially. Target: full refresh under 8 seconds.
+- Short function time limits. A full refresh is ~100–150 Yahoo calls with
+  the whole-league pool (§4; last season's stats can be cached, since they
+  never change); they must run **concurrently** (async `httpx`, bounded
+  concurrency, e.g. 8), never sequentially. Target: full refresh under 8
+  seconds, measured by the M2 recording.
 - Ephemeral filesystem. No token files, no SQLite, no local caches in
   production. All persistent state lives in Firestore.
 - Cold starts. Keep imports light; avoid heavy dependencies (no pandas in the
@@ -114,7 +116,7 @@ tests:
 | Data | Source | Notes |
 |---|---|---|
 | Settings, teams, rosters | Yahoo API | read-only |
-| Player pool + ownership | Yahoo API | `status=T` (taken) + top available by rank, paged 25 |
+| Player pool + ownership | Yahoo API | every team's roster + every available player, paged 25 |
 | Season stat totals | Yahoo API | **source of truth** for stats |
 | Last season's stat totals | Yahoo API | pre-season / early-season baseline (§5) |
 | Weekly matchups | Yahoo API | league scoreboard, current and next week |
@@ -171,9 +173,12 @@ out-of-date sheets; this makes staleness visible.)
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —
 it changes every season.
 
-**Player pool scope:** all rostered players (≈216) plus the top ~300 available
-players. Not every NHL player. The TTLTST divisors are computed over this pool
-(see §5).
+**Player pool scope:** every rostered player (≈216, any slot) plus every
+available player Yahoo lists (owner's decision, 2026-09-26, replacing "the top
+~300 available"). So percentiles are over every skater who played, like the
+workbook's; players with GP 0 (prospects, minor leaguers) are in the pool but
+count in neither N nor the divisors (§5), so paging past them is harmless.
+The TTLTST divisors are computed over this pool (see §5).
 
 **Stat ID mapping:** Yahoo identifies stats by numeric IDs. Build the mapping
 from the league settings response, not a hardcoded table. This also resolves

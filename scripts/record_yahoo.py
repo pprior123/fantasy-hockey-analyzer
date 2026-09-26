@@ -111,7 +111,9 @@ def write_records(records: Sequence[Record], directory: Path, params: dict[str, 
     calls = []
     for i, (record, body) in enumerate(zip(records, cleaned, strict=True)):
         name = file_name(i, record.path)
-        (directory / name).write_text(json.dumps(body, indent=1, ensure_ascii=False) + "\n")
+        # Compact: the full pool makes these several MB; a test checks them, not a reader.
+        compact = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+        (directory / name).write_text(compact + "\n")
         calls.append({"path": record.path, "status": record.status, "file": name})
     manifest = {"params": params, "calls": calls}
     (directory / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n")
@@ -213,7 +215,7 @@ async def record(
     fixture_dir: Path = FIXTURE_DIR,
     probe_dir: Path = PROBE_DIR,
     clock: Callable[[], float] = time.time,
-    available: int = DEFAULT_AVAILABLE,
+    available: int | None = DEFAULT_AVAILABLE,
 ) -> Summary:
     params = {
         "league_id": DEFAULT_LEAGUE_ID,

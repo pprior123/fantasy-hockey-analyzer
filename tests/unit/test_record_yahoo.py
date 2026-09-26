@@ -70,8 +70,8 @@ async def test_refresh_is_recorded_as_sanitized_fixtures_with_a_manifest(tmp_pat
     manifest = files.pop(rec.MANIFEST)
     assert manifest["params"] == {"league_id": 8076, "available": 60, "available_sort": "AR"}
     calls = manifest["calls"]
-    assert summary.calls == len(calls) == 15
-    assert [c["path"] for c in calls] == yahoo.league.paths[:15]
+    assert summary.calls == len(calls) == 17
+    assert sorted(c["path"] for c in calls) == sorted(yahoo.league.paths[:17])
     assert {c["status"] for c in calls} == {200}
     assert sorted(c["file"] for c in calls) == sorted(files)
     text = json.dumps(files)
@@ -168,7 +168,7 @@ async def test_non_json_responses_are_recorded_as_null(tmp_path: Path) -> None:
 async def test_summary_reports_what_the_owner_should_check(tmp_path: Path) -> None:
     summary = await record(tmp_path, Yahoo())
     text = "\n".join(summary.lines())
-    assert "Recorded 15 API calls" in text
+    assert "Recorded 17 API calls" in text
     assert "(game 465, season 2026)" in text
     assert "Teams: 2; rostered players: 6; available: 60; pool: 66." in text
     assert f"My team: {LK}.t.1." in text
@@ -204,3 +204,18 @@ async def test_main_needs_a_token(
     monkeypatch.setattr(rec, "JsonFileTokenStore", lambda: JsonFileTokenStore(tmp_path / "none"))
     assert await rec._main() == 1
     assert "scripts.yahoo_auth first" in capsys.readouterr().err
+
+
+async def test_recording_reads_every_available_player_by_default(tmp_path: Path) -> None:
+    yahoo = Yahoo()
+    summary = await rec.record(
+        CREDS,
+        await store(tmp_path),
+        httpx.MockTransport(yahoo),
+        fixture_dir=tmp_path / "fixtures",
+        probe_dir=tmp_path / "probes",
+        clock=lambda: NOW,
+    )
+    assert len(summary.snapshot.pool) == 6 + len(FREE)
+    manifest = written(tmp_path / "fixtures")[rec.MANIFEST]
+    assert manifest["params"]["available"] is None

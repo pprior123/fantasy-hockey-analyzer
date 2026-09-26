@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 
+from fha.sources.yahoo import source as source_module
 from fha.sources.yahoo.client import YahooClient
 from fha.sources.yahoo.models import LeagueSnapshot
 from fha.sources.yahoo.oauth import Credentials, Token
@@ -38,9 +39,10 @@ async def refresh(league: League | None = None, **kw: Any) -> tuple[LeagueSnapsh
 
 async def test_full_refresh_issues_calls_concurrently_within_the_bound() -> None:
     snap, league = await refresh(max_concurrency=4)
-    # 1 game + 2 settings/categories + 1 rosters + 3 pages + 2 boards + 3 + 3 stats batches
-    assert len(league.paths) == 15
-    assert len(set(league.paths)) == 15
+    # 1 game + 2 settings/categories + 1 rosters + 3 pages + 2 boards
+    # + stats per season: 1 rostered batch + 1 per page
+    assert len(league.paths) == 17
+    assert len(set(league.paths)) == 17
     assert league.max_in_flight == 4
     assert snap.settings.league_key == LK
 
@@ -147,7 +149,7 @@ async def test_last_season_stats_for_the_same_pool() -> None:
     assert set(snap.last_season_stats) == set(snap.stats)
     assert snap.last_season_stats["465.p.1"].season == 2025
     assert snap.last_season_stats["465.p.1"].values == {"0": "82"}
-    assert sum(";season=2025" in p for p in league.paths) == 3
+    assert sum(";season=2025" in p for p in league.paths) == 4
 
 
 async def test_last_season_can_be_skipped() -> None:
@@ -193,3 +195,58 @@ async def test_missing_stats_for_a_pool_player_is_an_error() -> None:
     )
     with pytest.raises(YahooParseError, match=r"no 2026 stats for 3 players, e\.g\. 465\.p\.4"):
         await refresh(league, available=0)
+
+
+# ---------------------------------------------------------------- every available player
+
+
+async def test_by_default_every_available_player_is_read() -> None:
+    league = League()
+    client = source(league)._client
+    snap = await HttpYahooSource(client).fetch_snapshot()  # no `available`: all of them
+    assert len(snap.available) == len(FREE) == 200
+    assert len(snap.pool) == 206
+    assert set(snap.stats) == {p.player_key for p in snap.pool}
+    pages = sorted(
+        int(p.split("start=")[1].split(";")[0]) for p in league.paths if ";status=A;" in p
+    )
+    # Wave 1 (0-175) is all full pages, so wave 2 (200-375) is read and comes back empty.
+    assert pages == list(range(0, 400, 25))
+
+
+async def test_paging_stops_at_the_first_short_page() -> None:
+    league = League()
+    league.overrides.update(
+        {
+            f"league/{LK}/players;status=A;sort=AR;start={s};count=25": b.league_players(
+                FREE[s : s + 25] if s < 150 else FREE[150:160] if s == 150 else []
+            )
+            for s in range(0, 200, 25)
+        }
+    )
+    snap = await source(league, available=None).fetch_snapshot()
+    assert len(snap.available) == 160
+    assert (
+        max(int(p.split("start=")[1].split(";")[0]) for p in league.paths if "status=A" in p) == 175
+    )
+
+
+async def test_paging_gives_up_past_the_safety_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(source_module, "MAX_AVAILABLE", 200)  # FREE fills the first wave exactly
+    with pytest.raises(YahooParseError, match="more than 200 available players"):
+        await source(League(), available=None).fetch_snapshot()
+
+
+async def test_stats_are_requested_while_paging_continues() -> None:
+    league = League()
+    await source(league, available=None).fetch_snapshot()
+    first_stats = next(i for i, p in enumerate(league.paths) if p.startswith("players;"))
+    last_page = max(i for i, p in enumerate(league.paths) if ";status=A;" in p)
+    assert first_stats < last_page
+
+
+async def test_a_failure_in_one_request_is_raised_as_itself() -> None:
+    league = League()
+    league.overrides[f"league/{LK}/players;status=A;sort=AR;start=25;count=25"] = {"league": []}
+    with pytest.raises(YahooParseError, match="missing 'players'"):
+        await refresh(league)

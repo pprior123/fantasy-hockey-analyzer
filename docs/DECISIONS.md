@@ -274,24 +274,36 @@ stages; each stage's requests go out together, at most 8 in flight:
    works whether Yahoo lists one game or every season's). League key =
    `{game_key}.l.8076`.
 2. `league/{key}/settings` + `game/{game_key}/stat_categories`.
-3. `league/{key}/teams/roster` (every team with today's slots, one call), the
-   top available players (`players;status=A;sort=AR`, 12 pages of 25), and
-   the scoreboards for the current week and the next (none after the last
-   week).
-4. Season stats for the whole pool by player key, 25 per call, at the game
-   level (`players;player_keys=.../stats;type=season`), current season and
-   last season (`;season={season-1}`, same player keys).
+3. At once: `league/{key}/teams/roster` (every team with today's slots,
+   one call), every available player (`players;status=A;sort=AR`, pages of
+   25, in waves of 8 until a short page, stopping with an error past 5,000),
+   and the scoreboards for the current week and the next (none after the
+   last week).
+4. Season stats by player key, at the game level
+   (`players;player_keys=.../stats;type=season`), current season and last
+   season (`;season={season-1}`, same player keys). Each page's 25 players,
+   and the rostered players in batches of 25, are requested as soon as they
+   are known, so paging and stats share the 8 slots instead of taking turns.
 
-About 60 calls for a full pool, more than SPEC's 20–35 estimate, because
-stats are fetched separately (steps 3 and 4). That keeps GP in hand: a
+Stats are fetched separately from the pages to keep GP in hand: a
 league-scoped stats request returns the league's categories, and GP isn't
-one. The recording measures the real time against the 8 s target.
+one. With ~1,500 players listed that is roughly 60 pages + 2 × 70 stats
+calls; the recording measures the real time against the 8 s target. If it is
+too slow: cache last season's stats (they never change), fold stats into the
+pages if the probe shows league-scoped stats carry GP, or raise concurrency.
 
-- **Pool (M1 round-2 follow-up):** every rostered player on every team, in
-  any slot (IR, IR+ and NA included), then the top 300 available by Yahoo's
-  current rank (AR), minus any already rostered. So N for percentiles (GP > 0
-  skaters, SPEC §5) is fixed by this definition, not by UI filters. The count
-  and sort are `HttpYahooSource` parameters.
+- **Pool (M1 round-2 follow-up; owner's decision):** every rostered player
+  on every team, in any slot (IR, IR+ and NA included), then every available
+  player Yahoo lists, minus any already rostered. SPEC first said "the top
+  ~300 available". On the 2025-26 golden data, cutting the 845-player pool to
+  516 (216 + 300) left the divisors almost unchanged (PIM -2.9% and HIT -1.2%
+  at most, depending on the stand-in for Yahoo's rank) but dropped rated
+  players' percentiles by 13-20 points on average (up to 39): rank 250 went
+  from the 70th percentile to the 52nd, rank 400 from the 53rd to the 22nd. The owner chose
+  the whole league, as in the workbook ("try every player for now and see how
+  it goes"). GP-0 players are harmless: they count in neither N nor the
+  divisors. `HttpYahooSource(available=n)` still caps the count if the
+  refresh proves too slow.
 - **Stat map:** by display name, league settings first, then the game's
   stat list (GP; PPG and PPA if the league lacked PPP). PPP is Yahoo's own
   stat when present. The answer for this league is recorded below after the
@@ -306,7 +318,8 @@ one. The recording measures the real time against the 8 s target.
   serverless invocations don't refresh on every cold start.
 - **Recording:** `scripts/record_yahoo.py` records only the Fantasy API
   host (never the token endpoint), sanitizes, re-checks for manager keys,
-  tokens and email addresses, and writes nothing if any check fails. A few
+  tokens and email addresses, and writes nothing if any check fails.
+  Fixtures are compact JSON (the whole-league pool makes them several MB). A few
   extra probe requests (league-scoped stats, last season by last season's
   game key, preseason rank) go to gitignored `private/yahoo_probes/` to
   confirm the choices above against real responses.
@@ -314,4 +327,4 @@ one. The recording measures the real time against the 8 s target.
 Assumptions the recording confirms or corrects: that `;season=` returns
 last season's totals for current player keys (the parser refuses stats
 labelled with another season), that the game-level stat list includes a
-skater "GP", and that AR is a sensible pre-season ranking.
+skater "GP", and how long a whole-league refresh takes.

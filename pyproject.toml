@@ -1,0 +1,93 @@
+[project]
+name = "fantasy-hockey-analyzer"
+version = "0.1.0"
+description = "Private roster analyzer for one Yahoo NHL fantasy team (TTLTST rating vs. AAV)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "fha"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.1",
+    "mutmut>=3.8.0",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-socket>=0.8.1",
+    "respx>=0.23.1",
+    "ruff>=0.16.9",
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E", "W",  # pycodestyle
+  "F",       # pyflakes
+  "I",       # isort
+  "N",       # pep8-naming
+  "UP",      # pyupgrade
+  "B",       # bugbear
+  "SIM",     # simplify
+  "RUF",     # ruff-specific
+  "S",       # bandit
+  "PT",      # pytest style
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # asserts are the point of tests
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src", "scripts"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# --disable-socket: any test that opens a network socket fails (CLAUDE.md
+# hard rule 2). Unix sockets stay allowed because asyncio's event loop uses a
+# socketpair internally.
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "--disable-socket",
+  "--allow-unix-socket",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+asyncio_default_fixture_loop_scope = "function"
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+source = ["fha"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+# Per-package gates (SPEC §9), enforced by scripts/check_coverage.py.
+[tool.fha.coverage-gates]
+domain = 95
+sources = 90
+storage = 90
+services = 90
+web = 80
+
+# ---------------------------------------------------------------- mutmut
+[tool.mutmut]
+paths_to_mutate = ["src/fha/domain/"]

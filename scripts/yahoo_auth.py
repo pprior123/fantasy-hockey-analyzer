@@ -30,10 +30,10 @@ from fha.sources.yahoo.source import DEFAULT_LEAGUE_ID
 from scripts.yahoo_common import JsonFileTokenStore, SetupError, credentials_from_env
 
 FORBIDDEN_HINT = (
-    "The token works but Yahoo won't serve fantasy data to this app. At\n"
-    "https://developer.yahoo.com/apps/ check the app's API Permissions include\n"
-    "Fantasy Sports (Read); fix it (or create a new app with it and update .env),\n"
-    "then run this script again: the saved token predates the permission."
+    "The token works but Yahoo won't serve fantasy data with it. Check the app's\n"
+    "API Permissions at https://developer.yahoo.com/apps/ include Fantasy Sports\n"
+    "(Read). If they do, send this output to Claude: the consent request asks for\n"
+    "the fspt-r scope, so the cause is elsewhere."
 )
 
 

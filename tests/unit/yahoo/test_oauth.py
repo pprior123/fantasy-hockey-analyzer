@@ -90,6 +90,7 @@ def test_authorization_url() -> None:
         "client_id": ["client-id-123"],
         "redirect_uri": ["https://localhost:8000"],
         "response_type": ["code"],
+        "scope": ["fspt-r"],
         "state": ["st4te"],
     }
 

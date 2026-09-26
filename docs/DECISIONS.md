@@ -475,3 +475,27 @@ The four gaps recorded before M3 ("Known network-policy gaps for M3"):
    test phase that made it fails even if the code caught the exception. The
    guard's own tests claim their attempts with `expect_blocked()`. A
    pytester run proves that a broad `except` still fails its test.
+
+## 2026-09-26 — M3: the Repository is a small document store
+`Repository` (SPEC §3) has five operations: `get`, `put`, `delete`, `all`,
+and an atomic `replace_all` of one collection. Typed records (stats cache,
+salaries, bindings, aliases, config) are layered over it in `fha.storage`,
+so each backend (in-memory, local JSON file, Firestore) is small, and a
+shared contract suite (`tests/unit/storage/contract.py`) runs against all of
+them.
+
+Firestore's limits are checked in every backend (`check_document`,
+`check_id`): 1 MiB per document (900 KB kept as headroom), 500 writes per
+commit, the ID rules, 64-bit integers, no list directly inside a list, and
+finite numbers. So a test against the in-memory backend refuses what
+production would. Types round-trip exactly (bool is not int, and 1.0 stays
+a float).
+
+Anything bigger than a document (the whole-league stats cache, the free-agent
+salary list) is split into chunk documents and written with one
+`replace_all`, so a reader never sees half of a refresh. The Yahoo token is
+a document in the `secrets` collection (`RepositoryTokenStore` implements
+M2's `TokenStore`); Firestore rules deny every client (SPEC §8).
+
+Alternative: a typed method per record on the protocol (rejected: three
+backends × about ten methods, each needing the same encoding).

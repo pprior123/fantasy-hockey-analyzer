@@ -4,7 +4,15 @@ from typing import Any
 
 import pytest
 
-from scripts.check_coverage import Totals, evaluate, has_code, main, package_of, unmeasured
+from scripts.check_coverage import (
+    Totals,
+    evaluate,
+    excluded_in,
+    has_code,
+    main,
+    package_of,
+    unmeasured,
+)
 
 GATES = {"domain": 95.0, "web": 80.0}
 
@@ -187,3 +195,41 @@ def test_main_fails_on_empty_report(tmp_path: Path, capsys: pytest.CaptureFixtur
     cov.write_text(json.dumps({"files": {}}))
     assert main(["prog", str(cov), str(pyproject), str(tmp_path)]) == 1
     assert "no fha files" in capsys.readouterr().out
+
+
+def test_main_fails_when_package_dir_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[tool.fha.coverage-gates]\ndomain = 95\n")
+    cov = tmp_path / "coverage.json"
+    cov.write_text(json.dumps(report({"src/fha/domain/a.py": file_entry(1, 1)})))
+    assert main(["prog", str(cov), str(pyproject), str(tmp_path / "nope")]) == 1
+    assert "not found" in capsys.readouterr().out
+
+
+def test_excluded_in_flags_only_listed_packages() -> None:
+    rep = report(
+        {
+            "src/fha/domain/a.py": {**file_entry(1, 1), "excluded_lines": [3, 4]},
+            "src/fha/domain/b.py": {**file_entry(1, 1), "excluded_lines": []},
+            "src/fha/web/c.py": {**file_entry(1, 1), "excluded_lines": [7]},
+        }
+    )
+    assert excluded_in(rep, ["domain"]) == ["domain/a.py"]
+    assert excluded_in(rep, []) == []
+
+
+def test_main_fails_on_excluded_lines_in_domain(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.fha]\ncoverage-no-exclusions = ["domain"]\n[tool.fha.coverage-gates]\ndomain = 95\n'
+    )
+    pkg = make_package(tmp_path, {"domain/a.py": "X = 1\n"})
+    cov = tmp_path / "coverage.json"
+    entry = {**file_entry(0, 0), "excluded_lines": [1, 2]}
+    cov.write_text(json.dumps(report({"src/fha/domain/a.py": entry})))
+    assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 1
+    assert "FAIL domain/a.py excludes lines" in capsys.readouterr().out

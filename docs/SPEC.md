@@ -207,7 +207,9 @@ Pure functions in `domain/`. Seven skater categories only:
 **G, A, PPP, PIM, HIT, SOG, BLK.** Goalies are excluded from TTLTST.
 
 ```
-eligible(p)        = p.gp > 0 and p.gp >= GP_FLOOR_FRACTION * max(gp over pool)
+skaters            = players in the pool who are not goalies (Yahoo position)
+eligible(p)        = p in skaters and p.gp > 0
+                     and p.gp >= GP_FLOOR_FRACTION * max(gp over skaters)
                      # default 0.02
 per82(cat, p)      = p.stat[cat] / p.gp * 82                           # eligible only
 divisor(cat)       = mean of the min(TOP_N, #eligible) highest per82(cat, ·)
@@ -216,12 +218,14 @@ norm(cat, p)       = per82(cat, p) / divisor(cat), or 0 if divisor(cat) == 0
 TTLTST(p)          = arithmetic mean of norm over the 7 categories
 rank(p)            = 1 + #{eligible q : TTLTST(q) > TTLTST(p)}   # competition
                      # ranking: equal scores share a rank (1, 2, 2, 4)
-percentile(p)      = (1 - rank(p) / N) * 100,  N = #eligible players
+percentile(p)      = (1 - rank(p) / N) * 100,  N = #eligible skaters
 value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST == 0
 ```
 
 Rules:
 
+- Goalies never enter any of these computations (GP floor, divisors, N);
+  adding or removing goalies from the input changes no skater's output.
 - Ineligible players (including GP = 0) are **unrated**: TTLTST, rank,
   percentile and value are all None. They still appear in lists.
 - With no eligible players (e.g. before opening night with "This season"
@@ -299,13 +303,19 @@ swap_ok(team, drop, add)    = room_after(team, drop, add) >= 0
                      # a Yahoo add/drop, which is one transaction
 ```
 
+If a team's tab is unrecognized or not yet bound (§4a), its payroll and
+cap room are None ("unavailable"): `fits` and `swap_ok` are undefined for
+it, so the cap filters exclude its rows and show how many were excluded —
+the same treatment as a free agent with no AAV.
+
 `fits` is for pickups without a drop (the Matchup "fits my cap" filter);
 `swap_ok` is for add/drop swaps (the Replace view). Acquiring a player who is
 currently injured still needs his full cap hit to fit at the moment of
 acquisition — he leaves the payroll only once placed in an IR slot — so the
-IR status of the incoming player never changes either predicate. That an
-add/drop counts as simultaneous is an assumption about league practice; see
-§11.
+IR status of the incoming player never changes either predicate. League
+practice (confirmed by the owner): a Yahoo add/drop is simultaneous, so
+`swap_ok` applies; a standalone add followed later by a standalone drop is
+not allowed unless the add alone `fits`.
 
 A free agent with no PuckPedia AAV shows "—" and is excluded from cap
 filters, with a count of how many were excluded; never treated as 0.
@@ -344,7 +354,10 @@ Golden tests:
 2. **Divisor recompute:** with divisors *computed*, report any difference from
    the workbook's static divisors. A mismatch is expected (stale statics) and
    must be written to `docs/DECISIONS.md` with the numbers — not "fixed" by
-   hardcoding.
+   hardcoding. The report also lists, per category, how many of the top-10
+   divisor contributors have GP below 20% of the max, so the owner can judge
+   whether small samples skew the divisors (and whether a separate, higher
+   floor for divisors is wanted — an owner decision, not an M1 change).
 
 ## 6. Name matching (salary ↔ Yahoo player)
 
@@ -400,7 +413,8 @@ Common to the tables: a **Categories** toggle swaps the salary columns
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in
-   red; incomplete payroll flagged). Goalies listed with raw W / GAA / SV%
+   red; "unavailable" when the tab is unrecognized or unbound; a badge when
+   the discrepancy report for the team is non-empty). Goalies listed with raw W / GAA / SV%
    and Yahoo rank (no TTLTST).
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
@@ -456,14 +470,22 @@ HttpOnly, Secure session cookie (long-lived). No user table.
 - **Coverage gates:** ≥ 95% line and branch on `domain/`; ≥ 90% on
   `sources/`, `storage/`, `services/`; ≥ 80% on `web/`. Enforce per package,
   not one global number.
-- **No live network in tests.** Yahoo responses are recorded once, sanitized
-  (no tokens, no personal identifiers beyond league/team names), and committed
-  under `tests/fixtures/yahoo/`. A test that touches the network fails CI.
+- **No live network in tests.** Yahoo responses are recorded once, sanitized,
+  and committed under `tests/fixtures/yahoo/`. Sanitizing strips tokens and
+  every `managers` block (`nickname`, `guid`, `email`, `image_url`, …) and
+  replaces team names and logos with placeholders (`Team 1` … `Team 8`,
+  keeping team keys); player data is public and kept. The sanitizer is a
+  script with its own tests, and a test asserts no fixture contains an
+  `@`-address or a `managers` key. A test that touches the network fails CI:
+  sockets are blocked from collection onward and opting out is rejected
+  (loopback-only `allow_hosts` for emulator tests is the one exception).
 - **Golden tests** per §5.
 - **Property tests** (`hypothesis`) for the engine: GP = 0 and below-floor
-  players are excluded without error; input order does not change output;
-  the top-10 players in a category have mean norm = 1 for that category;
-  TTLTST is invariant to scaling every player's stats by the same factor.
+  players are unrated without error; input order does not change output;
+  goalies in the input change no skater's output; when a category's divisor
+  is > 0, the top min(10, #eligible) players in it have mean norm 1
+  (`pytest.approx`); TTLTST is invariant (`pytest.approx`) to scaling every
+  player's stats by the same factor > 0.
 - **Matcher tests:** every seed alias, plus accent, nickname, and
   duplicate-name cases.
 - **Mutation testing:** `mutmut` on `domain/`; surviving mutants must be
@@ -562,9 +584,8 @@ start the next milestone until the current one is accepted.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.
 5. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
    in team profiles (default: no) — revisit after the owner tries the app.
-6. Whether the league treats a Yahoo add/drop as simultaneous for cap
-   purposes (`swap_ok`), or requires room for the add before the drop
-   (then Replace should use `fits`). Owner to confirm.
+6. ~~Add/drop cap timing~~ — resolved: an add/drop is simultaneous
+   (`swap_ok`); a standalone add must `fits` on its own.
 7. Sheet layout drift between seasons: the parser keys off each tab's
    PAYROLL formula, so relabelled headers are fine; an unresolvable tab is
    flagged, not guessed. Revisit if GMs restructure tabs.

@@ -80,6 +80,10 @@ branch = true
 show_missing = true
 skip_covered = false
 
+[tool.fha]
+# No `# pragma: no cover` escapes where mutation testing and the 95% gate apply.
+coverage-no-exclusions = ["domain"]
+
 # Per-package gates (SPEC §9), enforced by scripts/check_coverage.py.
 [tool.fha.coverage-gates]
 _root = 90  # modules directly under src/fha/

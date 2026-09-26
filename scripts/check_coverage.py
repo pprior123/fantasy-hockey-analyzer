@@ -12,7 +12,10 @@ skipped. Code can never silently escape the gates:
 - a package with code but no configured gate fails;
 - a source file on disk with code that is missing from the report fails
   (coverage.py omits unimported files in directories without ``__init__.py``);
-- a report with no ``fha`` files at all fails.
+- a report with no ``fha`` files at all fails;
+- a missing package directory fails (rather than silently checking nothing);
+- in packages listed in ``[tool.fha] coverage-no-exclusions`` (``domain``), any
+  line excluded from measurement (``# pragma: no cover``) fails.
 
 Usage: python scripts/check_coverage.py [coverage.json] [pyproject.toml] [src/fha]
 """
@@ -107,6 +110,15 @@ def unmeasured(report: dict[str, Any], package_dir: Path) -> list[str]:
     )
 
 
+def excluded_in(report: dict[str, Any], packages: list[str]) -> list[str]:
+    """Files in ``packages`` with lines excluded from measurement."""
+    return sorted(
+        "/".join(relative_to_package(path))
+        for path, data in report["files"].items()
+        if package_of(path) in packages and data.get("excluded_lines")
+    )
+
+
 def totals_by_package(report: dict[str, Any]) -> dict[str, Totals]:
     out: dict[str, Totals] = {}
     for path, data in report["files"].items():
@@ -144,19 +156,26 @@ def main(argv: list[str]) -> int:
     report_path = Path(argv[1] if len(argv) > 1 else "coverage.json")
     pyproject_path = Path(argv[2] if len(argv) > 2 else "pyproject.toml")
     package_dir = Path(argv[3] if len(argv) > 3 else f"src/{ROOT_PACKAGE}")
+    if not package_dir.is_dir():
+        print(f"FAIL package directory {package_dir} not found; run from the repo root")
+        return 1
     report = json.loads(report_path.read_text())
     if not report["files"]:
         print(f"FAIL report contains no {ROOT_PACKAGE} files; was coverage measured?")
         return 1
-    config = tomllib.loads(pyproject_path.read_text())
-    gates = {k: float(v) for k, v in config["tool"]["fha"]["coverage-gates"].items()}
+    config = tomllib.loads(pyproject_path.read_text())["tool"]["fha"]
+    gates = {k: float(v) for k, v in config["coverage-gates"].items()}
     results = evaluate(report, gates)
     for r in results:
         print(format_result(r))
     missing = unmeasured(report, package_dir)
     for rel in missing:
         print(f"FAIL {rel} has code but is missing from the coverage report")
-    return 0 if all(r.passed for r in results) and not missing else 1
+    excluded = excluded_in(report, list(config.get("coverage-no-exclusions", [])))
+    for rel in excluded:
+        print(f"FAIL {rel} excludes lines from coverage (pragma: no cover not allowed here)")
+    ok = all(r.passed for r in results) and not missing and not excluded
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

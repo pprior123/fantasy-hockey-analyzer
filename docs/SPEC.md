@@ -209,19 +209,29 @@ Pure functions in `domain/`. Seven skater categories only:
 
 ```
 skaters            = players in the pool who are not goalies (Yahoo position)
-eligible(p)        = p in skaters and p.gp > 0
-                     and p.gp >= GP_FLOOR_FRACTION * max(gp over skaters)
-                     # default 0.02
+eligible(p)        = p in skaters
+                     and p.gp > GP_FLOOR_FRACTION * max(gp over skaters)
+                     # default 0.02; strictly greater, so GP 0 is never eligible
 per82(cat, p)      = p.stat[cat] / p.gp * 82                           # eligible only
-divisor(cat)       = mean of the min(TOP_N, #eligible) highest per82(cat, ·)
-                     over eligible players                              # TOP_N = 10
+k                  = min(TOP_N, #eligible)                             # TOP_N = 20
+divisor(cat)       = mean of the k highest p.stat[cat] over eligible players
+                     / mean of the k highest p.gp over eligible players * 82
+                     # the two top-k lists are ranked independently
 norm(cat, p)       = per82(cat, p) / divisor(cat), or 0 if divisor(cat) == 0
 TTLTST(p)          = arithmetic mean of norm over the 7 categories
 rank(p)            = 1 + #{eligible q : TTLTST(q) > TTLTST(p)}   # competition
                      # ranking: equal scores share a rank (1, 2, 2, 4)
-percentile(p)      = (1 - rank(p) / N) * 100,  N = #eligible skaters
+percentile(p)      = (1 - rank(p) / N) * 100,  N = #skaters in the pool
+                     # rated or not, as in the workbook
 value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST == 0
 ```
+
+The divisor above is the workbook's own formula (`W6:AC6`, found in M1).
+The engine also implements the method this spec first described, the mean
+of the top-10 per-82 rates over eligible players (`DivisorMethod.TOP_PER82`,
+`TOP_N = 10`). Small samples inflate it (M1 report in `docs/DECISIONS.md`).
+The workbook method is the default **pending the owner's confirmation**
+(§11).
 
 Rules:
 
@@ -234,18 +244,22 @@ Rules:
 - A divisor of 0 (nobody eligible recorded the stat) gives every player
   norm 0 in that category; the category stays in the mean so TTLTST remains
   comparable.
-- N and ranks are computed over all eligible players, independent of any UI
-  filter. Display order for equal TTLTST: name, then player_id.
+- Ranks are computed over all eligible players and N over all skaters in the
+  pool, independent of any UI filter. Unrated skaters count in N (the
+  workbook ranks them last at 0), so the lowest rated player's percentile is
+  above 0 when some skaters are unrated. Display order for equal TTLTST:
+  name, then player_id; unrated players last.
 - `PPP = PPG + PPA` unless Yahoo provides PPP directly.
 - Injured players keep their rate stats and stay ranked (owner's explicit call).
-- Divisors are **recomputed on every refresh**. (The workbook stores them as
-  static values, which drift stale — a known flaw we are fixing.)
+- Divisors are **recomputed on every refresh** over the app's pool, never
+  stored. (The workbook's divisors turned out to be live formulas, not stale
+  statics as first thought: M1 reproduced them exactly.)
 - **Parity wins:** if `extract_golden.py` shows the workbook computes
   percentile, rank ties or eligibility differently from the above, M1 follows
   the workbook, updates this section, and records the change in
   `docs/DECISIONS.md`.
-- `GP_FLOOR_FRACTION`, the category list, and the top-N (10) are config, not
-  literals.
+- `GP_FLOOR_FRACTION`, the category list, the divisor method and its top-N
+  (20) are config, not literals.
 
 ### Baseline season (pre-season and early season)
 
@@ -329,21 +343,32 @@ baseline rule above. Known structure:
 
 - Sheet `Stats Data Source`: raw scraped stats, ~900 players.
 - Sheet `Fantasy Analysis`: per-player derived columns; category divisors in
-  `W6:AC6` (static values); TTLTST in column `AD`; ranking table `Table2`
-  (`AE:AL`) with percentile and `$/TTLTST`; owner's roster in `Table4`
+  `W6:AC6` (array formulas over the top 20, see above; the "mean top ten"
+  label in `Y4` is wrong); TTLTST in column `AD`, 0 at or below the GP floor;
+  ranking table `Table2` (`AE2:AL847`, one row per player row) with
+  percentile and `$/TTLTST`; owner's roster in `Table4`
   (`AP2:BK26`); seven other managers' rosters in tables below it; manager
   comparison `Table10` (`BP10:BZ21`).
 - Sheet `Salaries`: `TEAM, POS` / name / cap hit, ~830 rows.
 - Sheet `Name Aliases`: 57 hand-maintained name fixes.
 - Known label bug: row-2 header labels drift from what formulas pull (e.g.
-  column `Q` labelled `hits` pulls blocks from `Stats Data Source!AE`). Trust
-  the formulas, not the labels.
+  column `Q` labelled `hits` pulls blocks from `Stats Data Source!AE`, and
+  `P` labelled `shortHandedGoals` pulls hits). Trust the formulas, not the
+  labels.
+- `Fantasy Analysis` covers 845 of the 899 scraped players: its rows pull
+  source rows 2–845 and then row 900, skipping 846–899. The golden pool is
+  the 845 it rates.
+- `Table2` ranks by position (`LARGE(AD, k)`), so tied scores get consecutive
+  ranks and its name lookup shows the first tied player twice. A score's
+  first rank is the one every player with that score shares.
+- Cap hits are looked up by name, so two players with one name (the two Elias
+  Petterssons) get the same cap hit. The app binds by player ID (§6).
 
 `scripts/extract_golden.py` reads the workbook once with `openpyxl`
 (`data_only=True`) and writes committed JSON fixtures:
 
-- `tests/fixtures/golden_players.json` — per player: name, GP, the 7 raw
-  stats, workbook TTLTST, percentile, AAV.
+- `tests/fixtures/golden_players.json` — per player: source ID, name, team,
+  position, GP, the 7 raw stats, workbook TTLTST, percentile, AAV.
 - `tests/fixtures/golden_divisors.json` — the `W6:AC6` values.
 - `tests/fixtures/alias_seed.json` — the 57 aliases.
 
@@ -352,13 +377,13 @@ Golden tests:
 1. **Exact parity:** with divisors *injected* from `golden_divisors.json`,
    the engine reproduces workbook TTLTST for every eligible player within
    `1e-3`, and percentiles within `0.1`.
-2. **Divisor recompute:** with divisors *computed*, report any difference from
-   the workbook's static divisors. A mismatch is expected (stale statics) and
-   must be written to `docs/DECISIONS.md` with the numbers — not "fixed" by
-   hardcoding. The report also lists, per category, how many of the top-10
-   divisor contributors have GP below 20% of the max, so the owner can judge
-   whether small samples skew the divisors (and whether a separate, higher
-   floor for divisors is wanted — an owner decision, not an M1 change).
+2. **Divisor recompute:** with divisors *computed*, compare with the
+   workbook's `W6:AC6`. The workbook method reproduces them (asserted);
+   `scripts/divisor_report.py` also compares the top-10 per-82 method, and
+   its output is in `docs/DECISIONS.md` with, per category, how many divisor
+   contributors have GP below 20% of the max, so the owner can judge whether
+   small samples skew the divisors (and whether a separate, higher floor for
+   divisors is wanted — an owner decision, not an M1 change).
 
 ## 6. Name matching (salary ↔ Yahoo player)
 
@@ -486,9 +511,11 @@ HttpOnly, Secure session cookie (long-lived). No user table.
 - **Golden tests** per §5.
 - **Property tests** (`hypothesis`) for the engine: GP = 0 and below-floor
   players are unrated without error; input order does not change output;
-  goalies in the input change no skater's output; when a category's divisor
-  is > 0, the top min(10, #eligible) players in it have mean norm 1
-  (`pytest.approx`); TTLTST is invariant (`pytest.approx`) to scaling every
+  goalies in the input change no skater's output; with the top-per-82
+  divisor method, when a category's divisor is > 0, the top
+  min(TOP_N, #eligible) players in it have mean norm 1 (`pytest.approx`),
+  and the workbook method equals it when every eligible player has the same
+  GP; TTLTST is invariant (`pytest.approx`) to scaling every
   player's stats by the same factor > 0.
 - **Matcher tests:** every seed alias, plus accent, nickname, and
   duplicate-name cases.
@@ -589,10 +616,14 @@ start the next milestone until the current one is accepted.
 3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
    revisit only if the Repository implementation fights it.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.
-5. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
+5. Divisor method: the workbook's (top-20 totals over top-20 GP, the
+   default) or the top-10 per-82 rates this spec first described. Owner to
+   confirm after M1's report (`docs/DECISIONS.md`). A separate GP floor for
+   divisors only matters for the per-82 method.
+6. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
    in team profiles (default: no) — revisit after the owner tries the app.
-6. ~~Add/drop cap timing~~ — resolved: an add/drop is simultaneous
+7. ~~Add/drop cap timing~~ — resolved: an add/drop is simultaneous
    (`swap_ok`); a standalone add must `fits` on its own.
-7. Sheet layout drift between seasons: the parser keys off each tab's
+8. Sheet layout drift between seasons: the parser keys off each tab's
    PAYROLL formula, so relabelled headers are fine; an unresolvable tab is
    flagged, not guessed. Revisit if GMs restructure tabs.

@@ -66,11 +66,14 @@ uv run mutmut run               # mutation testing on src/fha/domain
 ## Key facts (details in the spec)
 
 - Categories in TTLTST: G, A, PPP, PIM, HIT, SOG, BLK. Goalies excluded.
-- `per82 = stat / GP * 82`; divisor = mean of top-10 per82 in that category
-  over eligible players; `TTLTST` = mean of `per82 / divisor` across the 7.
-- GP floor: exclude players below 2% of the pool's max GP (config).
-- Divisors recompute every refresh (the workbook's static divisors are a
-  known flaw).
+- `per82 = stat / GP * 82`; divisor = mean of the top-20 totals over mean of
+  the top-20 GP (× 82) among eligible players (the workbook's formula;
+  default pending owner confirmation, SPEC §5); `TTLTST` = mean of
+  `per82 / divisor` across the 7.
+- GP floor: rate only players above 2% of the pool's max GP (config).
+- Percentile divides by all skaters in the pool, rated or not; ties share a
+  rank.
+- Divisors recompute every refresh over the app's pool.
 - Injured players stay ranked on rate stats.
 - The league's shared salary sheet is the source of truth for rostered
   salaries, payrolls and the cap (SPEC §4a). Parse by each tab's PAYROLL
@@ -87,7 +90,8 @@ uv run mutmut run               # mutation testing on src/fha/domain
 The owner's workbook goes at `private/2025_2026_stats.xlsx` (ignored by git).
 It holds 2025-26 season data; the app targets 2026-27.
 `scripts/extract_golden.py` turns it into the committed fixtures that the
-metric engine must reproduce. Workbook layout notes are in SPEC §5 — trust
+metric engine must reproduce; `scripts/divisor_report.py` prints the divisor
+comparison recorded in DECISIONS. Workbook layout notes are in SPEC §5 — trust
 formulas over the row-2 labels, which are wrong in places.
 
 ## Suggested agent roles

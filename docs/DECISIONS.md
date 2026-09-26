@@ -132,3 +132,82 @@ depends on how those tests are written, so they are M3 work, not M0:
 4. Code that catches broad exceptions can swallow a `SocketBlockedError`, so
    a test that forgot to mock still passes (no packets leave). Record blocked
    attempts and fail the test even if the exception was caught.
+
+## 2026-09-26 — M1: workbook parity findings ("parity wins", SPEC §5)
+`scripts/extract_golden.py` checks every formula it relies on, then reads the
+cached values. Where the workbook differs from SPEC §5's first draft, M1
+follows the workbook and the spec was updated:
+1. **Eligibility is strict:** `AD = IF(E > 0.02*MAX(E), …, 0)`, so GP must
+   *exceed* 2% of max GP (was `>=`). Same result on this data (max 73, floor
+   1.46: the 18 unrated players all have GP 1).
+2. **Percentile's N is every skater in the pool, rated or not:**
+   `(1 - rank / MAX(Table2[Ranking])) * 100`, and `Table2` has one row per
+   player row (845), unrated players ranked last at 0. With N = eligible (827)
+   percentiles would be off by up to 2.1, far outside the 0.1 tolerance.
+3. **Ties:** `Table2` ranks by position (`LARGE(AD, k)`), so a tie takes
+   consecutive ranks and the name lookup repeats the first tied player. A
+   score's first rank is the one every tied player shares, which is SPEC's
+   competition ranking; kept. One tie in the data (2 players), covered by a
+   test.
+Kept from SPEC, not the workbook: unrated players have TTLTST/rank/
+percentile None rather than the workbook's 0, since 0 would read as a real
+(worst) rating.
+
+Result, with divisors injected: all 827 rated players match TTLTST and
+percentile (max difference: TTLTST 2.2e-16, percentile 0; the same with
+divisors computed). Tolerances are
+SPEC's (1e-3, 0.1).
+
+## 2026-09-26 — M1: divisors use the workbook's formula (provisional; owner to confirm)
+SPEC assumed `W6:AC6` were static values gone stale, and described the
+divisor as the mean of the top-10 per-82 rates. Both were wrong. The cells
+are live array formulas:
+`AVERAGE(LARGE(stat, {1..20})) / AVERAGE(LARGE(GP, {1..20})) * 82`, i.e. the
+mean of the top-20 totals over the mean of the top-20 GP (ranked
+independently). The `Y4` label "mean top ten" is wrong, like the row-2
+labels. Recomputing with that formula reproduces all seven divisors exactly
+(golden test 2). The report (`uv run python scripts/divisor_report.py`):
+
+| Category | Workbook `W6:AC6` | Recomputed, workbook method (top 20) | Spec method (top-10 per-82) | Spec / workbook | Low-GP contributors: workbook / spec |
+|---|---:|---:|---:|---:|---:|
+| G | 41.8986 | 41.8986 | 47.1510 | 1.125 | 0 of 20 / 0 of 10 |
+| A | 66.2740 | 66.2740 | 80.0930 | 1.209 | 0 of 20 / 1 of 10 |
+| PPP | 35.8329 | 35.8329 | 45.5914 | 1.272 | 0 of 20 / 3 of 10 |
+| PIM | 110.9247 | 110.9247 | 231.9700 | 2.091 | 0 of 20 / 6 of 10 |
+| HIT | 257.2329 | 257.2329 | 342.1082 | 1.330 | 0 of 20 / 0 of 10 |
+| SOG | 267.4548 | 267.4548 | 304.5128 | 1.139 | 0 of 20 / 0 of 10 |
+| BLK | 166.1904 | 166.1904 | 187.1714 | 1.126 | 0 of 20 / 0 of 10 |
+
+Low GP = below 20% of the pool's max GP (73). Switching to the spec method moves a rated player 27.0 ranks on average; 47 of the workbook's top 50 stay in the top 50.
+
+The top-10 per-82 method is badly skewed by small samples: 6 of its 10 PIM
+contributors (and 3 of 10 for PPP) have under 20% of max GP, e.g. a 3-GP
+player with 11 PIM rates 301 per 82, and the league leader (144 PIM in 71 GP,
+166 per 82) ranks ninth. The workbook's method has no low-GP contributors in
+any category: a few games rarely add up to a top-20 total. So the engine defaults to the workbook method (`DivisorMethod.WORKBOOK`,
+top 20), which also keeps Phase 1's goal of parity with the spreadsheet. The
+per-82 method stays available (`DivisorMethod.TOP_PER82`, top 10), so either
+choice is one config value. With the workbook method a separate, higher GP
+floor for divisors isn't needed. **Owner decision (SPEC §11.5):** confirm
+the workbook method, or choose per-82 (and then decide on a divisor floor).
+Alternatives: follow SPEC's top-10 per-82 as written (rejected pending the
+owner: its premise, stale statics, was false, and it changes ratings by 27
+ranks on average); a separate divisor floor now (rejected: an owner
+decision, and unneeded with the workbook method).
+
+## 2026-09-26 — M1: golden fixtures and workbook quirks
+- `golden_players.json` keys players by the stats site's player ID (`Stats
+  Data Source!A`), not a Yahoo ID. It's fixture identity only; M2/M3
+  bind real players by Yahoo `player_id`.
+- Each `Fantasy Analysis` row's source row is read from its own formula, not
+  assumed. The workbook rates 845 of the 899 scraped players: its last row
+  pulls source row 900 and skips 846–899 (54 low-GP players), likely after the
+  source table grew. The golden pool is the 845 it rates; the app rates its
+  own pool, so the quirk doesn't carry over.
+- AAV is the workbook's `S` column (null where `#N/A`, 152 players). It
+  looks up cap hits by name, so the defenceman Elias Pettersson carries the
+  forward's $11.6M. Kept as-is, since it's golden data; the app matches by
+  player ID (SPEC §6).
+- openpyxl (+ `types-openpyxl`) is dev-only, per the dependency policy.
+- The domain allowlist needed no additions (`math`, `dataclasses`, `enum`,
+  `collections.abc`).

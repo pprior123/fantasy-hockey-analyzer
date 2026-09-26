@@ -11,14 +11,14 @@ hand.
 - Combines those with salaries (AAV) from the league's shared salary sheet,
   plus a PuckPedia CSV for free agents, and tracks each team's cap room
 - Ranks players on a custom composite metric across the league's seven
-  skater categories (G, A, PPP, PIM, HIT, SOG, BLK), normalized per 82
-  games against the top-ten average in each category
+  skater categories (G, A, PPP, PIM, HIT, SOG, BLK), each normalized per 82
+  games against the league's top performers in that category
 - Surfaces salary and custom rating side by side for waiver, trade, and
   lineup decisions
 
 ## Status
 
-Early. Planning and scaffolding.
+Metric engine done (M1), matching the spreadsheet it replaces. Yahoo source next.
 
 ## Development
 

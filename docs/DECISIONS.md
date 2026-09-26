@@ -524,3 +524,315 @@ backends × about ten methods, each needing the same encoding).
 Alternatives: fail the request when Yahoo fails (rejected: an outage would
 blank the app although the data is at most hours old); cache ratings
 (rejected: SPEC §10 M3).
+
+## 2026-09-26 — M3: the storage backends (Firestore REST, dev file, factory)
+
+**FirestoreRepository** (`fha.storage.firestore`) talks to Firestore's REST
+API v1 with httpx.
+- **Typed values:** encoded exactly (`nullValue`, `booleanValue`,
+  `integerValue` as a string, `doubleValue`, `stringValue`, `arrayValue`,
+  `mapValue`). A bool is never an int, an int never comes back as a float,
+  and a whole double is decoded to a float even when Firestore sends it as
+  a JSON integer. Kinds the app never writes (timestamps, bytes, references,
+  geo points) and non-finite doubles are refused. The error names the kind,
+  never the content.
+- **By-ID operations name the document in the request body:** `get` is a
+  one-document `:batchGet`, and `put` and `delete` are one-write `:commit`s.
+  The emulator answered a legal 1,500-byte ID in a URL with 404 (its
+  percent-encoded path is about 4.5 KB), and body names need no path
+  quoting. A `put` is an update write without a mask, so it replaces the
+  whole document, as the contract requires (verified on the emulator).
+- **`replace_all`:** lists the collection, then sends one atomic `:commit`
+  of updates for the given documents and deletes for the rest. Its limits
+  are checked before sending:
+  - updates plus deletes at most `MAX_BATCH` (500);
+  - the request at most 10 MiB, Firestore's limit per request.
+  So a replace can be refused although the other backends would accept it
+  (e.g. 300 new IDs replacing 300 old ones is 600 writes). The typed layer
+  must keep chunk IDs stable (`chunk-0..n`) and chunked collections well
+  under 10 MiB in total. Note: Firestore's documentation has dropped the
+  500-write limit for batches in places. 500 is kept anyway, since it's
+  shared with the other backends and harmless at this app's sizes.
+- **Race:** a document created by another writer between the list and the
+  commit survives the replace. Accepted: each collection has one writer at a
+  time (the refresh, or an Admin import), and the next replace removes it. A
+  read-write transaction (`beginTransaction`, a transactional list, then
+  commit) would close the gap. It was rejected because it takes more
+  requests per refresh and brings emulator lock semantics into the tests,
+  for a race the app doesn't have.
+- **Errors:** `RepositoryError("Firestore <action> <collection/id>: HTTP
+  <status> (<Google status>: <message>)")`, or `"Firestore <action>
+  failed: <ExceptionType>"` for transport errors. The token is never in a
+  message.
+
+**Tokens** (`fha.sources.google_auth`):
+- `ServiceAccountTokens(key_json, scopes, http)` is an async callable
+  returning a bearer token. It is shared with the Sheets reader (stream B),
+  which is why it lives in `sources`.
+- It signs the JWT with google-auth's `RSASigner` and `jwt.encode`, imported
+  lazily at the first token, and exchanges it at the key's `token_uri` with
+  httpx. That makes google-auth plus `cryptography` the new runtime
+  dependencies, and `requests` isn't needed.
+- The token is cached until 60 s before expiry, and a refresh is
+  single-flight.
+- No message carries the key, the assertion or the token.
+- `emulator_token()` returns the emulators' documented fake, `owner`.
+- Alternatives:
+  - google-auth's `service_account.Credentials.refresh`, rejected because
+    it needs a `requests` or `aiohttp` transport;
+  - hand-rolled RS256 with `cryptography`, rejected because google-auth
+    already does it correctly.
+
+**LocalJsonRepository** (`fha.storage.local_json`), dev only:
+- One JSON file, read and rewritten whole on each operation.
+- Each write creates a fresh 0600 temp file (`O_EXCL`) and `os.replace`s the
+  file, as the token file does. A failed write leaves the previous file.
+- It refuses to construct when `VERCEL` is set.
+
+**`repository_from_env(environ, http)`** (`fha.storage.factory`), checked in
+this order:
+1. `FIRESTORE_EMULATOR_HOST`, which must be a loopback `host:port`, since
+   the emulator's fake token must not leave the machine. The project is
+   `FIRESTORE_PROJECT_ID` or `demo-fha`; `demo-` projects never reach real
+   Google services.
+2. `FIRESTORE_PROJECT_ID` + `FIRESTORE_SERVICE_ACCOUNT_JSON`: production.
+   Either one alone is an error naming the other.
+3. `FHA_LOCAL_REPOSITORY=<path>`: the dev file.
+4. Otherwise an error listing the variables.
+
+Errors name variables, never values. The caller owns the httpx client. The
+Firestore and file modules are imported only by the branch that needs them.
+
+**Emulator tests** (`tests/unit/storage/test_firestore_emulator.py`):
+- **What runs:** the shared contract, plus a raw check that ints are
+  `integerValue`s and a 450-document listing that crosses page boundaries.
+- **Isolation:** function-scoped. Each test first clears the database with
+  the emulator's `DELETE /emulator/v1/projects/{p}/databases/(default)/documents`.
+  A unique project per test isn't possible with `singleProjectMode`.
+- **Skipping:** they skip without `FIRESTORE_EMULATOR_HOST`, but under
+  `FHA_REQUIRE_EMULATOR=1`, as in CI, that is a failure instead.
+- **Config:** `firebase.json` pins the emulator to 127.0.0.1:8181 with the
+  UI off.
+- **CI:** a second job, `firestore-emulator`, runs setup-java 6.0.1
+  (Temurin 21) and setup-node 7.0.0, then `firebase-tools@15.31.0
+  emulators:exec`.
+
+## 2026-09-26 — M3: how the league-sheet parser reads a tab (SPEC §4a)
+`fha.sources.league_sheet` has four parts:
+- a grid model (`Grid` / `Tab` / `Cell`: each cell's value and formula);
+- two readers, `.xlsx` (`read_xlsx`) and the Google Sheets API
+  (`read_sheets_api`);
+- one pure parser, `parse_sheet(grid) -> ParsedSheet`;
+- `LeagueSheetSource`, implemented by `XlsxLeagueSheet`,
+  `SheetsApiLeagueSheet` and `FakeLeagueSheet`.
+
+Rules beyond SPEC §4a, and why:
+- **Labels:** `PAYROLL` and `CAP` are found in a tab's first 10 rows, matched
+  case-insensitively with a trailing `:` or `.` ignored. The formula is the
+  first non-empty cell within 3 columns to the right of the label (`C3`
+  beside `A3` on every real tab). A tab with no PAYROLL label is not a team
+  tab: it is listed in `other_tabs` (the summary tab and the notes tabs).
+- **Formula:** only `=SUM(X:Y)` over one column, reached directly or through
+  at most two references (`=SUM(C36)`, `=C40`). References may be absolute
+  (`$F$7`), in either letter case, with any spacing, and reversed ranges are
+  allowed. Anything else leaves the tab *unrecognized*, with a reason:
+  - several ranges;
+  - a range over more than one column;
+  - arithmetic;
+  - a cross-tab reference;
+  - a reference to a cell with no formula;
+  - more than two references;
+  - no formula beside the label;
+  - no computed value, as in an `.xlsx` that was never recalculated.
+  
+  An unrecognized tab has payroll `None` (SPEC §5: its cap room is
+  "unavailable") but keeps its CAP value.
+- **Header row:** the range's first row is checked first, then up to three
+  rows above it. The first row with a name header (`NAME`, `Names`, `Player`,
+  `Players`, `Player name`) is the header. The position (`Position`, `Pos`,
+  `Pos.`) and team (`NHL Team`, `Team`, `NHL`) columns come from the same
+  row. They are optional, and read as "" when missing: matching works
+  without them (SPEC §6). The name header is required: without it the tab
+  is unrecognized.
+- **Rows in the range:** a row with no name and a blank salary is skipped.
+  A salary that isn't a number (`???`, text) reads as `None`, which is what
+  `SUM` ignores, so the counted total still equals the tab's PAYROLL. A row
+  with a salary but no name is kept, so the owner can see it. Salaries are
+  rounded to whole dollars.
+- **IR rows:** only rows below the range whose column A is exactly `IR` or
+  `IR+`, trimmed but case-sensitive. A label with no name is an empty slot
+  and is skipped. In every other row below the range, only column A is
+  looked at. So the contact block, whose name cells sit in the same columns
+  as players', is never read into a result.
+- **Cap:** the summary cap is the cell referenced by most team tabs' `CAP`
+  formulas (`='<tab>'!B3`). A tab whose CAP value differs is listed by
+  `ParsedSheet.cap_mismatches`.
+- **Hygiene:**
+  - A `Tab`'s repr shows only its title and cell count, so a grid logged by
+    accident leaks nothing.
+  - Error reasons name cell addresses and the PAYROLL formula, never another
+    cell's contents.
+  - The sources hold only the parsed result. Their reprs hide the sheet ID
+    and the file path.
+  - Tests plant fake contact details on every synthetic tab, and on the
+    summary tab, and assert they appear in no result, repr or reason.
+- **Readers:**
+  - `.xlsx`:
+    - The workbook is opened twice, once for formulas and once for cached
+      values.
+    - openpyxl is now a runtime dependency, imported only inside
+      `read_xlsx`. A subprocess test checks that importing the sources
+      doesn't load it.
+    - An unreadable file is a `LeagueSheetError`.
+  - Sheets API:
+    - A single `spreadsheets.get` with `includeGridData=true` and a `fields`
+      mask for titles, `userEnteredValue` (formulas) and `effectiveValue`.
+    - The token comes from an injected async callable. Stream A's
+      service-account provider plugs in here, with scope
+      `sheets_api.SCOPE`.
+    - Values of the wrong JSON type are refused, naming the cell address.
+    - HTTP and transport errors name the status or exception type only. They
+      are raised `from None`, because httpx messages can carry the URL, and
+      the URL holds the sheet ID (SPEC §8).
+
+Checked against the owner's downloaded sheet (2025-26 contents) with
+`scripts/check_league_sheet.py`, which prints only statuses, counts, sums and
+row numbers. All 8 team tabs parse, each tab's PAYROLL equals the sum of its
+parsed salaries exactly, and every CAP matches the summary cap. The summary
+tab and two notes tabs are recognized as non-team tabs. Two findings are
+flagged for the owner:
+- One tab has a counted row whose salary is `???` (reads as None).
+- Two IR rows on another tab have no salary; that's fine, since IR salaries
+  aren't counted.
+
+Alternatives considered:
+- Guessing the header by column letters (rejected: the columns move between
+  tabs).
+- Treating any row below the range with a name as IR (rejected: unlabelled
+  rows below are not IR, and the contact block would be read).
+- Reading only the payroll range from the Sheets API (rejected: the range is
+  known only after the PAYROLL formula is read, and two requests cost more
+  than one).
+
+## 2026-09-26 — M3: name normalization and nicknames (SPEC §6)
+`fha.domain.names.normalize_name` is how every source's names are compared:
+- accents are stripped (NFKD minus combining marks), and a small table covers
+  the letters NFKD leaves alone (ø, æ, œ, ß, ł, đ, ð, þ, ı);
+- the name is casefolded;
+- apostrophes and periods are dropped (O'Reilly → oreilly, J.T. and J.T →
+  jt); any other mark, hyphens included, splits words
+  (Haman-Aktell = Haman Aktell);
+- whitespace, non-breaking spaces included, is collapsed;
+- "Last, First" is turned into "first last" (split at the first comma).
+
+The fold runs twice: one pass can expose more work (Ǣ → ǣ → æ → ae), and two
+settle for every Unicode code point (checked exhaustively once; a
+hypothesis test and two pinned cases guard it).
+
+Nicknames are **groups of equivalent first names**, and a name may sit in
+several (Cal is Callan or Calvin). `name_keys` gives one key per group, and
+two names match if any key is shared. The groups come from the workbook's
+57 aliases, plus the short forms SPEC §6 lists and a few of the commonest
+(Sam, Ben, Dan, Chris, Pat). The table is deliberately small: anything else
+goes to an alias or to fuzzy review. With the groups, 53 of the 57 seed
+aliases match without the alias table. The other four need it:
+- J.J. Moser (Janis);
+- Zuccarello-Aasen;
+- Martinsen-Lilleberg;
+- the workbook's "Vornkov" typo.
+
+Alternatives: one canonical first name per nickname (rejected: Cal can't be
+both Callan and Calvin); a large public nickname list (rejected: more false
+equivalences, with every match auto-bound at steps 1-3).
+
+## 2026-09-26 — M3: canonical NHL team codes
+Canonical codes are the NHL's own three-letter codes, which PuckPedia uses
+(TBL, NJD, SJS, LAK, …). Each team also maps from:
+- its city and nickname, and both together;
+- Yahoo's abbreviations (TB, NJ, SJ, LA, and lowercase forms like Edm,
+  Mon, Was, Nsh, StL);
+- a few common short forms (Habs, Leafs, Preds, Isles, Caps, Avs, Canes,
+  Sens, Pens, Bolts, Philly).
+
+Matching is case- and punctuation-insensitive (St. Louis = St Louis = STL).
+A shared spelling is an error when the table is built (tested). Unknown
+strings map to None, never to a guess. On purpose:
+- **"New York" / "NY" are None:** Rangers or Islanders is ambiguous.
+- **Arizona / ARI are None:** Utah is a new franchise, not a renamed one.
+  The 2026-27 data shouldn't contain Arizona; if it does, it shows up as an
+  unknown team in Admin.
+- **Utah** is `UTA`, from "Utah", "Utah Mammoth", "Utah Hockey Club" and
+  "Utah HC".
+- **`CLS` is Columbus:** SPEC §6 calls it a sheet typo. No other team's
+  name or code gives CLS, so reading it as the Blue Jackets (CBJ) can't
+  collide. `CLB`, NHL.com's old code, is included too. Other one-letter-off
+  typos are not added: they are guesses.
+- `CAL` is Calgary, `FLO` Florida, `WIN` Winnipeg, `VEG` / "Las Vegas" Vegas,
+  `ANH` Anaheim, `NAS` Nashville: unambiguous legacy or alternate codes.
+
+## 2026-09-26 — M3: position groups
+`position_group` gives F, D or G:
+- **F:** C, L, R, LW, RW, W, F, Center/Centre, Wing/Winger, Forward,
+  "Left Wing" / "Right Wing", and combinations like "C/LW" or "LW,RW";
+- **D:** D, LD, RD, Defense/Defence, Defenseman/Defenceman;
+- **G:** G, Goalie, Goaltender, Goalkeeper.
+
+A string mixing groups ("C/D", "F,G") is None. So is an unknown token or a
+roster slot ("BN", "IR", "Util"). A None group never breaks a tie.
+
+## 2026-09-26 — M3: the matcher cascade (SPEC §6 as built)
+`fha.domain.matcher.match(query, candidates, aliases=..., scope=...)`:
+0. **Aliases first:** a row whose normalized name has an alias is looked up
+   by the alias's stats name(s) *instead* (`by_alias`). A salary name may
+   alias to several stats names.
+1. `EXACT`: the same name up to whitespace, and the same canonical team.
+2. `NORMALIZED`: a shared name key (normalized, nicknames), and the same team.
+3. `NAME`: a shared name key, any team.
+4. `SURNAME`, **roster scope only**: the row's whole normalized name equals
+   a candidate's surname. So "Andersen" and "Di Giuseppe" match, but
+   "Luke Hughes" never matches Quinn on surname.
+5. Fuzzy, rapidfuzz `token_sort_ratio` on name keys: never a match.
+   - `REVIEW` if the best score is at least 90 in pool scope (SPEC), or 75 in
+     roster scope.
+   - Otherwise `UNMATCHED`.
+   - Either way, the top 3 candidates are returned for the Admin match
+     review, which lists "unmatched row vs. top 3 candidates" (SPEC §7).
+   - In roster scope a one-word row is also scored against surnames, so
+     "Oetterger" scores 77.8 against Oettinger.
+
+An unknown or missing team skips steps 1-2. **Position group breaks ties at
+every step**, not only steps 3-4. Steps 1-2 tie only when two players share
+a name and a team: the Elias Petterssons are both Vancouver. There, position
+is the only way to tell them apart. A tie position can't break is
+`AMBIGUOUS`, and returns every tied candidate. Position never overrides a
+unique name: a row saying D still matches the only Connor McDavid. Fuzzy
+ties are ordered same group first.
+
+Why roster fuzzy is 75: among the roughly 27 players of one roster, a typo
+like "Oetterger" (77.8) should still be offered first. The owner confirms
+every fuzzy candidate, so a lower bar costs only a suggestion. Why
+`token_sort_ratio`: it's order-insensitive and doesn't inflate on substrings
+the way `WRatio` does (Zuccarello vs Zuccarello-Aasen scores 95 there).
+
+Results don't depend on candidate order (tested). Mutation testing
+(`mutmut`, all of `src/fha/domain`): 636 mutants, all killed.
+
+## 2026-09-26 — M3: free-agent CSV parser as built
+`fha.sources.puckpedia.parse_salary_csv(bytes) -> list[SalaryRow]`, following
+"M3: free-agent salary CSV format":
+- **Positions:** accepted if they map to a position group, so "C/L" is
+  accepted too, a superset of C/L/R/D/G. They are stored uppercased.
+- **Cap hits:** `$18,000,000`, `18000000` and ` $ 775,000 ` are accepted,
+  and `$0` reads as 0. Rejected: `$1.5M`, negative amounts, and misplaced
+  commas such as `$18,00,000`.
+- **Blank lines** are skipped (pasted pages leave them). Line numbers are
+  the file's.
+- **The first non-blank row is the header.**
+- **Names** are tidied (whitespace) but not normalized: the matcher does
+  that.
+- **Duplicate rows** (the same player pasted twice) are all returned. The
+  import service decides what re-importing means (idempotent, SPEC §6).
+
+On the owner's `private/salaries-example.csv`, with the agreed header row
+prepended: 100 rows, 0 goalies (the skater table only), 0 errors, and no
+non-breaking spaces left in names.

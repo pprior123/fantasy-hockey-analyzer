@@ -25,7 +25,12 @@ uv run pytest --cov --cov-report=json && uv run python scripts/check_coverage.py
                                 # tests + per-package coverage gates
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src scripts
-uv run mutmut run               # mutation testing on src/fha/domain
+uv run mutmut run               # mutation testing on src/fha/domain (rm -rf mutants first after test changes)
+npx -y firebase-tools@15.31.0 emulators:exec --only firestore --project demo-fha \
+  "FHA_REQUIRE_EMULATOR=1 uv run pytest tests/unit/storage -q"
+                                # storage contract against the Firestore emulator (Java 21+ on PATH)
+uv run python -m scripts.check_league_sheet private/<sheet>.xlsx
+                                # parse the owner's downloaded league sheet (statuses and sums only)
 ```
 
 ## How to work

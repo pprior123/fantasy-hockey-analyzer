@@ -236,3 +236,33 @@ needed. Switching method pre-fills that method's usual count (20 or 10)
 unless the owner typed one. Alternatives: fixed in code, or env vars
 (rejected: the owner wants to change it from the app; either would need a
 redeploy).
+
+## 2026-09-26 — M2: Yahoo client is a thin async httpx client (spike, SPEC §4)
+Spike (well under the hour): read the source of yfpy 17.0.0 and yahoofantasy
+1.4.9, the current releases.
+- **yfpy** does take an externally supplied token (`yahoo_access_token_json`,
+  with `store_file=False` on the underlying `yahoo-oauth`), but it has no
+  refresh callback: a refreshed token is only held on the query object and
+  must be read back out. It is synchronous (`requests`), so the bounded
+  concurrent fetch SPEC §2 requires would need a thread pool. It also falls back to
+  `YAHOO_*` environment variables for any missing token field, calls
+  `sys.exit(1)` on a malformed token, sleeps between retries, and on a 401
+  re-authenticates but still parses the failed response. It pins `requests`
+  and `python-dotenv` exactly and pulls in `yahoo-oauth` → `rauth`, `myql`,
+  `pyaml`: heavy for a cold start.
+- **yahoofantasy** accepts client ID, secret and refresh token directly, but
+  every fetch goes through a pickle cache written to `<key>.yahoofantasy` in
+  the working directory (the read-only filesystem on Vercel), it parses XML
+  (`xmljson`, `pydash`), is synchronous, and has no refresh callback either.
+
+Neither passes, so the app has its own client (`fha.sources.yahoo`): `httpx`
+(the only new runtime dependency; async, and respx already mocks it),
+`?format=json`, an `asyncio.Semaphore` bounding concurrency (default 8), the
+token behind a `TokenStore` protocol, which is loaded once and saved after every
+refresh (Yahoo may rotate the refresh token), and a single-flight refresh on 401 (concurrent
+401s trigger one refresh, then each request retries once). What the libraries
+would have saved (response parsing) is a few hundred lines and has to be
+tested against recorded fixtures anyway. Alternatives: wrap yfpy in a thread
+pool and read the token back after each call (rejected: sync, heavy deps,
+`sys.exit`/env fallbacks in library code); fork yahoofantasy's context
+(rejected: XML and file persistence are its core).

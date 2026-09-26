@@ -150,6 +150,79 @@ def test_config_accepts_top_n_of_one() -> None:
     assert EngineConfig(divisor_top_n=1).top_n == 1
 
 
+# ---------------------------------------------------------------- from_mapping (stored settings)
+
+
+def test_from_mapping_of_nothing_is_the_default() -> None:
+    assert EngineConfig.from_mapping({}) == DEFAULT_CONFIG
+
+
+def test_from_mapping_reads_strings_as_stored_or_typed() -> None:
+    stored = {
+        "divisor_method": "top_per82",
+        "divisor_top_n": " 12 ",
+        "gp_floor_fraction": "0.05",
+        "categories": "G, A,PPP",
+    }
+    config = EngineConfig.from_mapping(stored)
+    assert config == EngineConfig(
+        categories=(G, A, Category.PPP),
+        gp_floor_fraction=0.05,
+        divisor_method=DivisorMethod.TOP_PER82,
+        divisor_top_n=12,
+    )
+    assert type(config.gp_floor_fraction) is float
+
+
+def test_from_mapping_accepts_native_values() -> None:
+    native = {"divisor_top_n": 20, "gp_floor_fraction": 0, "categories": ["G"]}
+    config = EngineConfig.from_mapping(native)
+    assert (config.divisor_top_n, config.gp_floor_fraction, config.categories) == (20, 0.0, (G,))
+
+
+@pytest.mark.parametrize("unset", [None, "", "  "])
+def test_from_mapping_blank_top_n_means_the_methods_default(unset: object) -> None:
+    config = EngineConfig.from_mapping({"divisor_method": "top_per82", "divisor_top_n": unset})
+    assert config.divisor_top_n is None
+    assert config.top_n == 10
+
+
+@pytest.mark.parametrize(
+    ("stored", "message"),
+    [
+        ({"divisor_top_n": "2.5"}, "^divisor_top_n must be a whole number, got '2.5'$"),
+        ({"divisor_top_n": "twenty"}, "^divisor_top_n must be a whole number, got 'twenty'$"),
+        ({"divisor_top_n": "0"}, "divisor_top_n must be >= 1"),
+        ({"divisor_top_n": True}, "divisor_top_n must be an integer"),
+        ({"gp_floor_fraction": "2%"}, "^gp_floor_fraction must be a number, got '2%'$"),
+        ({"gp_floor_fraction": ""}, "^gp_floor_fraction must be a number, got ''$"),
+        ({"gp_floor_fraction": "nan"}, "gp_floor_fraction must be in"),
+        ({"gp_floor_fraction": "1.5"}, "gp_floor_fraction must be in"),
+        ({"gp_floor_fraction": [0.1]}, "^gp_floor_fraction must be a number, got \\[0.1\\]$"),
+        ({"divisor_method": "Workbook"}, "Workbook"),
+        ({"divisor_method": 3}, "3"),
+        ({"categories": "G,,A"}, "^categories: empty name in 'G,,A'$"),
+        ({"categories": 7}, "^categories must be names or a comma-separated string, got 7$"),
+        ({"divisor_count": 20}, "^unknown rating settings: divisor_count$"),
+    ],
+)
+def test_from_mapping_rejects_bad_settings(stored: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        EngineConfig.from_mapping(stored)
+
+
+def test_from_mapping_round_trips_to_mapping() -> None:
+    config = EngineConfig(categories=(G, A), gp_floor_fraction=0.1, divisor_top_n=5)
+    assert config.to_mapping() == {
+        "categories": ["G", "A"],
+        "gp_floor_fraction": 0.1,
+        "divisor_method": "workbook",
+        "divisor_top_n": 5,
+    }
+    assert EngineConfig.from_mapping(config.to_mapping()) == config
+    assert EngineConfig.from_mapping(DEFAULT_CONFIG.to_mapping()) == DEFAULT_CONFIG
+
+
 # ---------------------------------------------------------------- eligibility
 
 

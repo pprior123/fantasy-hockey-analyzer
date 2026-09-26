@@ -20,6 +20,7 @@ Goalies take no part at all and are not returned.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -74,6 +75,36 @@ class EngineConfig:
         if self.divisor_top_n is not None and self.divisor_top_n < 1:
             raise ValueError(f"divisor_top_n must be >= 1, got {self.divisor_top_n}")
 
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, object]) -> EngineConfig:
+        """The config from stored settings (SPEC §5, §7), strings or native values.
+
+        Missing keys take their defaults; a blank ``divisor_top_n`` means the
+        method's default. Unknown keys and malformed values are rejected.
+        """
+        unknown = sorted(set(values) - set(SETTINGS))
+        if unknown:
+            raise ValueError(f"unknown rating settings: {', '.join(unknown)}")
+        kwargs: dict[str, object] = {}
+        if "categories" in values:
+            kwargs["categories"] = _categories(values["categories"])
+        if "gp_floor_fraction" in values:
+            kwargs["gp_floor_fraction"] = _fraction(values["gp_floor_fraction"])
+        if "divisor_method" in values:
+            kwargs["divisor_method"] = values["divisor_method"]
+        if "divisor_top_n" in values:
+            kwargs["divisor_top_n"] = _top_n(values["divisor_top_n"])
+        return cls(**kwargs)  # type: ignore[arg-type]  # __post_init__ checks the types
+
+    def to_mapping(self) -> dict[str, object]:
+        """The settings as plain JSON values; ``from_mapping`` reads them back."""
+        return {
+            "categories": [c.value for c in self.categories],
+            "gp_floor_fraction": self.gp_floor_fraction,
+            "divisor_method": self.divisor_method.value,
+            "divisor_top_n": self.divisor_top_n,
+        }
+
     @property
     def top_n(self) -> int:
         """How many top players set each divisor."""
@@ -83,6 +114,40 @@ class EngineConfig:
 
 
 DEFAULT_CONFIG = EngineConfig()
+SETTINGS = ("categories", "gp_floor_fraction", "divisor_method", "divisor_top_n")
+WHOLE_NUMBER = re.compile(r"[+-]?\d+")
+
+
+def _categories(raw: object) -> tuple[object, ...]:
+    if isinstance(raw, str):
+        names = tuple(n.strip() for n in raw.split(","))
+        if not all(names):
+            raise ValueError(f"categories: empty name in {raw!r}")
+        return names
+    if isinstance(raw, list | tuple):
+        return tuple(raw)
+    raise ValueError(f"categories must be names or a comma-separated string, got {raw!r}")
+
+
+def _fraction(raw: object) -> object:
+    if isinstance(raw, bool):
+        return raw  # __post_init__ names the problem
+    if isinstance(raw, int | float | str):
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    raise ValueError(f"gp_floor_fraction must be a number, got {raw!r}")
+
+
+def _top_n(raw: object) -> object:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if isinstance(raw, str):
+        if not WHOLE_NUMBER.fullmatch(raw.strip()):
+            raise ValueError(f"divisor_top_n must be a whole number, got {raw!r}")
+        return int(raw)
+    return raw
 
 
 @dataclass(frozen=True)

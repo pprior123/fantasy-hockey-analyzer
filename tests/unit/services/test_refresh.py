@@ -10,6 +10,7 @@ from fha.services.refresh import (
     CACHE,
     DEFAULT_TTL_SECONDS,
     Cached,
+    RefreshError,
     RefreshService,
     load_cached,
     save_cached,
@@ -148,14 +149,24 @@ async def test_a_cache_without_a_usable_timestamp_is_refetched(
     assert await load_cached(repo) is None
 
 
-async def test_a_backend_failure_is_not_mistaken_for_no_cache(snap: LeagueSnapshot) -> None:
+@pytest.mark.parametrize("failing", ["get", "all"])
+async def test_a_backend_failure_is_not_mistaken_for_no_cache(
+    snap: LeagueSnapshot, failing: str
+) -> None:
     class Down(InMemoryRepository):
+        async def get(self, collection: str, doc_id: str) -> Any:
+            if failing == "get":
+                raise RepositoryError("Firestore HTTP 503")
+            return await super().get(collection, doc_id)
+
         async def all(self, collection: str) -> dict[str, Any]:
             raise RepositoryError("Firestore HTTP 503")
 
+    repo = Down()
+    await save_cached(repo, Cached(snap, T0))
     source = FakeYahooSource(snap)
     with pytest.raises(RepositoryError, match="503"):
-        await service(source, Down(), FakeClock()).current()
+        await service(source, repo, FakeClock()).current()
     assert source.calls == []
 
 
@@ -190,3 +201,130 @@ async def test_a_forced_refresh_waiting_behind_another_uses_its_result(
     first, second = await asyncio.gather(refresh.current(force=True), refresh.current(force=True))
     assert len(source.calls) == 1
     assert first == second == Cached(snap, T0 + 10)
+
+
+class CountingReads(InMemoryRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets = 0
+        self.alls = 0
+
+    async def get(self, collection: str, doc_id: str) -> Any:
+        self.gets += 1
+        return await super().get(collection, doc_id)
+
+    async def all(self, collection: str) -> dict[str, Any]:
+        self.alls += 1
+        return await super().all(collection)
+
+
+async def test_a_warm_process_reads_only_the_meta_document(snap: LeagueSnapshot) -> None:
+    repo, clock = CountingReads(), FakeClock()
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    await refresh.current()  # fetched and remembered
+    repo.gets = repo.alls = 0
+    for _ in range(3):
+        assert await refresh.current() == Cached(snap, T0)
+    assert (repo.gets, repo.alls) == (3, 0)
+
+
+async def test_a_cold_process_loads_the_cache_once_then_remembers_it(snap: LeagueSnapshot) -> None:
+    repo, clock = CountingReads(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(snap, T0))
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    assert await refresh.current() == Cached(snap, T0)
+    assert await refresh.current() == Cached(snap, T0)
+    assert repo.alls == 1
+
+
+async def test_another_instances_refresh_is_picked_up(snap: LeagueSnapshot) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(replace(snap, available=()), T0))
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    await refresh.current()
+    await save_cached(repo, Cached(snap, T0 + 5))  # written by another serverless instance
+    assert await refresh.current() == Cached(snap, T0 + 5)
+
+
+class SlowFailingSource(FailingSource):
+    async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+        for _ in range(20):
+            await asyncio.sleep(0)
+        return await super().fetch_snapshot(last_season=last_season)
+
+
+async def test_waiters_behind_a_failed_refresh_dont_call_yahoo_again(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 9999)
+    await save_cached(repo, Cached(snap, T0))
+    source = SlowFailingSource()
+    refresh = service(source, repo, clock)
+    results = await asyncio.gather(*(refresh.current() for _ in range(5)))
+    assert source.calls == 1
+    assert all(r.snapshot == snap and r.refresh_error for r in results)
+    assert results[1].refresh_error is not None
+    assert "retrying after 60 s" in results[1].refresh_error
+
+
+async def test_after_the_backoff_a_refresh_is_tried_again(snap: LeagueSnapshot) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 9999)
+    await save_cached(repo, Cached(snap, T0))
+    source = FailingSource()
+    refresh = service(source, repo, clock)
+    await refresh.current()
+    clock.t += 30
+    await refresh.current(force=True)  # within the backoff: even a forced refresh waits
+    assert source.calls == 1
+    clock.t += 31
+    await refresh.current()
+    assert source.calls == 2
+
+
+async def test_a_failure_without_a_cache_raises_then_backs_off() -> None:
+    source = FailingSource()
+    refresh = service(source, InMemoryRepository(), FakeClock())
+    with pytest.raises(YahooHTTPError):
+        await refresh.current()
+    with pytest.raises(RefreshError, match=r"refresh failed: YahooHTTPError: .* \(0 s ago"):
+        await refresh.current()
+    assert source.calls == 1
+
+
+async def test_success_clears_the_backoff(snap: LeagueSnapshot) -> None:
+    class Flaky(FakeYahooSource):
+        fail = True
+
+        async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+            if Flaky.fail:
+                Flaky.fail = False
+                raise YahooHTTPError(503, "x", None)
+            return await super().fetch_snapshot(last_season=last_season)
+
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 9999)
+    await save_cached(repo, Cached(snap, T0))
+    refresh = service(Flaky(snap), repo, clock)
+    assert (await refresh.current()).refresh_error
+    clock.t += 61
+    got = await refresh.current()
+    assert (got.fetched_at, got.refresh_error) == (T0 + 9999 + 61, None)
+
+
+async def test_a_failed_save_still_serves_what_yahoo_returned(snap: LeagueSnapshot) -> None:
+    class ReadOnly(InMemoryRepository):
+        async def replace_all(self, collection: str, docs: Any) -> None:
+            raise RepositoryError("Firestore HTTP 503")
+
+    got = await service(FakeYahooSource(snap), ReadOnly(), FakeClock()).current()
+    assert got.snapshot == snap
+    assert got.refresh_error == "not saved: Firestore HTTP 503"
+
+
+async def test_an_unreadable_cache_is_logged_without_content(
+    snap: LeagueSnapshot, caplog: pytest.LogCaptureFixture
+) -> None:
+    repo = InMemoryRepository()
+    await save_cached(repo, Cached(snap, T0))
+    await repo.delete(CACHE, "stats-0")
+    assert await load_cached(repo) is None
+    assert caplog.messages == ["stats cache unreadable (ChunkError); refetching"]

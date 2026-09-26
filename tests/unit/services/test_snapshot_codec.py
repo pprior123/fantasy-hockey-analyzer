@@ -40,7 +40,7 @@ async def test_an_older_format_is_refused() -> None:
 @pytest.mark.parametrize(
     ("damage", "message"),
     [
-        (lambda m, ls: m.pop("teams"), "KeyError"),
+        (lambda m, ls: m.pop("teams"), r"\['teams'\] missing"),
         (lambda m, ls: m["game"].update(season="2026"), "expected an integer, got str"),
         (lambda m, ls: m["settings"].update(num_teams=True), "expected an integer, got bool"),
         (lambda m, ls: m["teams"][0].update(is_mine=1), "expected a boolean, got int"),
@@ -51,6 +51,8 @@ async def test_an_older_format_is_refused() -> None:
         (lambda m, ls: m["scoreboard"]["matchups"][0].update(team_keys=["a"]), "two teams"),
         (lambda m, ls: m.update(has_last_season=False), "present but not flagged"),
         (lambda m, ls: m["teams"][0].update(roster=None), "TypeError"),
+        (lambda m, ls: m.update(has_last_season=1), "expected a boolean, got int"),
+        (lambda m, ls: m.update(surprise=1), r"cache meta keys \['surprise'\] unexpected"),
     ],
 )
 async def test_damaged_caches_are_refused(damage: Any, message: str) -> None:

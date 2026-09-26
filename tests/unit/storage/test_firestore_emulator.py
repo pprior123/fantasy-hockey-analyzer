@@ -67,3 +67,24 @@ async def test_listing_pages_through_a_large_collection(emulator: Emulator) -> N
     docs = {f"d{i:03d}": {"i": i} for i in range(450)}  # more than one 300-document page
     await repo.replace_all("things", docs)
     assert await repo.all("things") == docs
+
+
+async def test_the_stats_cache_round_trips_through_firestore(emulator: Emulator) -> None:
+    from fha.services.refresh import Cached, load_cached, save_cached
+    from tests.unit.services.snapshots import synthetic_snapshot
+
+    repo = repository(emulator)
+    snap = await synthetic_snapshot(available=200)
+    await save_cached(repo, Cached(snap, 1_800_000_000.5))
+    assert await load_cached(repo) == Cached(snap, 1_800_000_000.5)
+
+
+async def test_a_smaller_chunked_record_replaces_a_bigger_one_exactly(emulator: Emulator) -> None:
+    from fha.storage.chunks import load_chunked, save_chunked
+
+    repo = repository(emulator)
+    await save_chunked(repo, "rec", {"v": 1}, {"xs": [{"i": i} for i in range(200)]}, max_bytes=300)
+    assert len(await repo.all("rec")) > 5
+    await save_chunked(repo, "rec", {"v": 2}, {"xs": [{"i": 0}]}, max_bytes=300)
+    assert set(await repo.all("rec")) == {"meta", "xs-0"}
+    assert await load_chunked(repo, "rec") == ({"v": 2}, {"xs": [{"i": 0}]})

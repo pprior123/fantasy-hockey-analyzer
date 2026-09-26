@@ -193,6 +193,9 @@ def test_from_mapping_blank_top_n_means_the_methods_default(unset: object) -> No
         ({"divisor_top_n": "2.5"}, "^divisor_top_n must be a whole number, got '2.5'$"),
         ({"divisor_top_n": "twenty"}, "^divisor_top_n must be a whole number, got 'twenty'$"),
         ({"divisor_top_n": "0"}, "divisor_top_n must be >= 1"),
+        ({"divisor_top_n": "\u0663"}, "divisor_top_n must be a whole number"),  # Arabic-Indic 3
+        ({"divisor_top_n": str(2**64)}, "divisor_top_n must be <= 10000"),
+        ({"divisor_top_n": 10_001}, "divisor_top_n must be <= 10000"),
         ({"divisor_top_n": True}, "divisor_top_n must be an integer"),
         ({"gp_floor_fraction": True}, "^gp_floor_fraction must be a number, got a bool$"),
         ({"gp_floor_fraction": "2%"}, "^gp_floor_fraction must be a number, got '2%'$"),

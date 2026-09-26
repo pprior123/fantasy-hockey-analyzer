@@ -46,6 +46,8 @@ class DivisorMethod(StrEnum):
     TOP_PER82 = "top_per82"
 
 
+# More than any pool has players; also keeps a stored setting within 64 bits.
+MAX_TOP_N = 10_000
 # Each method's N when EngineConfig.divisor_top_n is left unset.
 DEFAULT_TOP_N = {DivisorMethod.WORKBOOK: 20, DivisorMethod.TOP_PER82: 10}
 
@@ -74,6 +76,8 @@ class EngineConfig:
             raise ValueError(f"gp_floor_fraction must be in [0, 1], got {self.gp_floor_fraction}")
         if self.divisor_top_n is not None and self.divisor_top_n < 1:
             raise ValueError(f"divisor_top_n must be >= 1, got {self.divisor_top_n}")
+        if self.divisor_top_n is not None and self.divisor_top_n > MAX_TOP_N:
+            raise ValueError(f"divisor_top_n must be <= {MAX_TOP_N}, got {self.divisor_top_n}")
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> EngineConfig:
@@ -115,7 +119,7 @@ class EngineConfig:
 
 DEFAULT_CONFIG = EngineConfig()
 SETTINGS = ("categories", "gp_floor_fraction", "divisor_method", "divisor_top_n")
-WHOLE_NUMBER = re.compile(r"[+-]?\d+")
+WHOLE_NUMBER = re.compile(r"[+-]?[0-9]+")  # ASCII digits only ("\d" takes any script's)
 
 
 def _categories(raw: object) -> tuple[object, ...]:

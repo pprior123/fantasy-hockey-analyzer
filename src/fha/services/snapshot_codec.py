@@ -26,6 +26,18 @@ from fha.sources.yahoo.models import (
 )
 
 FORMAT = 1  # bump when the encoding changes; an old cache is then refetched
+META_KEYS = frozenset(
+    {
+        "format",
+        "game",
+        "settings",
+        "game_stat_categories",
+        "teams",
+        "scoreboard",
+        "next_scoreboard",
+        "has_last_season",
+    }
+)
 
 
 class SnapshotCodecError(ValueError):
@@ -60,8 +72,12 @@ def decode(meta: Mapping[str, Any], lists: Mapping[str, list[Any]]) -> LeagueSna
             raise SnapshotCodecError(f"cache format {meta.get('format')!r}, expected {FORMAT}")
         if set(lists) != {"available", "stats", "last_season_stats"}:
             raise SnapshotCodecError(f"cache lists {sorted(lists)}")
+        if set(meta) != META_KEYS:
+            unexpected, missing = sorted(set(meta) - META_KEYS), sorted(META_KEYS - set(meta))
+            raise SnapshotCodecError(f"cache meta keys {unexpected} unexpected, {missing} missing")
+        has_last = _bool(meta["has_last_season"])
         last = [_unline(s) for s in lists["last_season_stats"]]
-        if not meta["has_last_season"] and last:
+        if not has_last and last:
             raise SnapshotCodecError("last season's stats present but not flagged")
         next_board = meta["next_scoreboard"]
         return LeagueSnapshot(
@@ -71,7 +87,7 @@ def decode(meta: Mapping[str, Any], lists: Mapping[str, list[Any]]) -> LeagueSna
             teams=tuple(_unteam(t) for t in meta["teams"]),
             available=tuple(_unplayer(p) for p in lists["available"]),
             stats=_by_key(_unline(s) for s in lists["stats"]),
-            last_season_stats=_by_key(last) if meta["has_last_season"] else None,
+            last_season_stats=_by_key(last) if has_last else None,
             scoreboard=_unscoreboard(meta["scoreboard"]),
             next_scoreboard=None if next_board is None else _unscoreboard(next_board),
         )

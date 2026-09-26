@@ -1015,7 +1015,7 @@ seen:
   trailing categories (`math.fsum`), and 0.0 with none trailing. It is
   **None for an unrated player**, not 0, so an unrated free agent doesn't
   rank level with players who genuinely add nothing. The Matchup shortcut
-  sorts None last.
+  leaves unrated free agents out.
 - **`ProfileConfig(close_margin=0.05, categories=SKATER_CATEGORIES)`:**
   - The margin must be a finite number ≥ 0. At 0, a category trails only
     when behind or level. A negative margin would stop treating a level
@@ -1299,6 +1299,7 @@ the fix; the lows are fixed or recorded here.
   - Rosters: AAV and $/TTLTST;
   - Replace: AAV and room after;
   - League: payroll and room.
+  - the Matchup need list: AAV and Fits (added in round 3).
 
   The Categories view swaps those columns for the 7 norms (Δ norms on
   Replace). Links carry `season` and `view`, and the nav carries `season`.
@@ -1406,4 +1407,59 @@ Lows and nits, all fixed:
   - `money(999.5)` is `$0.001M`;
   - the cap-hit search says it needs Yahoo data when there is none;
   - `players.html` uses `in_ir_slot`.
+
+## 2026-09-26 — M4 review round 3: what changed
+Reviewed at `4d1f6fc`.
+- **Reviewer A:** approve, 3 lows.
+- **Reviewer B:** 1 medium, lows.
+
+Both reverted every round-2 fix in their scope, and each revert failed a
+test. Domain mutmut killed 936 of 936.
+
+**Fixed:**
+- **The need list's Categories toggle (M4R3B-1, medium).** SPEC §7's toggle
+  was missing on the Matchup free-agent list. The Categories view swaps AAV
+  and Fits for the 7 norms and highlights the trailing categories.
+- **A stored negative amount (M4R3A-2)** reads back as unknown in
+  `decode_sheet`, so a sheet stored before round 2 can't crash the screens.
+- **A huge row number in a PAYROLL formula (M4R3A-1)** makes the tab
+  unrecognized: a cell reference's row stops at 12 digits.
+- **Store errors in Admin's flash (M4R3A-3).** The flash is signed but not
+  encrypted, and travels in the redirect URL. So a `RepositoryError` now
+  flashes a fixed "the app's storage refused the change" and logs only the
+  type. Firestore's own text can name the project.
+- **HTTP errors (M4R3B-3).** A 404, a 405 or a malformed body now gets the
+  app's page instead of FastAPI's JSON, and a 405 keeps its `Allow` header.
+- **The stale note (M4R3B-2)** says Yahoo is asked again a minute after a
+  failure, so a second tap on Refresh within the minute isn't a mystery.
+- **Short quotes on the 400 page (M4R3B-6):** a bad `season` or `view` value
+  is quoted at most 12 characters.
+- **The tests the reviewers' surviving mutants pointed at:**
+  - IR+ is outside the profile;
+  - exactly $0 of room is not over the cap;
+  - a team with no rated player is last in the league table;
+  - equal names are ordered by id;
+  - the Players filter form keeps `view`;
+  - the trailing categories are listed in SPEC order;
+  - `money(-0.4)` is `$0`;
+  - the CSP is checked whole;
+  - the 400 page's back link;
+  - one httpx client across build retries;
+  - no alias from a name to itself;
+  - a `//` Referer path.
+
+**Recorded, not changed:**
+- **The failure note is per instance (M4R3B-2).** On Vercel, the GET after a
+  failed Refresh can land on another instance, which shows no note. Sharing
+  the failure would mean a store write on every failed refresh. That's not
+  worth it for one user: the next stale-cache request retries anyway.
+- **`MATCHUP_CLOSE_MARGIN` (M4R3B-4)** is config in the code
+  (`ProfileConfig.close_margin`, 0.05), not an env variable or an Admin
+  setting. SPEC §5 says "config" without naming where, and §11 Q6 already
+  plans to revisit such defaults after the owner uses the app.
+- **A chunked body with no Content-Length** skips the request-size check.
+  The per-file caps still hold after spooling, and Vercel's own 4.5 MB limit
+  applies.
+- **htmx is loaded but unused.** It's kept, since SPEC names it for the UI
+  and Phase 2 is expected to use it.
 

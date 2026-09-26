@@ -66,6 +66,6 @@ def emulator_host(value: str) -> str:
     """``value`` if it is a loopback ``host:port``: the fake token must stay on the machine."""
     host, sep, port = value.rpartition(":")
     bare = host.removeprefix("[").removesuffix("]")
-    if not sep or not port.isdigit() or bare not in LOOPBACK:
+    if not sep or not (port.isascii() and port.isdigit()) or bare not in LOOPBACK:
         raise RepositoryError(f"{EMULATOR} must be a loopback host:port")
     return value

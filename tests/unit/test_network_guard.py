@@ -240,6 +240,7 @@ def test_a_caught_blocked_attempt_still_fails_the_test(pytester: pytest.Pytester
         ("10.0.0.5:8080", False),
         ("127.0.0.1", False),
         ("127.0.0.1:x", False),
+        ("127.0.0.1:\u0668\u0661\u0668\u0661", False),  # non-ASCII digits
     ],
 )
 def test_emulator_host_must_be_loopback(value: str, ok: bool) -> None:

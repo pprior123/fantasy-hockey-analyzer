@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 class Cached:
     snapshot: LeagueSnapshot
     fetched_at: float  # epoch seconds
-    refresh_error: str | None = None  # set when a refresh failed and this is stale
+    # A note for the UI, or None: a refresh failed and this snapshot is stale, or
+    # ("not saved: ...") it is fresh from Yahoo but the store refused it.
+    refresh_error: str | None = None
 
 
 async def load_cached(repo: Repository) -> Cached | None:
@@ -93,6 +95,7 @@ class RefreshService:
         # The newest snapshot this process has: decoded from the store, or fetched
         # here (then possibly not saved: its refresh_error says so).
         self._memory: Cached | None = None
+        self._unreadable_at: float | None = None  # a stored fetch that failed to decode
         self._failure: tuple[float, str] | None = None  # (when, what) of the last failure
 
     def is_fresh(self, cached: Cached) -> bool:
@@ -148,18 +151,35 @@ class RefreshService:
         meta = await self._repo.get(CACHE, META)
         fetched_at = None if meta is None else _timestamp(meta.get("fetched_at"))
         memory = self._memory
-        if memory is not None and (fetched_at is None or memory.fetched_at >= fetched_at):
-            return memory  # the same fetch, or a newer one not (yet) saved
+        if memory is not None and self._keep(memory, fetched_at):
+            if memory.refresh_error and memory.fetched_at == fetched_at:
+                # The store holds this very fetch (e.g. a commit whose reply timed out).
+                self._memory = memory = replace(memory, refresh_error=None)
+            return memory
         if fetched_at is None:
             return None
         async with self._load_lock:  # concurrent cold requests share one download
             memory = self._memory
-            if memory is not None and memory.fetched_at >= fetched_at:
+            if memory is not None and self._keep(memory, fetched_at):
                 return memory
             loaded = await load_cached(self._repo)
-            if loaded is not None and (memory is None or loaded.fetched_at > memory.fetched_at):
+            if loaded is None:
+                self._unreadable_at = fetched_at  # don't download it again and again
+            latest = self._memory  # a local refresh may have finished during the download
+            if loaded is not None and (latest is None or loaded.fetched_at > latest.fetched_at):
                 self._memory = loaded
-            return self._memory if loaded is not None else memory
+            return self._memory
+
+    def _keep(self, memory: Cached, stored_at: float | None) -> bool:
+        """Serve ``memory`` rather than downloading the stored cache: nothing stored, the
+        same fetch or an older one, one that failed to decode, or one stamped in this
+        clock's future (another instance's skewed clock; it would never be fresh)."""
+        return (
+            stored_at is None
+            or memory.fetched_at >= stored_at
+            or stored_at == self._unreadable_at
+            or stored_at > self._clock.now()
+        )
 
 
 def _timestamp(value: object) -> float | None:

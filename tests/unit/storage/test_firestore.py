@@ -386,7 +386,9 @@ async def test_the_emulator_uses_the_configured_project_if_any() -> None:
     assert "/projects/demo-other/" in str(server.requests[0].url)
 
 
-@pytest.mark.parametrize("host", ["firestore.example.com:443", "10.0.0.5:8181", "127.0.0.1"])
+@pytest.mark.parametrize(
+    "host", ["firestore.example.com:443", "10.0.0.5:8181", "127.0.0.1", "127.0.0.1:\u0668\u0661"]
+)
 def test_a_non_loopback_emulator_host_is_refused(host: str) -> None:
     with pytest.raises(
         RepositoryError, match=r"^FIRESTORE_EMULATOR_HOST must be a loopback host:port$"

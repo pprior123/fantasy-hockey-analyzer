@@ -141,7 +141,7 @@ def _fraction(raw: object) -> object:
     if isinstance(raw, int | float | str) and plain:
         try:
             return float(raw)
-        except ValueError:
+        except (ValueError, OverflowError):  # OverflowError: an int too big for a float
             pass
     raise ValueError(f"gp_floor_fraction must be a number, got {raw!r}")
 

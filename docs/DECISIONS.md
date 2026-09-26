@@ -961,3 +961,31 @@ position-only review. PuckPedia's copied table has no team, so adding one
 means pasting team by team. That's deferred until the first real import
 shows whether the review list is long.
 
+
+## 2026-09-26 — M3 review rounds 2-3: how the refresh service keeps its snapshot
+`RefreshService` keeps one snapshot in memory per process, the newest it has
+seen:
+- **Where it comes from:** decoded from the store, or fetched by this
+  process. If the store refused the save, the snapshot carries a "not saved:
+  …" note and is still served until the TTL, rather than sending every
+  request back to Yahoo. The note is dropped once the store shows the same
+  fetch, for example when a commit landed but its reply timed out.
+- **Per request:** only the cache's meta document is read. The full cache is
+  downloaded only when the store holds a newer fetch than memory. The
+  download is single-flight, and its result replaces memory only if it is
+  still newer when it arrives, since a local refresh may have finished in
+  the meantime. Memory never regresses.
+- **Not downloaded:** a stored fetch stamped in this clock's future (another
+  instance's skewed clock: it would never count as fresh). Nor a newer fetch
+  that failed to decode (another deploy's format), which is downloaded once
+  and then skipped.
+- **`refresh_error`** is a note for the UI. Either a refresh failed and the
+  snapshot is stale, or the snapshot is fresh but "not saved". M4 must word
+  the two differently.
+- **Limit:** if Firestore is fully down, even a fresh snapshot in memory
+  isn't served, because the meta read fails first. That follows "a backend
+  failure is an error": the rest of the app needs Firestore anyway, and
+  Yahoo isn't called again.
+- **Also noted:** Google's error messages, which can name the project, reach
+  `RepositoryError` and so the owner's UI and logs. The only audience is the
+  owner, so they are kept for diagnosis.

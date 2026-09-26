@@ -82,7 +82,7 @@ def emulator_host_ok(value: str) -> bool:
     """``FIRESTORE_EMULATOR_HOST`` (``host:port``) must point at loopback."""
     host, sep, port = value.rpartition(":")
     host = host.removeprefix("[").removesuffix("]")
-    return bool(sep) and port.isdigit() and host in LOOPBACK
+    return bool(sep) and port.isascii() and port.isdigit() and host in LOOPBACK
 
 
 class _Marker(Protocol):

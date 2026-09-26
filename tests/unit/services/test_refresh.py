@@ -433,3 +433,88 @@ async def test_interleaved_cold_requests_download_the_cache_once(snap: LeagueSna
     results = await asyncio.gather(*(refresh.current() for _ in range(4)))
     assert repo.alls == 1
     assert all(r == Cached(snap, T0) for r in results)
+
+
+class SlowAll(InMemoryRepository):
+    """``all()`` reads at once but answers late; saves can be made to fail."""
+
+    refuse = False
+
+    async def replace_all(self, collection: str, docs: Any) -> None:
+        if self.refuse:
+            raise RepositoryError("Firestore HTTP 503")
+        await super().replace_all(collection, docs)
+
+    async def all(self, collection: str) -> dict[str, Any]:
+        docs = await super().all(collection)
+        for _ in range(60):
+            await asyncio.sleep(0)
+        return docs
+
+
+async def test_a_download_racing_a_local_refresh_never_regresses_memory(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = SlowAll(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(replace(snap, available=()), T0))
+    refresh = service(SlowSource(snap), repo, clock)
+    await refresh.current()  # warm memory with the T0 snapshot
+    clock.t = T0 + 9999
+    a = asyncio.create_task(refresh.current())  # refreshes slowly
+    for _ in range(3):
+        await asyncio.sleep(0)
+    elsewhere = await _saved(replace(snap, available=snap.available[:1]), T0 + 9000)
+    repo.collections = elsewhere.collections  # another instance's save lands
+    repo.refuse = True  # and this instance's saves start failing
+    b = asyncio.create_task(refresh.current())  # starts the slow download of T0+9000
+    first, second = await asyncio.gather(a, b)
+    assert first.fetched_at == T0 + 9999
+    assert second.fetched_at == T0 + 9999, "served an older snapshot than one it has"
+    assert (await refresh.current()).fetched_at == T0 + 9999
+
+
+async def test_a_store_stamped_in_the_future_doesnt_displace_fresh_memory(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = RefusesSaves(), FakeClock(T0)
+    repo.collections = (await _saved(replace(snap, available=()), T0 + 600)).collections
+    source = FakeYahooSource(snap)
+    refresh = service(source, repo, clock)
+    for _ in range(4):
+        got = await refresh.current()
+        assert (got.snapshot, got.fetched_at) == (snap, T0)
+    assert len(source.calls) == 1  # not a Yahoo call per request
+
+
+async def test_a_save_that_landed_despite_an_error_loses_its_not_saved_note(
+    snap: LeagueSnapshot,
+) -> None:
+    class LandsThenErrs(InMemoryRepository):
+        async def replace_all(self, collection: str, docs: Any) -> None:
+            await super().replace_all(collection, docs)
+            raise RepositoryError("Firestore commit failed: ReadTimeout")
+
+    repo, clock = LandsThenErrs(), FakeClock()
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    assert (
+        await refresh.current()
+    ).refresh_error == "not saved: Firestore commit failed: ReadTimeout"
+    assert await refresh.current() == Cached(snap, T0)  # the store has it: no note
+
+
+async def test_a_newer_cache_that_cant_be_decoded_is_downloaded_once(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = CountingReads(), FakeClock(T0 + 10)
+    refresh = service(FakeYahooSource(snap), repo, clock)
+    await refresh.current()  # memory at T0 + 10
+    newer = await _saved(snap, T0 + 20)
+    meta = await newer.get(CACHE, "meta")
+    assert meta is not None
+    await newer.put(CACHE, "meta", {**meta, "format": 999})  # another deploy's format
+    repo.collections = newer.collections
+    repo.alls = 0
+    clock.t = T0 + 30  # the newer fetch is in the past (not skew), and memory is still fresh
+    for _ in range(5):
+        assert (await refresh.current()).fetched_at == T0 + 10
+    assert repo.alls == 1

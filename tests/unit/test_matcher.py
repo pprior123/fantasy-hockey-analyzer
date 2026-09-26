@@ -444,6 +444,8 @@ def test_a_weak_match_by_alias_says_so() -> None:
 
 
 def test_a_position_tie_break_to_a_player_on_another_team_is_only_a_candidate() -> None:
-    result = match(Query("Hughes", "BOS", "D"), ROSTER, scope=Scope.ROSTER)  # Quinn is VAN
+    # Both Hugheses fit the guard (Jack: NJ but a C; Quinn: a D but VAN); position
+    # picks Quinn, whose team then contradicts the row: only a candidate.
+    result = match(Query("Hughes", "NJ", "D"), ROSTER, scope=Scope.ROSTER)
     assert result.status is Status.REVIEW
     assert result.candidates[0].candidate.player_id == "r4"

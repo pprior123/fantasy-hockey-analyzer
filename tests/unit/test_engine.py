@@ -253,6 +253,12 @@ def test_injected_divisors_override_computed_ones() -> None:
     assert result.ratings["a"].ttltst == pytest.approx(2.0)
 
 
+@pytest.mark.parametrize("divisor", [0.0, 0.5])
+def test_injected_divisors_may_be_zero_or_below_one(divisor: float) -> None:
+    result = rate([sk("a", 82, {G: 10})], ONE_CAT, divisors={G: divisor})
+    assert result.ratings["a"].ttltst == pytest.approx(20.0 if divisor else 0.0)
+
+
 def test_injected_divisors_may_carry_extra_categories() -> None:
     result = rate([sk("a", 82, {G: 10})], ONE_CAT, divisors={G: 5.0, A: 1.0})
     assert result.divisors == {G: 5.0}
@@ -273,7 +279,7 @@ def test_injected_divisors_are_validated(divisors: dict[Category, float], messag
 
 
 def test_duplicate_player_ids_are_an_error() -> None:
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match=r"^duplicate player_id in the pool$"):
         rate([sk("a", 82), sk("a", 70)])
 
 
@@ -286,6 +292,7 @@ def test_ineligible_players_are_unrated_but_listed() -> None:
     low = result.ratings["low"]
     assert (low.ttltst, low.rank, low.percentile, low.value) == (None, None, None, None)
     assert low.norms == {}
+    assert low.name == "low"
     assert not low.rated
     assert result.ratings["a"].rated
 
@@ -353,7 +360,7 @@ def test_eligible_player_with_zero_stats_is_rated_zero_and_ranked() -> None:
 
 def test_value_is_aav_millions_per_ttltst() -> None:
     result = rate([sk("a", 82, {G: 10}, aav=5_000_000)], ONE_CAT, divisors={G: 20.0})
-    assert result.ratings["a"].value == pytest.approx(10.0)
+    assert result.ratings["a"].value == pytest.approx(10.0, rel=1e-12)
 
 
 def test_value_of_zero_aav_is_zero() -> None:
@@ -398,5 +405,6 @@ def test_prefers_baseline_below_min_gp(max_gp: int, expected: bool) -> None:
     assert prefers_baseline(pool, baseline_min_gp=10) is expected
 
 
-def test_prefers_baseline_for_an_empty_pool() -> None:
-    assert prefers_baseline([], baseline_min_gp=10) is True
+@pytest.mark.parametrize("min_gp", [1, 10])
+def test_prefers_baseline_for_an_empty_pool(min_gp: int) -> None:
+    assert prefers_baseline([], baseline_min_gp=min_gp) is True

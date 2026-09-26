@@ -362,3 +362,94 @@ re-apply at sports.yahoo.com/developer/access with the Client ID filled in. Unti
 the real refresh timing are blocked; the code is tested against synthetic
 Yahoo-shaped responses. If Yahoo refuses, the fallback (NHL public stats API
 + the league sheet for rosters) is an owner decision and a redesign.
+
+## 2026-09-26 — M3: stacked on M2 while Yahoo access is pending
+M3 starts on `m3-storage-salaries`, branched from `m2-yahoo-source` rather
+than `main`, because M2 can't merge until the real Yahoo fixtures exist. This
+bends the milestone gate (SPEC §10), with the owner's agreement: M2's code
+passed two review rounds (no medium-or-worse findings; PR #4), and waiting
+for Yahoo's approval would stall everything. M3's Repository implements M2's
+`TokenStore`. If the real fixtures force changes in M2, M3 is rebased onto
+the result. Alternative: wait for Yahoo (rejected: no end date).
+
+## 2026-09-26 — M3: free-agent salary CSV format (answers SPEC §11 Q4)
+The owner copies PuckPedia's salary tables (skaters and goalies) into a CSV
+under `private/`, and adds one header row. PuckPedia's copied table has no
+header, no NHL team column (only the team's GM) and 25 columns of contract
+and stat detail, saved by the owner's spreadsheet app in Mac Roman with
+non-breaking spaces in names. The owner is "not married to the format", so:
+- Columns are read **by header name**, case-insensitive and trimmed.
+  Required: `Player` ("Last, First" or "First Last"), `Pos` (C, L, R, D or G)
+  and `Cap Hit` (e.g. `$18,000,000`). Optional: `Team`. Every other column is
+  ignored, so its header may be anything or blank.
+- A missing required header, or a malformed value in a required column,
+  rejects the whole file, naming the row. Nothing is guessed.
+- Encoding: UTF-8 (with or without a BOM), else Mac Roman. Non-breaking
+  spaces become spaces.
+- Goalies are imported too. They aren't rated in Phase 1, but a free-agent
+  goalie's cap hit matters to `fits` / `swap_ok` (SPEC §5). Rostered goalies
+  are already in each tab's PAYROLL.
+- The GM column is never used to infer a team (GMs change jobs). With no
+  team, the SPEC §6 cascade skips steps 1-2, and **position group breaks
+  ties** in steps 3-4: forward (C, L, R, LW, RW, W, F), D or G. For example,
+  the two Sebastian Ahos (a C and a D) resolve separately. A remaining tie is
+  a candidate for review. The group is used rather than the exact position
+  because sources disagree on C versus wing. (Owner approved, 2026-09-26.)
+- The committed test fixture is synthetic, in the same shape. The real CSV
+  is never committed (hard rule 3).
+Alternatives: parse PuckPedia's headerless paste by column position
+(rejected: silent breakage when PuckPedia changes its table); require a
+clean three-column file (rejected: more work for the owner on every import).
+
+## 2026-09-26 — M3: Firestore and Google Sheets over REST (httpx), not client libraries
+`FirestoreRepository` talks to the Firestore REST API, and the Sheets grid
+reader to the Sheets REST API. Both use httpx, which is already the Yahoo
+client's only runtime dependency, and a service-account access token from
+`google-auth`. The emulator speaks the same REST API, and tests use it
+without credentials. Reasons:
+- Cold start: `google-cloud-firestore` imports gRPC and protobuf on every
+  cold start (SPEC §2: keep imports light).
+- The test network guard: gRPC opens sockets in C, bypassing the guard
+  ("Known network-policy gaps for M3", item 2). httpx goes through Python
+  sockets, which the guard sees.
+- One HTTP stack, mocked the same way (respx / MockTransport), for Yahoo,
+  Firestore and Sheets.
+The cost is our own value encoding (Firestore's typed JSON values) and a few
+hundred lines. Alternative: `google-cloud-firestore` (rejected for the
+reasons above; revisit if the REST layer becomes a burden). Owner's choice,
+2026-09-26.
+
+## 2026-09-26 — M3: league sheet layouts seen in the real sheet (SPEC §4a)
+Structure of the owner's downloaded sheet (2025-26 contents), read with a
+script that printed only formulas, header rows and the shape of each
+column's values inside the payroll ranges. No cell values outside them were
+read, and none are recorded here or in fixtures. There are 8 team tabs, one
+summary tab (the cap is at `B3`), and two other tabs that aren't team tabs
+(no PAYROLL).
+- `PAYROLL` label at `A3`, formula at `C3`. It is either `SUM(F7:F33)`
+  directly, or one reference away: `=SUM(C36)` or `=C40`, where that cell
+  holds the `SUM`. Function names come in either case (`sum`, `SUM`).
+- `CAP:` at `A2`, `C2` = `='<summary tab>'!B3`.
+- The salary column is F on seven tabs and G on one, and the range rows
+  differ on each tab. The header row sits just above the range (rows 5-7),
+  **or is the range's first row** (one tab: "NAME / Position / NHL Team /
+  2025-2026 Salary" inside the SUM range, which ignores the text). Header
+  labels vary: `NAME`; `Position` or `Pos.`; `NHL Team` or `Team`; the salary
+  header is a season label ("25-26", "2026-2027", "2025-2026 Cap Hit",
+  "25- 26 Salary"). The position column is D or E. Some tabs have extra
+  seasons' salary columns beside the counted one, which are ignored.
+- Names are "First Last" on most tabs and "Last, First" on one. Teams are
+  codes on most tabs and city names on one. Positions are codes, words or
+  combinations.
+- There are blank rows inside the range. A few salary cells hold text
+  (`???`, a single space): no known salary, which is shown and flagged
+  rather than read as 0. One salary is `0`, read as 0.
+- `IR` / `IR+` labels are in column A of the rows after the range, some of
+  them empty slots (label only). Their salary may be in the salary column.
+- Some tabs have unlabelled player rows below the range (not counted, not
+  IR): they are ignored, and a player in them who is on the Yahoo roster
+  shows up as "missing from the tab" in the discrepancy report.
+- Below all of that, each tab has a contact block (a header row, then GM
+  details). The parser never reads past the last IR row. Contact cells sit
+  outside every range it reads, so they never enter a parsed result.
+The synthetic parser fixtures reproduce each of these variants.

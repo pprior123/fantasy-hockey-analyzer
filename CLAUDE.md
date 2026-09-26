@@ -39,8 +39,9 @@ uv run mutmut run               # mutation testing on src/fha/domain
   Firestore, no clock. External things go behind the Protocols in SPEC §3.
 - **Record decisions** in `docs/DECISIONS.md`: what, why, alternatives, date.
 - **Stay in scope.** Phase 1 only. No write access to Yahoo, no goalie model,
-  no projections, no history, no waiver recommendations or trade screens
-  (the Matchup screen's free-agent filter is in scope). If something out of
+  no projections, no history, no waiver *recommendation* or trade-evaluation
+  screens (the Replace view and the Matchup free-agent filter, SPEC §7, are
+  in scope: the owner picks, the app filters and sorts). If something out of
   scope seems necessary, ask.
 - Small, focused commits with clear messages. Don't push to `main` without
   the owner's go-ahead unless they've said otherwise for the session.
@@ -75,8 +76,9 @@ uv run mutmut run               # mutation testing on src/fha/domain
 - The league's shared salary sheet is the source of truth for rostered
   salaries, payrolls and the cap (SPEC §4a). Parse by each tab's PAYROLL
   formula, never by labels. Free-agent salaries come from a PuckPedia CSV.
-- The sheet holds managers' contact details: never read past, store, log or
-  commit them. Tests use synthetic sheets only.
+- The sheet holds managers' contact details: never persist, log, render or
+  commit any cell outside the parsed ranges (SPEC §4a). Tests use synthetic
+  sheets only.
 - Yahoo league key = `{game_key}.l.8076`; resolve `game_key` at runtime.
 - Serverless: concurrent Yahoo calls (bounded), no filesystem state, light
   imports.

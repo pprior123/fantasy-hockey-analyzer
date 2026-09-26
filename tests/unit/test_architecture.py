@@ -13,35 +13,27 @@ SUBPACKAGES = ["domain", "sources", "storage", "services", "web"]
 DOMAIN_DIR = Path(fha.__file__).parent / "domain"
 
 # domain/ is pure: no I/O, no network, no Firestore, no clock (CLAUDE.md).
-# Top-level module names that must never be imported from domain code.
-FORBIDDEN_IN_DOMAIN = {
-    "asyncio",
-    "datetime",  # clock access goes through the Clock protocol
-    "fastapi",
-    "glob",
-    "google",
-    "http",
-    "httpx",
-    "io",
-    "logging",
-    "openpyxl",
-    "os",
-    "pathlib",
-    "random",
-    "requests",
-    "shutil",
-    "socket",
-    "sqlite3",
-    "ssl",
-    "subprocess",
-    "sys",
-    "tempfile",
-    "time",
-    "urllib",
-    "fha.sources",
-    "fha.storage",
-    "fha.services",
-    "fha.web",
+# Allowlist, not denylist: any import not listed here fails, so a new I/O
+# library can't slip in. Extend deliberately, with a reason.
+ALLOWED_IN_DOMAIN = {
+    "__future__",
+    "abc",
+    "collections",
+    "dataclasses",
+    "datetime",  # types only; reading the clock is banned via CLOCK_CALLS
+    "decimal",
+    "enum",
+    "fractions",
+    "functools",
+    "itertools",
+    "math",
+    "operator",
+    "rapidfuzz",  # fuzzy name matching (SPEC §6)
+    "re",
+    "statistics",
+    "typing",
+    "unicodedata",
+    "fha.domain",
 }
 
 
@@ -56,7 +48,9 @@ def test_package_is_typed() -> None:
 
 
 # Builtins that do I/O or dynamic imports.
-FORBIDDEN_CALLS = {"open", "input", "print", "__import__", "exec", "eval"}
+FORBIDDEN_CALLS = {"open", "input", "print", "__import__", "exec", "eval", "breakpoint"}
+# Method names that read the clock (datetime.now(), date.today(), ...).
+CLOCK_CALLS = {"now", "today", "utcnow", "fromtimestamp", "utcfromtimestamp"}
 
 
 def package_name(path: Path) -> str:
@@ -82,27 +76,55 @@ def imported_modules(source: str, package: str) -> set[str]:
 
 
 def forbidden_calls(source: str) -> set[str]:
-    return {
-        node.func.id
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in FORBIDDEN_CALLS
-    }
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
+            found.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute) and node.func.attr in CLOCK_CALLS:
+            found.add(f".{node.func.attr}")
+    return found
+
+
+def is_allowed(module: str) -> bool:
+    return any(module == a or module.startswith(a + ".") for a in ALLOWED_IN_DOMAIN)
 
 
 def is_forbidden(module: str) -> bool:
-    return any(module == f or module.startswith(f + ".") for f in FORBIDDEN_IN_DOMAIN)
+    return not is_allowed(module)
 
 
-def test_is_forbidden_matches_submodules_but_not_prefixes() -> None:
-    assert is_forbidden("os")
-    assert is_forbidden("os.path")
-    assert is_forbidden("google.cloud.firestore")
-    assert is_forbidden("fha.storage.memory")
-    assert not is_forbidden("osmosis")
-    assert not is_forbidden("fha.domain.engine")
-    assert not is_forbidden("math")
+@pytest.mark.parametrize(
+    "module",
+    [
+        "os",
+        "os.path",
+        "google.cloud.firestore",
+        "fha.storage.memory",
+        "fha",
+        "yfpy",
+        "gspread",
+        "dotenv",
+        "secrets",
+        "pickle",
+        "importlib",
+        "builtins",
+        "scripts.check_coverage",
+        "osmosis",
+        "mathx",
+    ],
+)
+def test_unlisted_modules_are_forbidden(module: str) -> None:
+    assert is_forbidden(module)
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["math", "fha.domain", "fha.domain.engine", "collections.abc", "datetime", "rapidfuzz.fuzz"],
+)
+def test_listed_modules_are_allowed(module: str) -> None:
+    assert is_allowed(module)
 
 
 def test_imported_modules_sees_both_import_forms() -> None:
@@ -124,8 +146,13 @@ def test_imported_modules_resolves_relative_imports() -> None:
 
 def test_relative_escape_from_domain_is_forbidden() -> None:
     mods = imported_modules("from ..storage import repo\n", "fha.domain.sub")
-    assert any(is_forbidden(m) for m in mods) is False  # fha.domain.storage: still domain
+    assert not any(is_forbidden(m) for m in mods)  # fha.domain.storage: still domain
     mods = imported_modules("from ... import storage\n", "fha.domain.sub")
+    assert any(is_forbidden(m) for m in mods)
+
+
+def test_builtins_alias_of_open_is_forbidden() -> None:
+    mods = imported_modules("from builtins import open as o\n", "fha.domain")
     assert any(is_forbidden(m) for m in mods)
 
 
@@ -138,6 +165,16 @@ def test_package_name_for_modules_and_packages() -> None:
 def test_forbidden_calls_detects_builtin_io() -> None:
     src = "def f(p):\n    print(open(p).read())\n    return len(p)\n"
     assert forbidden_calls(src) == {"open", "print"}
+
+
+def test_forbidden_calls_detects_clock_reads_but_not_date_types() -> None:
+    src = (
+        "from datetime import date, datetime\n"
+        "def f(d: date) -> date:\n"
+        "    return max(d, date.today(), datetime.now().date())\n"
+    )
+    assert forbidden_calls(src) == {".today", ".now"}
+    assert forbidden_calls("from datetime import date\nX = date(2026, 10, 7)\n") == set()
 
 
 def test_domain_has_no_io_imports_or_calls() -> None:

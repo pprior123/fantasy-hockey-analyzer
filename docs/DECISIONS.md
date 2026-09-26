@@ -80,8 +80,26 @@ flags any tab it cannot resolve. Sheet rows are matched only within the bound
 Yahoo team's roster, which resolves surname-only entries and typos. Read live
 via the Sheets API with the Firestore service account in production; a
 downloaded `.xlsx` in dev and as an Admin upload fallback. The sheet contains
-managers' contact details: never read past, stored, logged or committed;
+managers' contact details: no cell outside the parsed ranges is persisted,
+logged, rendered or committed (whole tabs must be fetched to find the
+PAYROLL cell, so "never read" is not implementable);
 tests use synthetic sheets. Alternatives: PuckPedia for everyone (rejected —
 not what the league enforces, and diverges when GMs' entries differ); treat
 the sheet as reference only (rejected by the owner); upload-only, no live
 read (kept as fallback; rosters change weekly so it would go stale).
+
+## 2026-09-26 — Test network policy hardened
+pytest-socket's `--disable-socket` applies only from test setup, and any test
+could opt out with `@pytest.mark.enable_socket`. `tests/conftest.py` now
+blocks sockets from `pytest_configure` (covering module-level code at
+collection) and aborts the run if any test uses `enable_socket` or an
+`allow_hosts` beyond loopback. Loopback-only `allow_hosts` is reserved for
+the Firestore-emulator tests in M3.
+
+## 2026-09-26 — Domain purity is an allowlist; no coverage exclusions in domain
+The purity test allows only listed stdlib modules (plus `rapidfuzz` and
+`fha.domain`); anything else fails, so new I/O libraries can't slip in.
+`datetime` is allowed for date types, but `.now()`/`.today()`/`.utcnow()`/
+`fromtimestamp` calls are banned. `check_coverage.py` fails on any
+`# pragma: no cover` in `domain/`, where the 95% gate and mutation testing
+apply.

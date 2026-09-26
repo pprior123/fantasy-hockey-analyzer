@@ -259,10 +259,11 @@ def parse_player_stats(content: dict[str, Any], season: int) -> dict[str, StatLi
         if not isinstance(block, dict):
             raise YahooParseError(f"player {key}: player_stats is not an object")
         coverage = block.get("0", block)
-        if isinstance(coverage, dict) and "season" in coverage:
-            got = _as_int(coverage["season"], f"player {key}: season")
-            if got != season:
-                raise YahooParseError(f"player {key}: asked for {season} stats, got {got}")
+        if not isinstance(coverage, dict) or "season" not in coverage:
+            raise YahooParseError(f"player {key}: stats carry no season, asked for {season}")
+        got = _as_int(coverage["season"], f"player {key}: season")
+        if got != season:
+            raise YahooParseError(f"player {key}: asked for {season} stats, got {got}")
         values = {}
         for entry in _get(block, "stats", f"player {key}: player_stats"):
             stat = _get(entry, "stat", f"player {key}: stats")

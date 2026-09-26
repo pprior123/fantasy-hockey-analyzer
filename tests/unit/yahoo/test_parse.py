@@ -204,6 +204,15 @@ def test_player_stats_for_the_wrong_season_are_refused() -> None:
         parse.parse_player_stats(content, 2025)
 
 
+@pytest.mark.parametrize("coverage", [{"coverage_type": "season"}, "season"])
+def test_player_stats_without_a_season_are_refused(coverage: Any) -> None:
+    content = b.player_stats([KNIGHT], 2026)
+    player = content["players"]["0"]["player"]
+    player[1]["player_stats"]["0"] = coverage
+    with pytest.raises(YahooParseError, match="stats carry no season, asked for 2026"):
+        parse.parse_player_stats(content, 2026)
+
+
 def test_a_null_stat_value_reads_as_no_value() -> None:
     content = b.player_stats([KNIGHT])
     content["players"]["0"]["player"][1]["player_stats"]["stats"][0]["stat"]["value"] = None

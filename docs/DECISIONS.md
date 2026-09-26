@@ -165,7 +165,7 @@ percentile (max difference: TTLTST 2.2e-16, percentile 0; the same with
 divisors computed). Tolerances are
 SPEC's (1e-3, 0.1).
 
-## 2026-09-26 — M1: divisors use the workbook's formula (provisional; owner to confirm)
+## 2026-09-26 — M1: divisors use the workbook's formula (confirmed by the owner, see below)
 SPEC assumed `W6:AC6` were static values gone stale, and described the
 divisor as the mean of the top-10 per-82 rates. Both were wrong. The cells
 are live array formulas:
@@ -223,3 +223,16 @@ decision, and unneeded with the workbook method).
 - openpyxl (+ `types-openpyxl`) is dev-only, per the dependency policy.
 - The domain allowlist needed no additions (`math`, `dataclasses`, `enum`,
   `collections.abc`).
+
+## 2026-09-26 — Divisor method confirmed; rating settings are owner-editable
+The owner confirmed the workbook's divisor method (top-20 totals over top-20
+GP, x82) as the default, and asked for it to be adjustable: the divisor
+method, the divisor count (default 20) and the GP floor fraction (default 2%)
+become settings in the Admin screen. The engine already takes all three as
+`EngineConfig` (M1), so the work is persistence in the Repository's config
+(M3) and the settings form (M4). A setting change re-rates every player on
+the next view; the cache stores raw stats, not ratings, so no refresh is
+needed. Switching method pre-fills that method's usual count (20 or 10)
+unless the owner typed one. Alternatives: fixed in code, or env vars
+(rejected: the owner wants to change it from the app; either would need a
+redeploy).

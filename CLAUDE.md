@@ -67,8 +67,9 @@ uv run mutmut run               # mutation testing on src/fha/domain
 
 - Categories in TTLTST: G, A, PPP, PIM, HIT, SOG, BLK. Goalies excluded.
 - `per82 = stat / GP * 82`; divisor = mean of the top-20 totals over mean of
-  the top-20 GP (× 82) among eligible players (the workbook's formula;
-  default pending owner confirmation, SPEC §5); `TTLTST` = mean of
+  the top-20 GP (× 82) among eligible players (the workbook's formula, the
+  owner-confirmed default; method and count are owner settings, SPEC §5);
+  `TTLTST` = mean of
   `per82 / divisor` across the 7.
 - GP floor: rate only players above 2% of the pool's max GP (config).
 - Percentile divides by the pool's skaters with GP > 0, rated or not; ties

@@ -232,8 +232,10 @@ The engine also implements the method this spec first described, the mean
 of the top-10 per-82 rates over eligible players (`DivisorMethod.TOP_PER82`,
 whose `TOP_N` defaults to 10, so switching is one config value). Small
 samples inflate it (M1 report in `docs/DECISIONS.md`).
-The workbook method is the default **pending the owner's confirmation**
-(§11).
+The owner confirmed the workbook method as the default (2026-09-26). The
+method, its top-N and `GP_FLOOR_FRACTION` are owner settings (Admin, §7),
+saved in the Repository's config; changing one re-rates every player on the
+next view.
 
 Rules:
 
@@ -465,7 +467,13 @@ Common to the tables: a **Categories** toggle swaps the salary columns
 5. **Admin** — league sheet status (last read, per-tab parse status incl.
    unrecognized tabs, tab ↔ Yahoo team binding, discrepancy report);
    PuckPedia CSV import for free agents; match review (unmatched row vs. top
-   3 candidates, tap to bind); single-player AAV edit; force refresh; config.
+   3 candidates, tap to bind); single-player AAV edit; force refresh; config,
+   including the rating settings: divisor method (workbook by default, or
+   per-82), divisor count (default 20; switching method pre-fills that
+   method's default unless the owner typed a count), and GP floor fraction
+   (default 2%). The form shows the settings in use and warns that saving
+   re-rates every player; invalid values are rejected with a message. The
+   settings in use are shown next to the season label on rated tables.
 
 Footer on every page: "Fantasy data provided by Yahoo Fantasy" linking to
 Yahoo Fantasy (required attribution).
@@ -582,6 +590,9 @@ start the next milestone until the current one is accepted.
 - PuckPedia CSV import for free agents (idempotent), matcher cascade (§6),
   alias seeding, bindings persisted, single-player edit.
 - Refresh service with TTL and injectable `Clock`.
+- Rating settings (§5) persisted in the Repository's config and turned into
+  the engine's config (strings from storage are validated by it). The cache
+  holds raw stats, never ratings, so a settings change needs no refresh.
 - **Accept:** parser handles every layout variant seen in the real sheet
   (as synthetic fixtures) and reports an unresolvable tab as unrecognized;
   run locally against the owner's downloaded sheet, every tab parses and its
@@ -594,6 +605,7 @@ start the next milestone until the current one is accepted.
   season toggles, password auth, attribution footer, PWA manifest + icons.
 - Team profile, matchup, `need_score` and salary-cap functions in `domain/`
   (test-first).
+- Rating settings form in Admin (§7).
 - **Accept:** route tests pass; the owner runs the app **locally against real
   Yahoo data** (`LocalJsonRepository`), on laptop and on their phone over the
   local network at 390 px, and signs off; all gates green.
@@ -624,10 +636,8 @@ start the next milestone until the current one is accepted.
 3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
    revisit only if the Repository implementation fights it.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.
-5. Divisor method: the workbook's (top-20 totals over top-20 GP, the
-   default) or the top-10 per-82 rates this spec first described. Owner to
-   confirm after M1's report (`docs/DECISIONS.md`). A separate GP floor for
-   divisors only matters for the per-82 method.
+5. ~~Divisor method~~ — resolved: the workbook's (top-20 totals over top-20
+   GP) is the default; method and count are owner settings (§5, §7).
 6. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
    in team profiles (default: no) — revisit after the owner tries the app.
 7. ~~Add/drop cap timing~~ — resolved: an add/drop is simultaneous

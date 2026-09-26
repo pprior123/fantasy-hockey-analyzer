@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Server-only access (SPEC §2, §8): the app reaches Firestore with a service
+// account, which these rules don't apply to. Every client read and write is
+// denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

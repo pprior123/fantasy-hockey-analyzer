@@ -10,6 +10,7 @@ secrets.json
 # GCP console keys download as <project>-<hash>.json: no JSON at the repo root
 /*.json
 !/vercel.json
+!/firebase.json
 
 # Yahoo OAuth tokens (yahoofantasy / yfpy write these)
 .yahoofantasy

@@ -43,7 +43,7 @@ from fha.sources.yahoo.source import (
     HttpYahooSource,
 )
 from fha.sources.yahoo.stat_map import StatMapError, build_stat_map, to_player_season
-from scripts.sanitize_yahoo import problems, sanitize
+from scripts.sanitize_yahoo import private_names, problems, sanitize
 from scripts.yahoo_common import REPO, JsonFileTokenStore, SetupError, credentials_from_env
 
 API_HOST = "fantasysports.yahooapis.com"
@@ -100,8 +100,11 @@ def file_name(index: int, path: str) -> str:
 
 def write_records(records: Sequence[Record], directory: Path, params: dict[str, Any]) -> None:
     """Sanitize, check, then (only if every record is clean) replace ``directory``'s files."""
+    names = frozenset(n for r in records for n in private_names(r.body))
     cleaned = [sanitize(r.body) for r in records]
-    issues = [f"{r.path}: {p}" for r, c in zip(records, cleaned, strict=True) for p in problems(c)]
+    issues = [
+        f"{r.path}: {p}" for r, c in zip(records, cleaned, strict=True) for p in problems(c, names)
+    ]
     if issues:
         shown = "\n  ".join(issues[:10])
         raise SanitizeError(f"{len(issues)} problems after sanitizing, nothing written:\n  {shown}")

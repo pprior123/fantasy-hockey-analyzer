@@ -154,6 +154,15 @@ def test_nothing_is_written_if_sanitizing_leaves_an_email(tmp_path: Path) -> Non
     assert not (tmp_path / "fixtures").exists()
 
 
+def test_nothing_is_written_if_a_team_name_survives_elsewhere(tmp_path: Path) -> None:
+    roster = b.envelope(b.teams_roster([b.T(1, name="Bunch")]))
+    recap = {"recap": {"title": "The Bunch wins again"}}  # a field the sanitizer doesn't know
+    records = [rec.Record("rosters", 200, roster), rec.Record("recap", 200, recap)]
+    with pytest.raises(rec.SanitizeError, match=r"1 problems.*\n  recap: \$\.recap\.title: a team"):
+        rec.write_records(records, tmp_path / "fixtures", {})
+    assert not (tmp_path / "fixtures").exists()
+
+
 async def test_non_json_responses_are_recorded_as_null(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="<html>down</html>")

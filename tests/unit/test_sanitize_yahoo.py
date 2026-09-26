@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from scripts.sanitize_yahoo import TEAM_LOGO, problems, sanitize, team_name
+from scripts.sanitize_yahoo import TEAM_LOGO, private_names, problems, sanitize, team_name
 from tests.unit.yahoo import builders as b
 from tests.unit.yahoo.fake_league import MINE, THEIRS
 
@@ -121,3 +121,39 @@ def test_problems_finds_forbidden_keys_and_emails(node: Any, expected: list[str]
 def test_raw_synthetic_rosters_have_problems() -> None:
     found = problems(b.teams_roster([MINE]))
     assert any(p.endswith(".managers: forbidden key") for p in found)
+
+
+def test_private_names_are_the_team_and_league_names() -> None:
+    raw = {
+        "league": [
+            b.league_meta(name="Real League"),
+            b.teams_roster([b.T(1, name="Bunch"), b.T(2, name="Team 2")])["league"][1],
+        ],
+        "flat": {"team_key": "465.l.8076.t.3", "name": "Flat Out"},
+    }
+    assert private_names(raw) == {"Real League", "Bunch", "Flat Out"}  # "Team 2" is ours
+
+
+def test_player_names_are_not_private_names() -> None:
+    names = private_names(b.league_players([MINE.roster[0][0]]))
+    assert names == {"Synthetic League"}  # the page's league, not "Player 1"
+
+
+@pytest.mark.parametrize(
+    ("text", "leaks"),
+    [
+        ("Week 3 recap: the bunch rolls on", True),  # case-insensitive, anywhere
+        ("Bunch", True),
+        ("Bun", False),
+        ("Ab", True),  # a short name only matches the whole string
+        ("Abs and more", False),
+    ],
+)
+def test_a_private_name_anywhere_is_a_problem(text: str, leaks: bool) -> None:
+    found = problems({"recap": {"title": text}}, frozenset({"Bunch", "Ab"}))
+    assert found == (["$.recap.title: a team or league name"] if leaks else [])
+
+
+def test_sanitized_rosters_hold_no_private_name() -> None:
+    raw = b.teams_roster([b.T(1, name="Bunch"), THEIRS])
+    assert problems(sanitize(raw), frozenset(private_names(raw))) == []

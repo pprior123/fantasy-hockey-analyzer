@@ -17,8 +17,9 @@ import httpx
 AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"  # noqa: S105 - a URL
 DEFAULT_REDIRECT_URI = "https://localhost:8000"
-# Fantasy Sports read access. Asked for explicitly: without a scope, Yahoo issued
-# a token its Fantasy API refused (403) although the app has the permission.
+# Fantasy Sports read access, asked for explicitly. (The 403 seen in September
+# 2026 was Yahoo's pending API approval, not the scope: DECISIONS, "Yahoo API
+# access: pending approval".)
 FANTASY_READ_SCOPE = "fspt-r"
 
 

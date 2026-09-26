@@ -200,7 +200,7 @@ async def test_a_failing_league_check_is_reported(
     assert await store.load() is not None  # consent itself succeeded
 
 
-async def test_a_403_points_at_the_app_permissions(
+async def test_a_403_points_at_the_pending_api_approval(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     class Forbidden(Yahoo):
@@ -213,8 +213,8 @@ async def test_a_403_points_at_the_app_permissions(
     code, _, err, store = await run(tmp_path, capsys, Forbidden())
     assert code == 1
     assert "HTTP 403" in err
-    assert "API Permissions" in err
-    assert "fspt-r scope" in err
+    assert "isn't approved yet" in err
+    assert "scripts.yahoo_diagnose" in err
     assert await store.load() is not None
 
 
@@ -222,4 +222,4 @@ async def test_other_failures_carry_no_permissions_hint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _, _, err, _ = await run(tmp_path, capsys, Yahoo(token_status=400))
-    assert "API Permissions" not in err
+    assert "approved" not in err

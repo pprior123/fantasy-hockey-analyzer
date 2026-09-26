@@ -127,7 +127,7 @@ class LeagueSnapshot:
     settings: LeagueSettings
     game_stat_categories: tuple[StatCategory, ...]  # every NHL stat Yahoo tracks
     teams: tuple[Team, ...]
-    available: tuple[Player, ...]  # top available (free agents + waivers), by rank
+    available: tuple[Player, ...]  # every available player (free agents + waivers), by rank
     stats: Mapping[str, StatLine]  # current season, by player_key, whole pool
     last_season_stats: Mapping[str, StatLine] | None  # None when not fetched
     scoreboard: Scoreboard  # current week

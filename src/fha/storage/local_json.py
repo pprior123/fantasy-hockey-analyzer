@@ -24,12 +24,24 @@ from fha.storage.repository import (
 )
 
 Collections = dict[str, dict[str, Document]]
+# The checkout's gitignored private/ (this file is src/fha/storage/local_json.py).
+PRIVATE_DIR = Path(__file__).resolve().parents[3] / "private"
 
 
 class LocalJsonRepository:
-    def __init__(self, path: Path, environ: Mapping[str, str] = os.environ) -> None:
+    def __init__(
+        self,
+        path: Path,
+        environ: Mapping[str, str] = os.environ,
+        *,
+        private_dir: Path = PRIVATE_DIR,
+    ) -> None:
         if environ.get("VERCEL"):
             raise RepositoryError("LocalJsonRepository is for dev only, not on Vercel")
+        # The file holds the Yahoo token and the owner's data: only inside the
+        # gitignored private/ directory, so it can't be committed by accident.
+        if not path.resolve().is_relative_to(private_dir.resolve()):
+            raise RepositoryError("the dev repository file must be inside the private/ directory")
         self.path = path
 
     async def get(self, collection: str, doc_id: str) -> Document | None:

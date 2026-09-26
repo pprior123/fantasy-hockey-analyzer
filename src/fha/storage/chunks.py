@@ -7,12 +7,11 @@ A chunked record owns a whole collection: a ``meta`` document plus
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from fha.storage.repository import Document, Repository, RepositoryError
+from fha.storage.repository import Document, Repository, RepositoryError, firestore_size
 
 META = "meta"
 CHUNK_BYTES = 800_000  # per chunk document, under MAX_DOCUMENT_BYTES with room for the key
@@ -24,12 +23,12 @@ class ChunkError(RepositoryError):
 
 
 def pack(items: Sequence[Any], max_bytes: int = CHUNK_BYTES) -> list[list[Any]]:
-    """Consecutive runs of ``items``, each run's JSON under ``max_bytes``."""
+    """Consecutive runs of ``items``, each run under ``max_bytes`` as Firestore counts it."""
     chunks: list[list[Any]] = []
     current: list[Any] = []
     size = 0
     for item in items:
-        item_size = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode()) + 1
+        item_size = firestore_size(item)
         if item_size > max_bytes:
             raise RepositoryError(f"one item is {item_size} bytes, over the {max_bytes} chunk size")
         if current and size + item_size > max_bytes:

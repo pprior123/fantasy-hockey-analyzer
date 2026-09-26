@@ -10,16 +10,21 @@ from fha.storage.repository import RepositoryError
 
 
 def test_pack_keeps_order_and_splits_at_the_byte_limit() -> None:
-    items = ["aaaa", "bbbb", "cccc"]  # each '"aaaa"' is 6 bytes, +1 separator
-    assert pack(items, max_bytes=14) == [["aaaa", "bbbb"], ["cccc"]]
-    assert pack(items, max_bytes=21) == [items]
-    assert pack(items, max_bytes=7) == [["aaaa"], ["bbbb"], ["cccc"]]
-    assert pack([], max_bytes=7) == []
+    items = ["aaaa", "bbbb", "cccc"]  # Firestore counts each as 4 bytes + 1
+    assert pack(items, max_bytes=10) == [["aaaa", "bbbb"], ["cccc"]]
+    assert pack(items, max_bytes=15) == [items]
+    assert pack(items, max_bytes=5) == [["aaaa"], ["bbbb"], ["cccc"]]
+    assert pack([], max_bytes=5) == []
+
+
+def test_pack_measures_items_as_firestore_does() -> None:
+    # 100 integers are 800 bytes to Firestore though their JSON is ~200.
+    assert pack([[0] * 100, [0] * 100], max_bytes=1000) == [[[0] * 100], [[0] * 100]]
 
 
 def test_pack_refuses_an_item_bigger_than_a_chunk() -> None:
-    with pytest.raises(RepositoryError, match="one item is 8 bytes, over the 7 chunk size"):
-        pack(["aaaaa"], max_bytes=7)
+    with pytest.raises(RepositoryError, match="one item is 6 bytes, over the 5 chunk size"):
+        pack(["aaaaa"], max_bytes=5)
 
 
 async def test_chunked_record_round_trips() -> None:

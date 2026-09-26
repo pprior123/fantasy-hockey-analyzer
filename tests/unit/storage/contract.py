@@ -33,6 +33,14 @@ EVERY_TYPE: dict[str, Any] = {
 BAD_ID = r"not allowed|non-empty"
 
 
+def _nested(depth: int) -> dict[str, Any]:
+    """A document whose innermost value sits ``depth`` maps down."""
+    doc: dict[str, Any] = {"leaf": 1}
+    for _ in range(depth - 1):
+        doc = {"k": doc}
+    return doc
+
+
 class RepositoryContract:
     @pytest.fixture
     def repo(self) -> Repository:
@@ -120,6 +128,12 @@ class RepositoryContract:
             ({"v": (1, 2)}, r"\$\.v: tuple is not a JSON value"),
             ({"v": {1, 2}}, r"\$\.v: set is not a JSON value"),
             ({"v": "x" * (MAX_DOCUMENT_BYTES + 1)}, f"over {MAX_DOCUMENT_BYTES}"),
+            # Small as JSON, over the limit as Firestore counts it (8 bytes per number).
+            ({"v": [0] * (MAX_DOCUMENT_BYTES // 8)}, f"over {MAX_DOCUMENT_BYTES}"),
+            ({"v": {"__x__": 1}}, r"field name '__x__' is reserved"),
+            ({"__none": 1}, r"field name '__none' is reserved \(starts with __\)"),
+            ({"__name__": 1}, r"field name '__name__' is reserved"),
+            (_nested(21), "nested deeper than Firestore's 20 levels"),
             ([1], "a document must be a dict, got list"),
         ],
     )
@@ -141,6 +155,10 @@ class RepositoryContract:
         with pytest.raises(RepositoryError, match=BAD_ID):
             await repo.replace_all("things", {bad: {"v": 1}})
         assert await repo.all("things") == {}
+
+    async def test_twenty_levels_of_nesting_are_fine(self, repo: Repository) -> None:
+        await repo.put("things", "deep", _nested(20))
+        assert await repo.get("things", "deep") == _nested(20)
 
     async def test_an_id_over_1500_bytes_is_refused(self, repo: Repository) -> None:
         with pytest.raises(RepositoryError, match="longer than 1500 bytes"):

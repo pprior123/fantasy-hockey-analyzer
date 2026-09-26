@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+from fha.sources.google_auth import GoogleAuthError
 from fha.storage import firestore as fs
 from fha.storage.factory import emulator_host, repository_from_env
 from fha.storage.firestore import FirestoreRepository, decode_document, decode_value, encode_value
@@ -158,7 +159,7 @@ async def test_get_is_a_one_document_batch_get_with_the_bearer_token() -> None:
     server = Server(found("a", {"v": {"integerValue": "3"}}))
     assert await repo(server).get("things", "a") == {"v": 3}
     [request] = server.requests
-    assert (request.method, str(request.url)) == ("POST", f"{BASE}:batchGet")
+    assert (request.method, str(request.url)) == ("POST", f"{BASE}:batchGet?prettyPrint=false")
     assert server.body(0) == {"documents": [f"{NAME}/a"]}
     assert request.headers["Authorization"] == f"Bearer {TOKEN}"
 
@@ -203,7 +204,7 @@ async def test_put_is_one_update_write_with_no_mask_so_it_replaces() -> None:
     server = Server(ok())
     await repo(server).put("things", "a", {"v": 1, "f": 0.5})
     [request] = server.requests
-    assert (request.method, str(request.url)) == ("POST", f"{BASE}:commit")
+    assert (request.method, str(request.url)) == ("POST", f"{BASE}:commit?prettyPrint=false")
     assert server.body(0) == {
         "writes": [
             {
@@ -234,7 +235,10 @@ async def test_put_checks_the_document_before_sending() -> None:
 async def test_delete_is_one_delete_write() -> None:
     server = Server(ok())
     await repo(server).delete("things", "a")
-    assert (server.requests[0].method, str(server.requests[0].url)) == ("POST", f"{BASE}:commit")
+    assert (server.requests[0].method, str(server.requests[0].url)) == (
+        "POST",
+        f"{BASE}:commit?prettyPrint=false",
+    )
     assert server.body(0) == {"writes": [{"delete": f"{NAME}/a"}]}
 
 
@@ -250,7 +254,10 @@ async def test_all_follows_page_tokens() -> None:
     )
     assert await repo(server).all("things") == {"a": {}, "b b": {"v": None}, "c": {"v": False}}
     queries = [parse_qs(urlsplit(str(r.url)).query) for r in server.requests]
-    assert queries == [{"pageSize": ["300"]}, {"pageSize": ["300"], "pageToken": ["page-2"]}]
+    assert queries == [
+        {"pageSize": ["300"], "prettyPrint": ["false"]},
+        {"pageSize": ["300"], "pageToken": ["page-2"], "prettyPrint": ["false"]},
+    ]
 
 
 async def test_all_of_an_empty_collection() -> None:
@@ -262,7 +269,9 @@ async def test_replace_all_commits_updates_and_deletes_in_one_request() -> None:
     await repo(server).replace_all("things", {"keep": {"v": 1}, "new": {"v": 2}})
     listing, commit = server.requests
     assert (listing.method, str(listing.url).split("?")[0]) == ("GET", f"{BASE}/things")
-    assert (commit.method, str(commit.url)) == ("POST", f"{BASE}:commit")
+    # IDs only: a field mask no document matches, so no bodies are downloaded.
+    assert parse_qs(urlsplit(str(listing.url)).query)["mask.fieldPaths"] == ["__none"]
+    assert (commit.method, str(commit.url)) == ("POST", f"{BASE}:commit?prettyPrint=false")
     assert server.body(1) == {
         "writes": [
             {"update": {"name": f"{NAME}/keep", "fields": {"v": {"integerValue": "1"}}}},
@@ -365,6 +374,7 @@ async def test_the_emulator_host_selects_the_emulator_with_its_fake_token() -> N
     [request] = server.requests
     assert str(request.url) == (
         "http://127.0.0.1:8181/v1/projects/demo-fha/databases/(default)/documents:batchGet"
+        "?prettyPrint=false"
     )
     assert request.headers["Authorization"] == "Bearer owner"
 
@@ -393,6 +403,7 @@ async def test_project_and_key_select_production_firestore() -> None:
     assert "scope" not in parse_qs(token_request.content.decode())  # it's inside the JWT
     assert str(get.url) == (
         "https://firestore.googleapis.com/v1/projects/fha-prod/databases/(default)/documents:batchGet"
+        "?prettyPrint=false"
     )
     assert get.headers["Authorization"] == f"Bearer {TOKEN}"
 
@@ -419,13 +430,35 @@ def test_incomplete_configuration_names_variables_not_values(
 
 async def test_a_local_path_selects_the_dev_file(tmp_path: Path) -> None:
     path = tmp_path / "private" / "repo.json"
-    local = repository_from_env({"FHA_LOCAL_REPOSITORY": str(path)}, httpx.AsyncClient())
+    local = repository_from_env(
+        {"FHA_LOCAL_REPOSITORY": str(path)}, httpx.AsyncClient(), private_dir=tmp_path / "private"
+    )
     assert isinstance(local, LocalJsonRepository)
     await local.put("things", "a", {"v": 1})
     assert path.exists()
+
+
+def test_firestore_and_the_dev_file_together_are_refused(tmp_path: Path) -> None:
+    env = {
+        "FIRESTORE_PROJECT_ID": "p",
+        "FIRESTORE_SERVICE_ACCOUNT_JSON": "{}",
+        "FHA_LOCAL_REPOSITORY": str(tmp_path / "private" / "r.json"),
+    }
+    with pytest.raises(RepositoryError, match="not both"):
+        repository_from_env(env, httpx.AsyncClient())
 
 
 def test_the_dev_file_is_refused_on_vercel(tmp_path: Path) -> None:
     env = {"FHA_LOCAL_REPOSITORY": str(tmp_path / "r.json"), "VERCEL": "1"}
     with pytest.raises(RepositoryError, match="dev only"):
         repository_from_env(env, httpx.AsyncClient())
+
+
+async def test_a_token_failure_is_a_repository_error() -> None:
+    async def broken() -> str:
+        raise GoogleAuthError("token request refused: HTTP 400")
+
+    server = Server()
+    with pytest.raises(RepositoryError, match=r"^Firestore get: token request refused: HTTP 400$"):
+        await FirestoreRepository(mock_http(server), "p", broken).get("things", "a")
+    assert server.requests == []

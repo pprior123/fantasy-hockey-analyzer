@@ -25,8 +25,13 @@ EMULATOR = "FIRESTORE_EMULATOR_HOST"
 LOCAL = "FHA_LOCAL_REPOSITORY"
 
 
-def repository_from_env(environ: Mapping[str, str], http: httpx.AsyncClient) -> Repository:
-    """The configured Repository. ``http`` is the caller's client (it owns closing it)."""
+def repository_from_env(
+    environ: Mapping[str, str], http: httpx.AsyncClient, *, private_dir: Path | None = None
+) -> Repository:
+    """The configured Repository. ``http`` is the caller's client (it owns closing it).
+
+    ``private_dir``: where the dev file may live (default: the checkout's ``private/``).
+    """
     from fha.storage.firestore import SCOPE, FirestoreRepository
 
     if environ.get(EMULATOR):
@@ -34,6 +39,8 @@ def repository_from_env(environ: Mapping[str, str], http: httpx.AsyncClient) -> 
         emulated = environ.get(PROJECT) or EMULATOR_PROJECT
         return FirestoreRepository(http, emulated, emulator_token, base_url=f"http://{host}")
     project, key = environ.get(PROJECT, ""), environ.get(KEY, "")
+    if (project or key) and environ.get(LOCAL):
+        raise RepositoryError(f"set either {PROJECT}/{KEY} (Firestore) or {LOCAL} (dev), not both")
     if project or key:
         if not (project and key):
             missing = PROJECT if not project else KEY
@@ -46,7 +53,9 @@ def repository_from_env(environ: Mapping[str, str], http: httpx.AsyncClient) -> 
     if environ.get(LOCAL):
         from fha.storage.local_json import LocalJsonRepository
 
-        return LocalJsonRepository(Path(environ[LOCAL]), environ)
+        if private_dir is None:
+            return LocalJsonRepository(Path(environ[LOCAL]), environ)
+        return LocalJsonRepository(Path(environ[LOCAL]), environ, private_dir=private_dir)
     raise RepositoryError(
         f"no repository configured: set {PROJECT} and {KEY} (production), "
         f"{EMULATOR} (tests) or {LOCAL} (dev)"

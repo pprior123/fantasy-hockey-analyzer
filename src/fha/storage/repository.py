@@ -13,7 +13,6 @@ Firestore would.
 from __future__ import annotations
 
 import copy
-import json
 import math
 import re
 from collections.abc import Mapping
@@ -21,10 +20,17 @@ from typing import Any, Protocol
 
 Document = dict[str, Any]  # JSON: None, bool, int, float, str, list, dict with str keys
 
-MAX_DOCUMENT_BYTES = 900_000  # Firestore allows 1 MiB per document; keep headroom
+# Firestore allows 1 MiB per document, measured its way (``firestore_size``);
+# this keeps headroom for the document's name (up to ~1.6 KB) and overhead.
+MAX_DOCUMENT_BYTES = 900_000
 MAX_BATCH = 500  # Firestore's limit on writes in one commit
+MAX_DEPTH = 20  # Firestore's limit on nested maps and arrays
 INT64 = (-(2**63), 2**63 - 1)
-RESERVED_ID = re.compile(r"__.*__")
+RESERVED_ID = re.compile(r"__.*__")  # Firestore reserves these IDs
+# Field names: Firestore reserves __x__; the app also keeps every other "__"
+# name out of documents, so a field mask of one of them (the Firestore
+# backend's ID-only listing) can never match a stored field.
+RESERVED_FIELD = re.compile(r"__.*")
 
 
 class RepositoryError(Exception):
@@ -68,8 +74,8 @@ def check_document(doc: Any) -> Document:
     """A deep copy of ``doc`` if every value is storable; the path of the first that isn't."""
     if not isinstance(doc, dict):
         raise RepositoryError(f"a document must be a dict, got {type(doc).__name__}")
-    _check_value(doc, "$")
-    size = len(json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode())
+    _check_value(doc, "$", 0)
+    size = firestore_size(doc)
     if size > MAX_DOCUMENT_BYTES:
         raise RepositoryError(f"document is {size} bytes, over {MAX_DOCUMENT_BYTES}")
     return copy.deepcopy(doc)
@@ -81,7 +87,26 @@ def check_batch(docs: Mapping[str, Document]) -> dict[str, Document]:
     return {check_id(k): check_document(v) for k, v in docs.items()}
 
 
-def _check_value(value: Any, path: str) -> None:
+def firestore_size(value: Any) -> int:
+    """A value's size as Firestore counts it against the 1 MiB document limit:
+    a string is its UTF-8 bytes + 1, a number 8, a boolean or null 1, an array
+    the sum of its values, and a map the sum of (key bytes + 1 + value)."""
+    if value is None or isinstance(value, bool):
+        return 1
+    if isinstance(value, int | float):
+        return 8
+    if isinstance(value, str):
+        return len(value.encode()) + 1
+    if isinstance(value, list):
+        return sum(firestore_size(v) for v in value)
+    if isinstance(value, dict):
+        return sum(len(k.encode()) + 1 + firestore_size(v) for k, v in value.items())
+    raise RepositoryError(f"{type(value).__name__} is not a JSON value")
+
+
+def _check_value(value: Any, path: str, depth: int) -> None:
+    if depth > MAX_DEPTH:
+        raise RepositoryError(f"{path}: nested deeper than Firestore's {MAX_DEPTH} levels")
     if value is None or isinstance(value, bool | str):
         return
     if isinstance(value, int):
@@ -96,12 +121,14 @@ def _check_value(value: Any, path: str) -> None:
         for i, item in enumerate(value):
             if isinstance(item, list):
                 raise RepositoryError(f"{path}[{i}]: Firestore can't store a list in a list")
-            _check_value(item, f"{path}[{i}]")
+            _check_value(item, f"{path}[{i}]", depth + 1)
         return
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str) or not key:
                 raise RepositoryError(f"{path}: keys must be non-empty strings, got {key!r}")
-            _check_value(item, f"{path}.{key}")
+            if RESERVED_FIELD.fullmatch(key):
+                raise RepositoryError(f"{path}: field name {key!r} is reserved (starts with __)")
+            _check_value(item, f"{path}.{key}", depth + 1)
         return
     raise RepositoryError(f"{path}: {type(value).__name__} is not a JSON value")

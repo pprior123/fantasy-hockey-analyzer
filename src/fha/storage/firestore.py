@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 import httpx
 
-from fha.sources.google_auth import TokenProvider
+from fha.sources.google_auth import GoogleAuthError, TokenProvider
 from fha.storage.repository import (
     MAX_BATCH,
     Document,
@@ -43,6 +43,9 @@ PRODUCTION_URL = "https://firestore.googleapis.com"
 SCOPE = "https://www.googleapis.com/auth/datastore"
 PAGE_SIZE = 300
 MAX_REQUEST_BYTES = 10 * 1024 * 1024  # Firestore's limit on one request
+# A field mask matching nothing, to list IDs without bodies: stored documents
+# can't have "__" fields (RESERVED_FIELD), and Firestore refuses "__x__" masks.
+NO_FIELDS = "__none"
 
 
 class FirestoreRepository:
@@ -89,24 +92,30 @@ class FirestoreRepository:
         await self._commit("delete", f"{collection}/{doc_id}", [write])
 
     async def all(self, collection: str) -> dict[str, Document]:
+        return await self._list(collection, names_only=False)
+
+    async def _list(self, collection: str, *, names_only: bool) -> dict[str, Document]:
+        """Every document by ID; with ``names_only``, their IDs with empty bodies."""
         url = f"{self._url}/{quote(check_id(collection, 'collection'), safe='')}"
         docs: dict[str, Document] = {}
         page_token: str | None = None
         while True:
             params = {"pageSize": str(PAGE_SIZE)}
+            if names_only:
+                params["mask.fieldPaths"] = NO_FIELDS
             if page_token:
                 params["pageToken"] = page_token
             response = await self._request("list", collection, url, method="GET", params=params)
             body = _json(response)
             for raw in body.get("documents", []):
-                docs[_doc_id(raw)] = decode_document(raw)
+                docs[_doc_id(raw)] = {} if names_only else decode_document(raw)
             page_token = body.get("nextPageToken")
             if not page_token:
                 return docs
 
     async def replace_all(self, collection: str, docs: Mapping[str, Document]) -> None:
         stored = check_batch(docs)
-        existing = await self.all(collection)
+        existing = await self._list(collection, names_only=True)  # IDs only: no bodies
         writes: list[dict[str, Any]] = [
             {"update": {"name": self._doc_name(collection, k), "fields": encode_fields(v)}}
             for k, v in stored.items()
@@ -147,10 +156,15 @@ class FirestoreRepository:
         params: dict[str, str] | None = None,
         json_body: Any = None,
     ) -> httpx.Response:
-        headers = {"Authorization": f"Bearer {await self._token()}"}
+        try:
+            token = await self._token()
+        except GoogleAuthError as e:  # its messages carry no key or token
+            raise RepositoryError(f"Firestore {action}: {e}") from None
+        headers = {"Authorization": f"Bearer {token}"}
+        query = {**(params or {}), "prettyPrint": "false"}  # compact JSON: less egress
         try:
             response = await self._http.request(
-                method, url, params=params, json=json_body, headers=headers
+                method, url, params=query, json=json_body, headers=headers
             )
         except httpx.HTTPError as e:
             raise RepositoryError(f"Firestore {action} failed: {type(e).__name__}") from None

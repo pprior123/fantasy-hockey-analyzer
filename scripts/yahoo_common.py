@@ -49,8 +49,9 @@ class JsonFileTokenStore:
     async def save(self, token: Token) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        tmp.unlink(missing_ok=True)  # a leftover could be readable by others
+        # O_EXCL: a new file, so the 0600 mode applies before any byte is written.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(token.to_dict(), f)
-        os.chmod(tmp, 0o600)  # O_CREAT's mode doesn't apply to an existing file
         os.replace(tmp, self.path)

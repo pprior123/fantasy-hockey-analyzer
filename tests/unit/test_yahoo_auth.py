@@ -1,7 +1,10 @@
 """scripts/yahoo_auth.py and scripts/yahoo_common.py, with Yahoo mocked."""
 
+import json
+import os
 import stat
 from pathlib import Path
+from typing import IO
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -52,13 +55,25 @@ async def test_token_store_round_trip_is_owner_only(tmp_path: Path) -> None:
     assert list(store.path.parent.iterdir()) == [store.path]  # no temp file left
 
 
-async def test_token_store_tightens_an_existing_file(tmp_path: Path) -> None:
+async def test_token_store_is_owner_only_before_the_token_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = JsonFileTokenStore(tmp_path / "t.json")
     tmp = tmp_path / "t.json.tmp"
-    tmp.write_text("stale")
+    tmp.write_text("stale")  # a leftover from an interrupted save, readable by others
     tmp.chmod(0o644)
+    modes: list[int] = []
+    real_dump = json.dump
+
+    def dump(obj: object, f: IO[str]) -> None:
+        modes.append(stat.S_IMODE(os.fstat(f.fileno()).st_mode))
+        real_dump(obj, f)
+
+    monkeypatch.setattr(json, "dump", dump)
     await store.save(Token("a", "r", NOW))
+    assert modes == [0o600]
     assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    assert not tmp.exists()
 
 
 async def test_token_store_rejects_a_corrupt_file(tmp_path: Path) -> None:

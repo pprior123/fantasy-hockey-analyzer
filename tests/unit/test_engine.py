@@ -150,6 +150,10 @@ def test_config_accepts_top_n_of_one() -> None:
     assert EngineConfig(divisor_top_n=1).top_n == 1
 
 
+def test_config_accepts_the_largest_top_n() -> None:
+    assert EngineConfig(divisor_top_n=10_000).top_n == 10_000
+
+
 # ---------------------------------------------------------------- from_mapping (stored settings)
 
 

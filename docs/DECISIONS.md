@@ -458,11 +458,11 @@ The synthetic parser fixtures reproduce each of these variants.
 ## 2026-09-26 — M3: the network-policy gaps are closed
 The four gaps recorded before M3 ("Known network-policy gaps for M3"):
 1. **Unguarded calls:** closed. In the loopback window, `connect_ex` and
-   `sendmsg` are guarded along with `connect` and `sendto`. All four
+   `sendmsg` are guarded along with `connect` and `sendto`. All five
    name-resolution functions (`getaddrinfo`, `gethostbyname`,
-   `gethostbyname_ex`, `getnameinfo`) allow only loopback, both in that
-   window and while blocked. pytest-socket guarded only two of them while
-   blocked.
+   `gethostbyname_ex`, `gethostbyaddr` (and so `getfqdn`), `getnameinfo`)
+   allow only loopback, both in that window and while blocked.
+   pytest-socket guarded only two of them while blocked.
 2. **gRPC:** moot, since Firestore goes over httpx (see "Firestore and Google
    Sheets over REST"). The environment is scrubbed anyway: an autouse fixture
    removes the Firestore, Google-credential, sheet and Yahoo variables for
@@ -485,10 +485,12 @@ shared contract suite (`tests/unit/storage/contract.py`) runs against all of
 them.
 
 Firestore's limits are checked in every backend (`check_document`,
-`check_id`): 1 MiB per document (900 KB kept as headroom), 500 writes per
-commit, the ID rules, 64-bit integers, no list directly inside a list, and
-finite numbers. So a test against the in-memory backend refuses what
-production would. Types round-trip exactly (bool is not int, and 1.0 stays
+`check_id`): 1 MiB per document, measured as Firestore measures it (a
+number is 8 bytes, a string its UTF-8 bytes + 1, and so on: `firestore_size`;
+900 KB kept as headroom), 500 writes per commit, the ID rules, reserved
+field names, nesting at most 20 deep, 64-bit integers, no list directly
+inside a list, and finite numbers. So a test against the in-memory backend
+refuses what production would (checked against the emulator). Types round-trip exactly (bool is not int, and 1.0 stays
 a float).
 
 Anything bigger than a document (the whole-league stats cache, the free-agent
@@ -861,9 +863,9 @@ non-breaking spaces left in names.
   stored in canonical order. Re-importing the same file writes nothing.
   - Duplicates with the same cap hit collapse. Duplicates with different cap
     hits are reported and not imported.
-  - Bindings, overrides and the alias table are one document each (a few
-    hundred entries), so an import is a handful of writes rather than one
-    per row.
+  - Bindings and overrides are one document each (a few hundred entries),
+    so an import is a handful of writes rather than one per row. The alias
+    table is one document per salary name, written once, at seeding.
   - An AAV override (the single-player edit) beats the import. A player
     bound to two rows gets no cap hit and is listed as a problem.
 - **The alias seed** ships in the package (`fha/data/alias_seed.json`, NHL
@@ -872,3 +874,62 @@ non-breaking spaces left in names.
   because it normalized the same names millions of times. The matcher now
   memoizes its name functions (0.7 s). Tests clear the caches, since a cache
   shared across tests hid two mutants.
+
+## 2026-09-26 — M3 review round 1: what changed
+Two independent reviewers (storage and refresh; salaries). Their findings are
+fixed as listed in PR #5's review log. The design changes:
+- **Refresh:**
+  - After a failed Yahoo refresh, requests within 60 s get the stale
+    snapshot and the error without calling Yahoo, forced ones included. So
+    during an outage, requests queued behind a failure no longer each wait
+    out their own Yahoo attempt.
+  - A process keeps its last decoded snapshot, and a request reads only the
+    cache's small meta document to learn whether that snapshot is still
+    current. A whole-league cache is 2-3 MB of JSON, and Spark allows
+    10 GiB of egress a month.
+  - A snapshot Yahoo returned but the store refused is still served, with
+    the error.
+- **Firestore:**
+  - `replace_all` lists only document IDs, using a field mask no document
+    can match, since the app keeps `__`-prefixed field names out of
+    documents.
+  - Responses are requested without pretty-printing.
+  - A token failure is a `RepositoryError`.
+- **Dev file:** it must be inside the checkout's `private/`. A bare
+  `private` path component isn't enough (on macOS every temp path resolves
+  under `/private`). Setting the Firestore variables together with
+  `FHA_LOCAL_REPOSITORY` is an error, not a silent choice.
+- **Tests' network policy:**
+  - A blocked attempt during collection fails the session.
+  - A blocked attempt is not hidden by a skip.
+  - Every SPEC §8 name is scrubbed; emulator tests keep only
+    `FIRESTORE_EMULATOR_HOST`.
+- **League sheet:**
+  - Rebinding a tab to the same team keeps its confirmed rows.
+  - A tab CAP that differs from the summary cap is in the tab's discrepancy
+    report.
+  - A bound tab that is unrecognized reports only its status.
+  - Whole-dollar rounding (at most $0.50 per salary and on the payroll) is
+    not a payroll discrepancy.
+  - Unknown team strings are listed in both reports.
+  - An even split between cap references gives no cap.
+  - `check_league_sheet` shows tabs as "tab N" unless `--names`.
+- **Matcher:**
+  - A surname is split on the raw name's whitespace, so a hyphenated first
+    name (Jean-Gabriel Pageau) stays one word.
+  - Steps 3-4 skip a player whose team and position group both contradict
+    the row's: he is only a fuzzy candidate, not a silent permanent binding.
+- **Free agents:** a nullable `cap_hit_with_bonuses` (SPEC §6), read from an
+  optional `Cap Hit With Bonuses` column. The base cap hit stays the one
+  used.
+- **Pushback:**
+  - The John/Jonathan nickname group stays: the workbook's own aliases pair
+    Johnny Gruden with Jonathan Gruden.
+  - CI pins actions exactly, but Java 21 and Node 22 only to their major
+    lines (patch drift can't affect the emulator tests). firebase-tools is
+    pinned exactly; its npm dependencies can't be locked through npx.
+- **For M4:**
+  - Set the `httpx` logger to WARNING in the app's logging setup: at INFO it
+    logs request URLs, which carry the sheet ID and the Firestore project.
+  - Create `RefreshService` and the token providers per event loop (their
+    `asyncio.Lock`s bind to the first loop that uses them).

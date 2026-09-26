@@ -82,3 +82,13 @@ async def test_list_names_are_restricted(name: str) -> None:
 async def test_meta_may_not_use_the_reserved_key() -> None:
     with pytest.raises(RepositoryError, match="_chunks"):
         await save_chunked(InMemoryRepository(), "rec", {"_chunks": 1}, {})
+
+
+def test_firestore_size_counts_as_firestore_does() -> None:
+    from fha.storage.repository import firestore_size
+
+    assert firestore_size({"ab": "é", "n": 1, "f": 1.5, "t": True, "z": None, "l": [1, "x"]}) == (
+        (3 + 3) + (2 + 8) + (2 + 8) + (2 + 1) + (2 + 1) + (2 + 8 + 2)
+    )
+    with pytest.raises(RepositoryError, match="tuple is not a JSON value"):
+        firestore_size((1,))

@@ -328,3 +328,7 @@ async def test_an_unreadable_cache_is_logged_without_content(
     await repo.delete(CACHE, "stats-0")
     assert await load_cached(repo) is None
     assert caplog.messages == ["stats cache unreadable (ChunkError); refetching"]
+
+
+async def test_an_empty_store_has_no_cache() -> None:
+    assert await load_cached(InMemoryRepository()) is None

@@ -10,10 +10,17 @@ It replaces an Excel workbook whose core value is a custom player rating,
 **TTLTST**, shown next to each player's salary (AAV).
 
 - **User:** one person (the owner). No accounts, no sharing.
-- **League:** Yahoo NHL league ID `8076`. 8 managers. Head-to-head categories.
-  Daily lineups. Max 5 acquisitions per week. Keeper league (count TBC, ~8).
+- **League:** Yahoo NHL league ID `8076`. 8 managers. Head-to-head categories,
+  weekly matchups (Mon–Sun). Daily lineups. Max 5 waiver acquisitions per
+  week. Keeper league: exactly 8 keepers, each paid their full cap hit.
 - **Scoring categories (10):** G, A, PPP, PIM, HIT, SOG, BLK, W, GAA, SV%.
-- **Roster:** 3 C, 3 LW, 3 RW, 6 D, 1 G, 9 BN, 3 IR+.
+- **Roster:** 16 active (3 C, 3 LW, 3 RW, 6 D, 1 G), bench, 1 IR + 1 IR+.
+  Slot counts are read from Yahoo league settings at runtime (the league
+  constitution and earlier notes disagree on bench size).
+- **Salary cap:** hard cap, same for all teams, set by the league each season
+  (currently $119.6M). Cap hits come from PuckPedia. Players in IR / IR+ slots
+  and players sent to the minors don't count. A pickup needs cap room first.
+  Teams must be compliant from the start of the regular season.
 - **Primary device:** phone browser, installable to home screen (PWA).
 - **Access:** Yahoo Fantasy Sports API, **read-only** (approved; app created).
 
@@ -21,7 +28,8 @@ It replaces an Excel workbook whose core value is a custom player rating,
 
 Parity with the spreadsheet: one mobile-friendly view of every player with
 salary, TTLTST, percentile, and value, filterable by owner; every team's roster
-with its category profile; and a head-to-head matchup view. When Phase 1
+with its category profile, payroll and cap room; a head-to-head matchup view;
+and a cap-aware way to find a replacement for a player. When Phase 1
 ships, the owner stops opening Excel.
 
 **Phase 1 ends with a deployed, running app the owner uses day to day.**
@@ -34,8 +42,8 @@ Write access to Yahoo (roster moves), goalie rating model, projections,
 rest-of-season or schedule weighting (including games-this-week counts),
 historical snapshots, waiver *recommendation* features (drop suggestions,
 acquisition counter), trade evaluator, multi-user support. (The Matchup
-screen's free-agent shortcut in §7 is a filter and sort over existing data,
-not a recommender.) Do not build these. Phase 2 and 3
+screen's free-agent shortcut and the Replace view in §7 are filters and sorts
+over existing data for a player the owner chose, not recommenders.) Do not build these. Phase 2 and 3
 are listed in §10 for context only.
 
 ## 2. Architecture
@@ -89,8 +97,13 @@ Required seams (Protocols), each with an in-memory/fake implementation used in
 tests:
 
 - `YahooSource` — league settings, teams, rosters, player pool, season stats.
-- `SalarySource` — yields `(name, team, aav)` rows. Phase 1 impl: CSV.
-  (PuckPedia has a paid private API; a future impl may slot in here.)
+- `LeagueSheetSource` — the league's shared salary spreadsheet (§4a): per
+  team tab, the salary rows, IR rows, the tab's own payroll, and the cap.
+  Two grid readers feed one pure parser: Google Sheets API (production) and
+  a downloaded `.xlsx` (dev, tests).
+- `SalarySource` — yields `(name, team, aav)` rows for free agents. Phase 1
+  impl: PuckPedia CSV. (PuckPedia has a paid private API; a future impl may
+  slot in here.)
 - `Repository` — players, stats cache + timestamp, salaries, name bindings,
   aliases, Yahoo tokens, config.
 - `Clock` — injectable, so cache-TTL logic is testable.
@@ -104,7 +117,49 @@ tests:
 | Season stat totals | Yahoo API | **source of truth** for stats |
 | Last season's stat totals | Yahoo API | pre-season / early-season baseline (§5) |
 | Weekly matchups | Yahoo API | league scoreboard, current and next week |
-| Salary (AAV) | CSV import | from PuckPedia export or the league's roster sheet |
+| Salaries of rostered players, payrolls, cap | League shared spreadsheet | **source of truth** (§4a) |
+| Salaries of free agents | CSV import | PuckPedia export (the sheet only lists rostered players) |
+
+Where both have a rostered player, the league sheet wins.
+
+### 4a. League salary spreadsheet
+
+The league keeps a shared Google Sheet: one tab per team plus a summary tab
+holding the cap. Each GM maintains their own tab by hand (the league requires
+it within 24 h of roster changes), so layouts differ between tabs: header row
+5–7, salary in column F or G, names as "Last, First" or "First Last" (with
+nicknames and typos), NHL teams as codes or city names. Tabs also hold GMs'
+contact details, which the app must never read past, store, or log.
+
+Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
+
+- The `PAYROLL` cell's formula (followed through at most two cell
+  references, e.g. `=SUM(C36)` → `C36 = SUM(F6:F31)`) names a single-column
+  range. That column is the salary column and those rows are the counted
+  players. Name / position / team are read from the same rows by header.
+- Rows labelled `IR` / `IR+` below the range are IR players (salary not
+  counted, per league rules).
+- The tab's `CAP` and `PAYROLL` values are the league's official numbers.
+- A tab whose formula cannot be resolved to one column range is reported as
+  **unrecognized** in Admin, never guessed at.
+
+Reading: production uses the Google Sheets API (values and formulas, one
+batched request per refresh) with the Firestore service account; the owner
+shares the sheet view-only with that account's email. The sheet ID comes
+from env `LEAGUE_SHEET_ID`. Dev reads a downloaded `.xlsx` at
+`LEAGUE_SHEET_XLSX` (under `private/`). Admin also accepts an uploaded
+`.xlsx` in any environment, as a fallback when the live read is unavailable
+(e.g. before the service account exists, or if sharing is revoked). The
+upload path imports `openpyxl` lazily so it stays off the cold-start path.
+
+Binding: each tab is bound once to a Yahoo team (Admin; suggested by
+roster-name overlap), then each sheet row is matched **within that team's
+Yahoo roster** (§6). Both bindings are persisted.
+
+Discrepancy report (Admin, and a badge on Rosters): Yahoo roster players
+missing from the tab, tab players not on the Yahoo roster, and a tab payroll
+that differs from the sum of its matched rows. (The league penalizes
+out-of-date sheets; this makes staleness visible.)
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —
@@ -197,6 +252,25 @@ These compare team *profiles* (rates), not projected weekly totals, which
 depend on games played that week (schedule weighting is out of scope). The
 UI says so.
 
+### Salary cap
+
+Pure functions in `domain/`. The cap and each team's payroll come from the
+league sheet (§4a). `SALARY_CAP` config exists only as an override if the
+sheet's cap cell is unreadable. (The constitution's "NHL cap + 7.5%" is out
+of date; the sheet is authoritative.)
+
+```
+counts(p)          = p is in the tab's PAYROLL range (so not an IR row)
+payroll(team)      = the tab's official PAYROLL value
+cap_room(team)     = cap - payroll(team)
+fits(p, team)      = aav(p) <= cap_room(team)     # pickup needs room first,
+                                                  # even for an IR player
+room_after(team, drop, add) = cap_room(team) + aav(drop)·counts(drop) - aav(add)
+```
+
+A free agent with no PuckPedia AAV shows "—" and is excluded from cap
+filters, with a count of how many were excluded; never treated as 0.
+
 ### Golden reference: the owner's workbook
 
 `2025_2026_stats.xlsx` (not committed — see §8). It holds the **2025-26**
@@ -238,6 +312,13 @@ Golden tests:
 Salary rows are matched to Yahoo `player_id` **once** and the binding
 persisted. Never re-match by name on every request.
 
+League-sheet rows are matched **only against the bound Yahoo team's roster**
+(~27 candidates), which makes surname-only entries ("Andersen") and typos
+("Oetterger") resolvable: a unique surname within the roster is a match;
+fuzzy matches are still candidates needing confirmation. PuckPedia rows use
+the full cascade against the whole pool. Names may be "Last, First"; the
+normalizer handles both orders.
+
 Cascade:
 
 1. Exact name + team.
@@ -250,8 +331,9 @@ Cascade:
 Seed the alias table from `alias_seed.json`. Every seed alias is also a test
 case.
 
-Salary import is **idempotent**: re-importing the same CSV updates rows in
-place. A single-player AAV edit exists for mid-season contract changes.
+Salary import is **idempotent**: re-importing the same CSV (or re-reading an
+unchanged sheet) updates rows in place. A single-player AAV edit exists for
+free agents whose contracts change mid-season.
 
 Salary convention: store the cap hit (AAV). Entry-level contracts with
 performance bonuses: store base cap hit in Phase 1, and keep a nullable
@@ -272,18 +354,25 @@ Common to the tables: a **Categories** toggle swaps the salary columns
    and a Refresh button.
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
-   with standard deviation, and mean TTLTST). Goalies listed with raw
-   W / GAA / SV% and Yahoo rank (no TTLTST).
-3. **League** — one row per team: mean norm per category and mean TTLTST
-   (replaces the workbook's manager comparison, `Table10`). Tap a team to
-   open it in Rosters.
+   with standard deviation, and mean TTLTST), payroll, cap room (over-cap in
+   red; incomplete payroll flagged). Goalies listed with raw W / GAA / SV%
+   and Yahoo rank (no TTLTST).
+   - **Replace** (owner's team): tap a player to see free agents eligible at
+     any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
+     cap room after the swap (`room_after`), and per-category deltas. Toggle:
+     only swaps that leave the team at or under the cap.
+3. **League** — one row per team: mean norm per category, mean TTLTST,
+   payroll and cap room (replaces the workbook's manager comparison,
+   `Table10`). Tap a team to open it in Rosters.
 4. **Matchup** — the owner's opponent for the current week and next week
    (week switch). Side-by-side team profiles per category with the
    difference; trailing categories (§5) highlighted. Goalies raw. A "Free
    agents who help here" link opens Players filtered to free agents and
-   sorted by `need_score`.
-5. **Admin** — salary CSV import, match review (unmatched salary row vs. top
-   3 candidates, tap to bind), single-player AAV edit, force refresh, config.
+   sorted by `need_score`, with a "fits my cap" filter.
+5. **Admin** — league sheet status (last read, per-tab parse status incl.
+   unrecognized tabs, tab ↔ Yahoo team binding, discrepancy report);
+   PuckPedia CSV import for free agents; match review (unmatched row vs. top
+   3 candidates, tap to bind); single-player AAV edit; force refresh; config.
 
 Footer on every page: "Fantasy data provided by Yahoo Fantasy" linking to
 Yahoo Fantasy (required attribution).
@@ -297,13 +386,16 @@ HttpOnly, Secure session cookie (long-lived). No user table.
 
 - Secrets live in `.env` locally and in Vercel environment variables in
   production: `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `APP_PASSWORD`,
-  `SESSION_SECRET`, `FIRESTORE_PROJECT_ID`, and
+  `SESSION_SECRET`, `FIRESTORE_PROJECT_ID`,
   `FIRESTORE_SERVICE_ACCOUNT_JSON` (the key's JSON content, not a file path —
-  there is no persistent filesystem on Vercel).
+  there is no persistent filesystem on Vercel), and `LEAGUE_SHEET_ID`.
 - **Never** commit, print, log, or echo secret values. Never read `.env` into
   output. Tests never need real secrets.
-- The owner's workbook and any salary CSVs stay out of git (`private/`,
-  `*.xlsx`, `*.csv` are ignored). Only derived JSON fixtures are committed.
+- The owner's workbook, the league sheet (and its ID), and any salary CSVs
+  stay out of git (`private/`, `*.xlsx`, `*.csv` are ignored). Only derived
+  JSON fixtures are committed. League-sheet tests use **synthetic** sheets
+  that reproduce each layout variant with made-up names — never real tabs.
+  No manager names or contact details anywhere in the repo.
 - Firestore rules: deny all client reads and writes. Server uses the service
   account.
 - The repository is public. Assume everything committed is world-readable.
@@ -373,23 +465,32 @@ start the next milestone until the current one is accepted.
   (integration-tested against the Firestore emulator), and a dev-only
   `LocalJsonRepository` (gitignored file) so the app can run locally against
   real data before any cloud setup. Never used in production.
-- Salary CSV import (idempotent), matcher cascade (§6), alias seeding,
-  bindings persisted, single-player edit.
+- League sheet (§4a): pure parser, `.xlsx` grid reader, Google Sheets API
+  grid reader (tested with mocked HTTP; used live from M5), tab ↔ team
+  binding, team-scoped matching, discrepancy report.
+- PuckPedia CSV import for free agents (idempotent), matcher cascade (§6),
+  alias seeding, bindings persisted, single-player edit.
 - Refresh service with TTL and injectable `Clock`.
-- **Accept:** matcher tests incl. all seed aliases pass; re-import is a
-  no-op; TTL behaviour tested with a fake clock; coverage gates met.
+- **Accept:** parser handles every layout variant seen in the real sheet
+  (as synthetic fixtures) and reports an unresolvable tab as unrecognized;
+  run locally against the owner's downloaded sheet, every tab parses and its
+  payroll matches the sheet's own; matcher tests incl. all seed aliases
+  pass; re-import is a no-op; TTL behaviour tested with a fake clock;
+  coverage gates met.
 
 ### M4 — Web UI
 - Players, Rosters, League, Matchup, Admin screens (§7), Categories and
   season toggles, password auth, attribution footer, PWA manifest + icons.
-- Team profile, matchup and `need_score` functions in `domain/` (test-first).
+- Team profile, matchup, `need_score` and salary-cap functions in `domain/`
+  (test-first).
 - **Accept:** route tests pass; the owner runs the app **locally against real
   Yahoo data** (`LocalJsonRepository`), on laptop and on their phone over the
   local network at 390 px, and signs off; all gates green.
 
 ### M5 — Deploy
 - Vercel project, env vars, Firestore project with deny-all rules, service
-  account, production redirect URI added to the Yahoo app.
+  account, production redirect URI added to the Yahoo app. Owner shares the
+  league sheet view-only with the service account; `LEAGUE_SHEET_ID` set.
 - Run consent in production; first real refresh.
 - **Accept:** owner opens the app on their phone, logs in, sees their roster
   with TTLTST and AAV and next week's matchup; refresh completes within the
@@ -399,16 +500,21 @@ start the next milestone until the current one is accepted.
 - **Phase 2:** to be planned from the owner's use of the running Phase 1 app.
   Candidates so far: waiver recommendations (drop suggestions), trade
   evaluator, tonight's-games lineup helper and games-this-week counts (NHL
-  schedule API), weekly acquisition counter.
+  schedule API), weekly acquisition counter, goalie-appearance tracker (the
+  league requires 3 per week), export of the owner's roster in the league
+  spreadsheet's format (the league requires it within 24 h of changes).
 - **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie
   model, keeper-value view.
 
 ## 11. Open questions
 
-1. Keeper count (owner believes 8) and whether keeper cost relates to AAV.
+1. ~~Keeper count and cost~~ — resolved: exactly 8, each paid full cap hit.
 2. Whether Yahoo exposes PPP directly — resolved in M2.
 3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
    revisit only if the Repository implementation fights it.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.
 5. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
    in team profiles (default: no) — revisit after the owner tries the app.
+6. Sheet layout drift between seasons: the parser keys off each tab's
+   PAYROLL formula, so relabelled headers are fine; an unresolvable tab is
+   flagged, not guessed. Revisit if GMs restructure tabs.

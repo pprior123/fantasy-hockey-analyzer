@@ -82,6 +82,7 @@ skip_covered = false
 
 # Per-package gates (SPEC §9), enforced by scripts/check_coverage.py.
 [tool.fha.coverage-gates]
+_root = 90  # modules directly under src/fha/
 domain = 95
 sources = 90
 storage = 90
@@ -90,4 +91,15 @@ web = 80
 
 # ---------------------------------------------------------------- mutmut
 [tool.mutmut]
-paths_to_mutate = ["src/fha/domain/"]
+source_paths = ["src/fha/domain/"]
+# mutmut copies only source_paths into mutants/; the rest of the package and
+# the scripts the tests import must come along or collection fails.
+also_copy = [
+  "src/fha/__init__.py",
+  "src/fha/py.typed",
+  "src/fha/sources/",
+  "src/fha/storage/",
+  "src/fha/services/",
+  "src/fha/web/",
+  "scripts/",
+]

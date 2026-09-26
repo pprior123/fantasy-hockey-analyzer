@@ -19,7 +19,7 @@ oauth2.json
 
 # Salary imports (may contain league data)
 *.csv
-!sample_*.csv
+!tests/fixtures/**/sample_*.csv
 
 # Python
 __pycache__/

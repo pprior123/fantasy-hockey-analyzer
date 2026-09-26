@@ -18,8 +18,9 @@ It replaces an Excel workbook whose core value is a custom player rating,
   Slot counts are read from Yahoo league settings at runtime (the league
   constitution and earlier notes disagree on bench size).
 - **Salary cap:** hard cap, same for all teams, set by the league each season
-  (currently $119.6M). Cap hits come from PuckPedia. Players in IR / IR+ slots
-  and players sent to the minors don't count. A pickup needs cap room first.
+  (currently $119.6M). Cap hits are PuckPedia's; the league sheet (§4a) records
+  them for rostered players, a PuckPedia CSV supplies free agents'. Players in
+  IR / IR+ slots and players sent to the minors don't count. A pickup needs cap room first.
   Teams must be compliant from the start of the regular season.
 - **Primary device:** phone browser, installable to home screen (PWA).
 - **Access:** Yahoo Fantasy Sports API, **read-only** (approved; app created).
@@ -129,7 +130,10 @@ holding the cap. Each GM maintains their own tab by hand (the league requires
 it within 24 h of roster changes), so layouts differ between tabs: header row
 5–7, salary in column F or G, names as "Last, First" or "First Last" (with
 nicknames and typos), NHL teams as codes or city names. Tabs also hold GMs'
-contact details, which the app must never read past, store, or log.
+contact details. Whole tabs are necessarily fetched (the PAYROLL cell's
+position is only known after reading), but the app must **never persist, log
+or render any cell outside the resolved payroll range, its header row, the IR
+rows, and the CAP / PAYROLL cells**; the raw grid is discarded after parsing.
 
 Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
 
@@ -139,7 +143,9 @@ Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
   players. Name / position / team are read from the same rows by header.
 - Rows labelled `IR` / `IR+` below the range are IR players (salary not
   counted, per league rules).
-- The tab's `CAP` and `PAYROLL` values are the league's official numbers.
+- The tab's `PAYROLL` value is the team's official payroll. The cap is the
+  summary tab's cap cell (each team tab's `CAP` cell references it); a team
+  tab whose `CAP` value differs is flagged in the discrepancy report.
 - A tab whose formula cannot be resolved to one column range is reported as
   **unrecognized** in Admin, never guessed at.
 
@@ -201,22 +207,38 @@ Pure functions in `domain/`. Seven skater categories only:
 **G, A, PPP, PIM, HIT, SOG, BLK.** Goalies are excluded from TTLTST.
 
 ```
-eligible(p)        = p.gp >= GP_FLOOR_FRACTION * max(gp over pool)   # default 0.02
+eligible(p)        = p.gp > 0 and p.gp >= GP_FLOOR_FRACTION * max(gp over pool)
+                     # default 0.02
 per82(cat, p)      = p.stat[cat] / p.gp * 82                           # eligible only
-divisor(cat)       = mean of the 10 highest per82(cat, ·) over eligible players
-norm(cat, p)       = per82(cat, p) / divisor(cat)
+divisor(cat)       = mean of the min(TOP_N, #eligible) highest per82(cat, ·)
+                     over eligible players                              # TOP_N = 10
+norm(cat, p)       = per82(cat, p) / divisor(cat), or 0 if divisor(cat) == 0
 TTLTST(p)          = arithmetic mean of norm over the 7 categories
-percentile(p)      = (1 - rank(p) / N) * 100      # rank 1 = highest TTLTST
+rank(p)            = 1 + #{eligible q : TTLTST(q) > TTLTST(p)}   # competition
+                     # ranking: equal scores share a rank (1, 2, 2, 4)
+percentile(p)      = (1 - rank(p) / N) * 100,  N = #eligible players
 value(p)           = p.aav / TTLTST(p) / 1_000_000 # None if no AAV or TTLTST == 0
 ```
 
 Rules:
 
+- Ineligible players (including GP = 0) are **unrated**: TTLTST, rank,
+  percentile and value are all None. They still appear in lists.
+- With no eligible players (e.g. before opening night with "This season"
+  forced), every player is unrated and the ranking is empty — no error.
+- A divisor of 0 (nobody eligible recorded the stat) gives every player
+  norm 0 in that category; the category stays in the mean so TTLTST remains
+  comparable.
+- N and ranks are computed over all eligible players, independent of any UI
+  filter. Display order for equal TTLTST: name, then player_id.
 - `PPP = PPG + PPA` unless Yahoo provides PPP directly.
 - Injured players keep their rate stats and stay ranked (owner's explicit call).
 - Divisors are **recomputed on every refresh**. (The workbook stores them as
   static values, which drift stale — a known flaw we are fixing.)
-- Ties: document and test the tie-breaking rule for rank.
+- **Parity wins:** if `extract_golden.py` shows the workbook computes
+  percentile, rank ties or eligibility differently from the above, M1 follows
+  the workbook, updates this section, and records the change in
+  `docs/DECISIONS.md`.
 - `GP_FLOOR_FRACTION`, the category list, and the top-N (10) are config, not
   literals.
 
@@ -238,14 +260,19 @@ never mixing seasons:
 Pure functions in `domain/`, built on the per-player norms above:
 
 ```
-team_profile(team, cat) = mean and std dev of norm(cat, p) over the team's
-                          rated skaters, excluding players in IR / IR+ slots
-team_ttltst(team)       = mean TTLTST over the same players
-matchup(me, opp, cat)   = team_profile(me, cat) - team_profile(opp, cat)
+profile_players(team)   = the team's rated skaters, excluding IR / IR+ slots
+mean_norm(team, cat)    = mean of norm(cat, p) over profile_players(team)
+sd_norm(team, cat)      = population std dev of the same values
+team_ttltst(team)       = mean TTLTST over profile_players(team)
+matchup(me, opp, cat)   = mean_norm(me, cat) - mean_norm(opp, cat)
 trailing(cat)           = matchup(me, opp, cat) < MATCHUP_CLOSE_MARGIN
                           # config, default 0.05: "behind or close"
 need_score(p)           = sum of norm(cat, p) over trailing categories
 ```
+
+A team with no profile players has mean, std dev and TTLTST of None (shown
+"—"), and no category counts as trailing against or for it. With one player,
+std dev is 0.
 
 Goalies are shown with raw W / GAA / SV% only (no model; out of scope).
 These compare team *profiles* (rates), not projected weekly totals, which
@@ -260,13 +287,25 @@ sheet's cap cell is unreadable. (The constitution's "NHL cap + 7.5%" is out
 of date; the sheet is authoritative.)
 
 ```
-counts(p)          = p is in the tab's PAYROLL range (so not an IR row)
+counts(p)          = p is in the tab's PAYROLL range (so not an IR row);
+                     false for a player missing from the tab (a discrepancy,
+                     flagged per §4a)
 payroll(team)      = the tab's official PAYROLL value
 cap_room(team)     = cap - payroll(team)
-fits(p, team)      = aav(p) <= cap_room(team)     # pickup needs room first,
-                                                  # even for an IR player
+fits(p, team)      = aav(p) <= cap_room(team)
+                     # a straight pickup, no drop
 room_after(team, drop, add) = cap_room(team) + aav(drop)·counts(drop) - aav(add)
+swap_ok(team, drop, add)    = room_after(team, drop, add) >= 0
+                     # a Yahoo add/drop, which is one transaction
 ```
+
+`fits` is for pickups without a drop (the Matchup "fits my cap" filter);
+`swap_ok` is for add/drop swaps (the Replace view). Acquiring a player who is
+currently injured still needs his full cap hit to fit at the moment of
+acquisition — he leaves the payroll only once placed in an IR slot — so the
+IR status of the incoming player never changes either predicate. That an
+add/drop counts as simultaneous is an assumption about league practice; see
+§11.
 
 A free agent with no PuckPedia AAV shows "—" and is excluded from cap
 filters, with a count of how many were excluded; never treated as 0.
@@ -319,6 +358,12 @@ fuzzy matches are still candidates needing confirmation. PuckPedia rows use
 the full cascade against the whole pool. Names may be "Last, First"; the
 normalizer handles both orders.
 
+Team codes differ between sources (Yahoo `TB`, PuckPedia `TBL`, the sheet's
+"Tampa Bay" or typos like `CLS`). A canonical NHL team map in `domain/`
+(codes, Yahoo abbreviations, city and nickname variants) normalizes team
+before any "+ team" step; an unmapped team string is treated as unknown
+(skips steps 1–2) and reported in Admin, never guessed.
+
 Cascade:
 
 1. Exact name + team.
@@ -360,7 +405,7 @@ Common to the tables: a **Categories** toggle swaps the salary columns
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:
-     only swaps that leave the team at or under the cap.
+     only swaps where `swap_ok` holds.
 3. **League** — one row per team: mean norm per category, mean TTLTST,
    payroll and cap room (replaces the workbook's manager comparison,
    `Table10`). Tap a team to open it in Rosters.
@@ -395,6 +440,8 @@ HttpOnly, Secure session cookie (long-lived). No user table.
   stay out of git (`private/`, `*.xlsx`, `*.csv` are ignored). Only derived
   JSON fixtures are committed. League-sheet tests use **synthetic** sheets
   that reproduce each layout variant with made-up names — never real tabs.
+  They are built in the test code (openpyxl for the `.xlsx` reader, JSON
+  grids for the parser), so no `.xlsx` is ever committed.
   No manager names or contact details anywhere in the repo.
 - Firestore rules: deny all client reads and writes. Server uses the service
   account.
@@ -515,6 +562,9 @@ start the next milestone until the current one is accepted.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.
 5. `BASELINE_MIN_GP` (default 10) and whether IR / IR+ players should count
    in team profiles (default: no) — revisit after the owner tries the app.
-6. Sheet layout drift between seasons: the parser keys off each tab's
+6. Whether the league treats a Yahoo add/drop as simultaneous for cap
+   purposes (`swap_ok`), or requires room for the add before the drop
+   (then Replace should use `fits`). Owner to confirm.
+7. Sheet layout drift between seasons: the parser keys off each tab's
    PAYROLL formula, so relabelled headers are fine; an unresolvable tab is
    flagged, not guessed. Revisit if GMs restructure tabs.

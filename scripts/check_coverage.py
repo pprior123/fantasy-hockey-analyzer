@@ -5,15 +5,21 @@ report written by ``coverage json`` and checks line *and* branch coverage for
 each top-level subpackage of ``fha`` against ``[tool.fha.coverage-gates]`` in
 pyproject.toml.
 
+Modules directly under ``fha/`` are gated as the pseudo-package ``_root``.
 A package with no measurable code yet (e.g. only a docstring ``__init__``) is
-skipped. A subpackage with code but no configured gate is a failure, so new
-packages cannot silently escape the gates.
+skipped. Code can never silently escape the gates:
 
-Usage: python scripts/check_coverage.py [coverage.json] [pyproject.toml]
+- a package with code but no configured gate fails;
+- a source file on disk with code that is missing from the report fails
+  (coverage.py omits unimported files in directories without ``__init__.py``);
+- a report with no ``fha`` files at all fails.
+
+Usage: python scripts/check_coverage.py [coverage.json] [pyproject.toml] [src/fha]
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import tomllib
@@ -22,6 +28,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 ROOT_PACKAGE = "fha"
+ROOT_MODULES = "_root"
 
 
 @dataclass(frozen=True)
@@ -67,21 +74,43 @@ class Result:
         return self.totals.line_pct >= self.gate and self.totals.branch_pct >= self.gate
 
 
-def package_of(path: str) -> str | None:
-    """Return the ``fha`` subpackage a file belongs to, or None for root-level modules."""
+def relative_to_package(path: str) -> tuple[str, ...]:
+    """Path components below the ``fha`` package directory."""
     parts = PurePath(path.replace("\\", "/")).parts
     if ROOT_PACKAGE not in parts:
         raise ValueError(f"not inside the {ROOT_PACKAGE!r} package: {path}")
-    rest = parts[parts.index(ROOT_PACKAGE) + 1 :]
-    return rest[0] if len(rest) > 1 else None
+    return parts[parts.index(ROOT_PACKAGE) + 1 :]
+
+
+def package_of(path: str) -> str:
+    """Return the ``fha`` subpackage a file belongs to (``_root`` for top-level modules)."""
+    rest = relative_to_package(path)
+    return rest[0] if len(rest) > 1 else ROOT_MODULES
+
+
+def has_code(source: str) -> bool:
+    """True if a module has statements other than a leading docstring."""
+    body = ast.parse(source).body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    return bool(body)
+
+
+def unmeasured(report: dict[str, Any], package_dir: Path) -> list[str]:
+    """Source files with code that the coverage report does not mention."""
+    reported = {"/".join(relative_to_package(p)) for p in report["files"]}
+    return sorted(
+        rel
+        for path in package_dir.rglob("*.py")
+        if (rel := path.relative_to(package_dir).as_posix()) not in reported
+        and has_code(path.read_text())
+    )
 
 
 def totals_by_package(report: dict[str, Any]) -> dict[str, Totals]:
     out: dict[str, Totals] = {}
     for path, data in report["files"].items():
         pkg = package_of(path)
-        if pkg is None:
-            continue
         s = data["summary"]
         t = Totals(
             s["num_statements"],
@@ -114,13 +143,20 @@ def format_result(r: Result) -> str:
 def main(argv: list[str]) -> int:
     report_path = Path(argv[1] if len(argv) > 1 else "coverage.json")
     pyproject_path = Path(argv[2] if len(argv) > 2 else "pyproject.toml")
+    package_dir = Path(argv[3] if len(argv) > 3 else f"src/{ROOT_PACKAGE}")
     report = json.loads(report_path.read_text())
+    if not report["files"]:
+        print(f"FAIL report contains no {ROOT_PACKAGE} files; was coverage measured?")
+        return 1
     config = tomllib.loads(pyproject_path.read_text())
     gates = {k: float(v) for k, v in config["tool"]["fha"]["coverage-gates"].items()}
     results = evaluate(report, gates)
     for r in results:
         print(format_result(r))
-    return 0 if all(r.passed for r in results) else 1
+    missing = unmeasured(report, package_dir)
+    for rel in missing:
+        print(f"FAIL {rel} has code but is missing from the coverage report")
+    return 0 if all(r.passed for r in results) and not missing else 1
 
 
 if __name__ == "__main__":

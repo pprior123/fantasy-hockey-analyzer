@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from scripts.check_coverage import Totals, evaluate, main, package_of
+from scripts.check_coverage import Totals, evaluate, has_code, main, package_of, unmeasured
 
 GATES = {"domain": 95.0, "web": 80.0}
 
@@ -31,10 +31,11 @@ def report(files: dict[str, dict[str, Any]]) -> dict[str, Any]:
         ("src/fha/domain/sub/deep.py", "domain"),
         ("/abs/site-packages/fha/web/app.py", "web"),
         ("src\\fha\\web\\app.py", "web"),
-        ("src/fha/__init__.py", None),
+        ("src/fha/__init__.py", "_root"),
+        ("src/fha/config.py", "_root"),
     ],
 )
-def test_package_of(path: str, expected: str | None) -> None:
+def test_package_of(path: str, expected: str) -> None:
     assert package_of(path) == expected
 
 
@@ -95,23 +96,94 @@ def test_package_with_no_code_is_skipped_even_without_gate() -> None:
     assert results["newpkg"].passed
 
 
-def test_root_level_modules_are_not_gated() -> None:
-    rep = report({"src/fha/__init__.py": file_entry(10, 0)})
-    assert all(r.package != "__init__.py" for r in evaluate(rep, GATES))
-    assert all(r.passed for r in evaluate(rep, GATES))
+def test_root_level_modules_are_gated_as_root() -> None:
+    rep = report({"src/fha/config.py": file_entry(10, 0, 2, 0)})
+    results = {r.package: r for r in evaluate(rep, {**GATES, "_root": 90.0})}
+    assert results["_root"].totals == Totals(10, 0, 2, 0)
+    assert not results["_root"].passed
+
+
+def test_root_level_code_without_a_gate_fails() -> None:
+    rep = report({"src/fha/config.py": file_entry(10, 10)})
+    results = {r.package: r for r in evaluate(rep, GATES)}
+    assert results["_root"].gate is None
+    assert not results["_root"].passed
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("", False),
+        ('"""Only a docstring."""\n', False),
+        ('"""Doc."""\nX = 1\n', True),
+        ("import os\n", True),
+        ("X = 1\n", True),
+    ],
+)
+def test_has_code(source: str, expected: bool) -> None:
+    assert has_code(source) is expected
+
+
+def make_package(root: Path, files: dict[str, str]) -> Path:
+    pkg = root / "src" / "fha"
+    for rel, text in files.items():
+        (pkg / rel).parent.mkdir(parents=True, exist_ok=True)
+        (pkg / rel).write_text(text)
+    return pkg
+
+
+def test_unmeasured_finds_code_files_missing_from_report(tmp_path: Path) -> None:
+    pkg = make_package(
+        tmp_path,
+        {
+            "__init__.py": '"""Root."""\n',
+            "domain/__init__.py": '"""Domain."""\n',
+            "domain/engine.py": "X = 1\n",
+            "newpkg/mod.py": "Y = 2\n",  # no __init__.py: coverage.py never lists it
+            "domain/empty.py": '"""Docstring only."""\n',
+        },
+    )
+    rep = report(
+        {
+            "src/fha/__init__.py": file_entry(0, 0),
+            "src/fha/domain/__init__.py": file_entry(0, 0),
+            "src/fha/domain/engine.py": file_entry(1, 1),
+        }
+    )
+    assert unmeasured(rep, pkg) == ["newpkg/mod.py"]
 
 
 def test_main_exit_code_and_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text("[tool.fha.coverage-gates]\ndomain = 95\nweb = 80\n")
     cov = tmp_path / "coverage.json"
+    pkg = make_package(tmp_path, {"domain/a.py": "X = 1\n"})
 
     cov.write_text(json.dumps(report({"src/fha/domain/a.py": file_entry(100, 96, 4, 4)})))
-    assert main(["prog", str(cov), str(pyproject)]) == 0
+    assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 0
     out = capsys.readouterr().out
     assert "PASS domain" in out
     assert "SKIP web" in out
 
     cov.write_text(json.dumps(report({"src/fha/domain/a.py": file_entry(100, 50)})))
-    assert main(["prog", str(cov), str(pyproject)]) == 1
+    assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 1
     assert "FAIL domain" in capsys.readouterr().out
+
+
+def test_main_fails_on_unmeasured_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[tool.fha.coverage-gates]\ndomain = 95\n")
+    pkg = make_package(tmp_path, {"domain/a.py": "X = 1\n", "domain/sub/b.py": "Y = 2\n"})
+    cov = tmp_path / "coverage.json"
+    cov.write_text(json.dumps(report({"src/fha/domain/a.py": file_entry(1, 1)})))
+    assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 1
+    assert "FAIL domain/sub/b.py has code but is missing" in capsys.readouterr().out
+
+
+def test_main_fails_on_empty_report(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[tool.fha.coverage-gates]\ndomain = 95\n")
+    cov = tmp_path / "coverage.json"
+    cov.write_text(json.dumps({"files": {}}))
+    assert main(["prog", str(cov), str(pyproject), str(tmp_path)]) == 1
+    assert "no fha files" in capsys.readouterr().out

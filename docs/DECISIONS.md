@@ -30,9 +30,12 @@ targeted `--allow-hosts=127.0.0.1` opt-in. Alternative: respx's
 pytest-cov supports only a global `--cov-fail-under`. SPEC §9 requires
 per-package gates on line *and* branch coverage, so a small script reads
 `coverage.json` and checks each `fha` subpackage against
-`[tool.fha.coverage-gates]` in pyproject.toml. Packages with no measurable
-code are skipped; a package with code but no configured gate fails, so new
-packages cannot escape the gates. Alternative: one `coverage report
+`[tool.fha.coverage-gates]` in pyproject.toml. Modules directly under `fha/`
+are gated as `_root`. Packages with no measurable code are skipped. Code
+cannot escape the gates: a package with code but no gate fails; a source
+file with code that is missing from the report fails (coverage.py omits
+unimported files in directories lacking `__init__.py`); an empty report
+fails. Alternative: one `coverage report
 --include=... --fail-under=N` call per package — rejected, it checks the
 combined line+branch percentage and errors on packages with no data yet.
 
@@ -44,8 +47,9 @@ reach the serverless bundle (cold starts, SPEC §2).
 
 ## 2026-09-26 — Domain purity is enforced by a test
 `tests/unit/test_architecture.py` parses every module under `fha/domain/`
-and fails on imports of I/O, network, clock (`datetime`, `time`), randomness
-or the outer layers. Cheap, and it turns the "respect the seams" rule into a
+and fails on imports (relative imports resolved) of I/O, network, clock
+(`datetime`, `time`), randomness, `sys`/`logging`, or the outer layers, and
+on calls to builtin `open`/`print`/`input`/`eval`/`exec`/`__import__`. Cheap, and it turns the "respect the seams" rule into a
 gate.
 
 ## 2026-09-26 — Phase 1 target is a running app; scope additions

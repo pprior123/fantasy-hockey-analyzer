@@ -836,3 +836,39 @@ Results don't depend on candidate order (tested). Mutation testing
 On the owner's `private/salaries-example.csv`, with the agreed header row
 prepended: 100 rows, 0 goalies (the skater table only), 0 errors, and no
 non-breaking spaces left in names.
+
+## 2026-09-26 — M3: salary services (league sheet and free agents)
+- **Stored:** the parsed league sheet only (`league_sheet/latest`: the
+  payroll ranges' rows, IR rows, payroll and cap values, the read time). The
+  grid never reaches the Repository. Tab names are stored, since they are
+  what a tab is bound by. They live only in the owner's Firestore or dev
+  file, never in the repo.
+- **Tab ↔ team:** bound once, one tab per team, in the Admin screen.
+  `suggest_bindings` proposes the team that matches at least half of a
+  tab's rows, strictly more than any other team does. A team that would be
+  suggested for two tabs is suggested for neither. Rebinding a tab forgets
+  its row bindings, since they were matched against another roster.
+- **Rows ↔ roster:** SPEC §6 roster scope, aliases first. An automatic match
+  is persisted like a confirmed one (`auto:<step>` or `confirmed`), so a row
+  is never re-matched by name. The exception is a row whose bound player has
+  left the roster: it is matched again. Two rows on one player trust
+  neither, and both go to review.
+- **Discrepancy report:** Yahoo roster players in no row; rows matched to no
+  roster player; the tab's PAYROLL against the sum of its matched counted
+  rows. An unbound tab reports nothing yet. Its payroll, like an
+  unrecognized tab's, is None ("unavailable", SPEC §5).
+- **Free agents:** rows are keyed by normalized name + position group and
+  stored in canonical order. Re-importing the same file writes nothing.
+  - Duplicates with the same cap hit collapse. Duplicates with different cap
+    hits are reported and not imported.
+  - Bindings, overrides and the alias table are one document each (a few
+    hundred entries), so an import is a handful of writes rather than one
+    per row.
+  - An AAV override (the single-player edit) beats the import. A player
+    bound to two rows gets no cap hit and is listed as a problem.
+- **The alias seed** ships in the package (`fha/data/alias_seed.json`, NHL
+  names only). A test keeps it identical to the extracted fixture.
+- **Speed:** matching 800 rows against a 1,700-player pool took 8.2 s,
+  because it normalized the same names millions of times. The matcher now
+  memoizes its name functions (0.7 s). Tests clear the caches, since a cache
+  shared across tests hid two mutants.

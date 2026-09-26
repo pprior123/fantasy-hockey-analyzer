@@ -2,12 +2,13 @@
 
 import socket
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import pytest
-from pytest_socket import SocketBlockedError
+from pytest_socket import SocketBlockedError, SocketConnectBlockedError
 
-from tests.network_policy import violations
+from tests.network_policy import loopback_only, violations
 
 # Runs at import, i.e. during collection, before any test setup.
 with warnings.catch_warnings():
@@ -84,3 +85,55 @@ def test_non_loopback_allow_hosts_is_rejected(marker: FakeMarker, bad: str) -> N
 
 def test_unmarked_items_pass() -> None:
     assert violations([FakeItem("t::d")]) == []
+
+
+def _local_server() -> tuple[socket.socket, int]:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    return server, server.getsockname()[1]
+
+
+@pytest.mark.filterwarnings("ignore:A test tried to use socket")
+def test_loopback_only_allows_loopback_and_blocks_everything_else() -> None:
+    with loopback_only():
+        server, port = _local_server()
+        with server, socket.create_connection(("127.0.0.1", port)) as client:
+            assert client.getpeername()[1] == port
+        with pytest.raises(SocketConnectBlockedError):
+            socket.socket(socket.AF_INET).connect(("10.255.255.1", 80))
+        with pytest.raises(SocketBlockedError):
+            socket.getaddrinfo("example.com", 443)
+        with (
+            pytest.raises(SocketBlockedError),
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp,
+        ):
+            udp.sendto(b"x", ("10.255.255.1", 53))
+    # Re-blocked on exit.
+    with pytest.raises(SocketBlockedError):
+        socket.socket(socket.AF_INET)
+
+
+@pytest.mark.allow_hosts(["127.0.0.1"])
+def test_allow_hosts_marker_permits_loopback_regardless_of_order() -> None:
+    server, port = _local_server()
+    with server, socket.create_connection(("127.0.0.1", port)) as client:
+        assert client.getpeername()[1] == port
+
+
+@pytest.fixture
+def socket_state_in_teardown() -> Iterator[list[bool]]:
+    seen: list[bool] = []
+    yield seen
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            socket.socket(socket.AF_INET).close()
+            seen.append(False)
+        except SocketBlockedError:
+            seen.append(True)
+    assert seen == [True], "fixture teardown must not have network access"
+
+
+def test_fixture_teardown_is_blocked(socket_state_in_teardown: list[bool]) -> None:
+    assert socket_state_in_teardown == []

@@ -3,6 +3,10 @@
 .env.*
 secrets.json
 *.pem
+# GCP / Firebase service-account keys (M5)
+*firebase-adminsdk*.json
+*service-account*.json
+*serviceaccount*.json
 
 # Yahoo OAuth tokens (yahoofantasy / yfpy write these)
 .yahoofantasy

@@ -197,7 +197,8 @@ Yahoo requires an HTTPS redirect URI; the app registers
    `https://localhost:8000/?code=...` — the page may fail to load; that's fine.
 3. The owner pastes the full redirected URL back into the script.
 4. The script exchanges the code, then stores the refresh token via the
-   `Repository` (Firestore in prod; a gitignored local file only in dev).
+   `Repository` (Firestore in prod; in dev, a file under the gitignored
+   `private/` directory).
 
 Agents must not attempt this step. It requires the owner.
 
@@ -465,8 +466,9 @@ HttpOnly, Secure session cookie (long-lived). No user table.
 
 - **Tooling:** `pytest`, `pytest-cov`, `pytest-asyncio`, `hypothesis`,
   `respx` (httpx mocking), `mutmut`, `ruff`, `mypy --strict` on `src/`.
-- **CI:** GitHub Actions on every push and PR: ruff, mypy, pytest with
-  coverage. CI fails if any gate fails.
+- **CI:** GitHub Actions on every pull request and every push to `main`:
+  ruff, mypy, pytest with coverage, per-package coverage gates. CI fails if
+  any gate fails.
 - **Coverage gates:** ≥ 95% line and branch on `domain/`; ≥ 90% on
   `sources/`, `storage/`, `services/`; ≥ 80% on `web/`. Enforce per package,
   not one global number.
@@ -532,7 +534,8 @@ start the next milestone until the current one is accepted.
 ### M3 — Storage and salaries
 - `Repository` protocol, `InMemoryRepository`, `FirestoreRepository`
   (integration-tested against the Firestore emulator), and a dev-only
-  `LocalJsonRepository` (gitignored file) so the app can run locally against
+  `LocalJsonRepository` (a file under gitignored `private/`) so the app can
+  run locally against
   real data before any cloud setup. Never used in production.
 - League sheet (§4a): pure parser, `.xlsx` grid reader, Google Sheets API
   grid reader (tested with mocked HTTP; used live from M5), tab ↔ team

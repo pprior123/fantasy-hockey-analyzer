@@ -19,6 +19,7 @@ Mature Yahoo Fantasy wrappers exist for Python (yfpy, yahoofantasy); the
 Yahoo API is awkward enough that this saves real time.
 
 ## 2026-09-26 — Test network guard: pytest-socket
+*Superseded by "Test network policy hardened" below.*
 All tests run with `--disable-socket --allow-unix-socket`, so any test that
 opens an internet socket fails (CLAUDE.md hard rule 2) instead of relying on
 review to catch it. Unix sockets stay allowed because asyncio's event loop
@@ -46,6 +47,7 @@ and script-only tools such as `openpyxl` stay in the dev group so they never
 reach the serverless bundle (cold starts, SPEC §2).
 
 ## 2026-09-26 — Domain purity is enforced by a test
+*Superseded by "Domain purity is an allowlist" below.*
 `tests/unit/test_architecture.py` parses every module under `fha/domain/`
 and fails on imports (relative imports resolved) of I/O, network, clock
 (`datetime`, `time`), randomness, `sys`/`logging`, or the outer layers, and
@@ -89,17 +91,25 @@ the sheet as reference only (rejected by the owner); upload-only, no live
 read (kept as fallback; rosters change weekly so it would go stale).
 
 ## 2026-09-26 — Test network policy hardened
-pytest-socket's `--disable-socket` applies only from test setup, and any test
-could opt out with `@pytest.mark.enable_socket`. `tests/conftest.py` now
-blocks sockets from `pytest_configure` (covering module-level code at
-collection) and aborts the run if any test uses `enable_socket` or an
-`allow_hosts` beyond loopback. Loopback-only `allow_hosts` is reserved for
-the Firestore-emulator tests in M3.
+pytest-socket's plugin leaves gaps: sockets are open until test setup (so
+collection-time imports can connect), tests can opt out via the
+`enable_socket` marker, the `socket_enabled` fixture or `--force-enable-socket`,
+its loopback exception depends on test order, and it lifts restrictions
+before fixture teardown. So the plugin is disabled (`-p no:socket`) and
+`tests/conftest.py` + `tests/network_policy.py` own the lifecycle using
+pytest-socket's functions: sockets blocked from `pytest_configure` and never
+re-enabled, except during setup/call/teardown of a test marked
+`allow_hosts(...)` with loopback-only hosts (reserved for the M3 Firestore
+emulator), where `connect`, `sendto` and name resolution are restricted to
+loopback. A non-loopback `allow_hosts` aborts the run. Relies on the private
+`pytest_socket._remove_restrictions`; tests fail if that changes.
 
 ## 2026-09-26 — Domain purity is an allowlist; no coverage exclusions in domain
 The purity test allows only listed stdlib modules (plus `rapidfuzz` and
 `fha.domain`); anything else fails, so new I/O libraries can't slip in.
 `datetime` is allowed for date types, but `.now()`/`.today()`/`.utcnow()`/
-`fromtimestamp` calls are banned. `check_coverage.py` fails on any
-`# pragma: no cover` in `domain/`, where the 95% gate and mutation testing
-apply.
+`fromtimestamp` references are banned (called or not, e.g. as a default
+argument), as are I/O builtins and `__builtins__`. mutmut's injected
+trampoline import is allowed only under `mutants/`. `check_coverage.py` fails
+on excluded lines or any `# pragma` comment in `domain/`, where the 95% gate
+and mutation testing apply.

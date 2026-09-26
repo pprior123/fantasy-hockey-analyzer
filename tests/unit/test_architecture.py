@@ -35,6 +35,9 @@ ALLOWED_IN_DOMAIN = {
     "unicodedata",
     "fha.domain",
 }
+# mutmut rewrites domain modules under mutants/ and injects this import.
+MUTMUT_TRAMPOLINE = "mutmut.mutation.trampoline"
+IN_MUTANTS = "mutants" in DOMAIN_DIR.parts
 
 
 @pytest.mark.parametrize("name", SUBPACKAGES)
@@ -75,19 +78,24 @@ def imported_modules(source: str, package: str) -> set[str]:
     return names
 
 
-def forbidden_calls(source: str) -> set[str]:
+def forbidden_references(source: str) -> set[str]:
+    """I/O builtins and clock methods referenced at all — called or not.
+
+    Catches ``def f(now=datetime.now)`` and ``partial(print, ...)`` as well as
+    direct calls, plus any use of ``__builtins__``.
+    """
     found: set[str] = set()
     for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
-            found.add(node.func.id)
-        elif isinstance(node.func, ast.Attribute) and node.func.attr in CLOCK_CALLS:
-            found.add(f".{node.func.attr}")
+        if isinstance(node, ast.Name) and (node.id in FORBIDDEN_CALLS or node.id == "__builtins__"):
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in CLOCK_CALLS:
+            found.add(f".{node.attr}")
     return found
 
 
-def is_allowed(module: str) -> bool:
+def is_allowed(module: str, in_mutants: bool = IN_MUTANTS) -> bool:
+    if in_mutants and (module == MUTMUT_TRAMPOLINE or module.startswith(MUTMUT_TRAMPOLINE + ".")):
+        return True
     return any(module == a or module.startswith(a + ".") for a in ALLOWED_IN_DOMAIN)
 
 
@@ -162,19 +170,39 @@ def test_package_name_for_modules_and_packages() -> None:
     assert package_name(DOMAIN_DIR / "sub" / "calc.py") == "fha.domain.sub"
 
 
-def test_forbidden_calls_detects_builtin_io() -> None:
+def test_forbidden_references_detects_builtin_io() -> None:
     src = "def f(p):\n    print(open(p).read())\n    return len(p)\n"
-    assert forbidden_calls(src) == {"open", "print"}
+    assert forbidden_references(src) == {"open", "print"}
 
 
-def test_forbidden_calls_detects_clock_reads_but_not_date_types() -> None:
+def test_forbidden_references_detects_clock_reads_but_not_date_types() -> None:
     src = (
         "from datetime import date, datetime\n"
         "def f(d: date) -> date:\n"
         "    return max(d, date.today(), datetime.now().date())\n"
     )
-    assert forbidden_calls(src) == {".today", ".now"}
-    assert forbidden_calls("from datetime import date\nX = date(2026, 10, 7)\n") == set()
+    assert forbidden_references(src) == {".today", ".now"}
+    assert forbidden_references("from datetime import date\nX = date(2026, 10, 7)\n") == set()
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("from datetime import datetime\ndef f(now=datetime.now):\n    return now()\n", ".now"),
+        ("from functools import partial\nlog = partial(print, 'x')\n", "print"),
+        ("o = __builtins__['open']\n", "__builtins__"),
+        ("o = getattr(__builtins__, 'open')\n", "__builtins__"),
+    ],
+)
+def test_forbidden_references_catch_uncalled_uses(source: str, expected: str) -> None:
+    assert expected in forbidden_references(source)
+
+
+def test_mutmut_trampoline_allowed_only_under_mutants() -> None:
+    mod = "mutmut.mutation.trampoline.wrap_in_trampoline"
+    assert is_allowed(mod, in_mutants=True)
+    assert not is_allowed(mod, in_mutants=False)
+    assert not is_allowed("mutmut", in_mutants=True)
 
 
 def test_domain_has_no_io_imports_or_calls() -> None:
@@ -187,5 +215,5 @@ def test_domain_has_no_io_imports_or_calls() -> None:
             for m in imported_modules(source, package_name(path))
             if is_forbidden(m)
         }
-        offenders |= {f"{rel}: call {c}()" for c in forbidden_calls(source)}
+        offenders |= {f"{rel}: uses {c}" for c in forbidden_references(source)}
     assert not offenders, f"domain/ must stay pure; found {sorted(offenders)}"

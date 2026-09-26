@@ -11,6 +11,7 @@ from scripts.check_coverage import (
     has_code,
     main,
     package_of,
+    pragmas_in,
     unmeasured,
 )
 
@@ -233,3 +234,31 @@ def test_main_fails_on_excluded_lines_in_domain(
     cov.write_text(json.dumps(report({"src/fha/domain/a.py": entry})))
     assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 1
     assert "FAIL domain/a.py excludes lines" in capsys.readouterr().out
+
+
+def test_pragmas_in_finds_any_pragma_in_listed_packages(tmp_path: Path) -> None:
+    pkg = make_package(
+        tmp_path,
+        {
+            "domain/a.py": "if x:  # pragma: no branch\n    y = 1\n",
+            "domain/b.py": "z = 2  # PRAGMA: NO COVER\n",
+            "domain/c.py": "w = 3  # a pragmatic comment, not a pragma directive\n",
+            "web/d.py": "v = 4  # pragma: no cover\n",
+        },
+    )
+    assert pragmas_in(pkg, ["domain"]) == ["domain/a.py:1", "domain/b.py:1"]
+    assert pragmas_in(pkg, []) == []
+
+
+def test_main_fails_on_no_branch_pragma_in_domain(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.fha]\ncoverage-no-exclusions = ["domain"]\n[tool.fha.coverage-gates]\ndomain = 95\n'
+    )
+    pkg = make_package(tmp_path, {"domain/a.py": "if X:  # pragma: no branch\n    Y = 1\n"})
+    cov = tmp_path / "coverage.json"
+    cov.write_text(json.dumps(report({"src/fha/domain/a.py": file_entry(2, 2, 2, 2)})))
+    assert main(["prog", str(cov), str(pyproject), str(pkg)]) == 1
+    assert "FAIL domain/a.py:1 has a coverage pragma" in capsys.readouterr().out

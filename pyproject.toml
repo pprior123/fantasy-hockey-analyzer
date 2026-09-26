@@ -58,14 +58,13 @@ files = ["src", "scripts"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-# --disable-socket: any test that opens a network socket fails (CLAUDE.md
-# hard rule 2). Unix sockets stay allowed because asyncio's event loop uses a
-# socketpair internally.
+# Network is blocked by tests/conftest.py (CLAUDE.md hard rule 2); the
+# pytest-socket plugin itself is disabled so it can't be used to opt out.
+# See tests/network_policy.py.
 addopts = [
   "--strict-markers",
   "--strict-config",
-  "--disable-socket",
-  "--allow-unix-socket",
+  "-p", "no:socket",
 ]
 xfail_strict = true
 filterwarnings = ["error"]

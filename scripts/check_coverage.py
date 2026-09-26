@@ -15,7 +15,8 @@ skipped. Code can never silently escape the gates:
 - a report with no ``fha`` files at all fails;
 - a missing package directory fails (rather than silently checking nothing);
 - in packages listed in ``[tool.fha] coverage-no-exclusions`` (``domain``), any
-  line excluded from measurement (``# pragma: no cover``) fails.
+  line excluded from measurement fails, as does any ``# pragma:`` comment in
+  the source (``no branch`` pragmas are not recorded in the report).
 
 Usage: python scripts/check_coverage.py [coverage.json] [pyproject.toml] [src/fha]
 """
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ from typing import Any
 
 ROOT_PACKAGE = "fha"
 ROOT_MODULES = "_root"
+PRAGMA = re.compile(r"#\s*pragma\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,17 @@ def excluded_in(report: dict[str, Any], packages: list[str]) -> list[str]:
     )
 
 
+def pragmas_in(package_dir: Path, packages: list[str]) -> list[str]:
+    """``file:line`` of every ``# pragma`` comment in the given subpackages."""
+    return [
+        f"{path.relative_to(package_dir).as_posix()}:{n}"
+        for pkg in sorted(packages)
+        for path in sorted((package_dir / pkg).rglob("*.py"))
+        for n, line in enumerate(path.read_text().splitlines(), start=1)
+        if PRAGMA.search(line)
+    ]
+
+
 def totals_by_package(report: dict[str, Any]) -> dict[str, Totals]:
     out: dict[str, Totals] = {}
     for path, data in report["files"].items():
@@ -171,10 +185,14 @@ def main(argv: list[str]) -> int:
     missing = unmeasured(report, package_dir)
     for rel in missing:
         print(f"FAIL {rel} has code but is missing from the coverage report")
-    excluded = excluded_in(report, list(config.get("coverage-no-exclusions", [])))
+    strict = list(config.get("coverage-no-exclusions", []))
+    excluded = excluded_in(report, strict)
     for rel in excluded:
         print(f"FAIL {rel} excludes lines from coverage (pragma: no cover not allowed here)")
-    ok = all(r.passed for r in results) and not missing and not excluded
+    pragmas = pragmas_in(package_dir, strict)
+    for loc in pragmas:
+        print(f"FAIL {loc} has a coverage pragma (not allowed here)")
+    ok = all(r.passed for r in results) and not missing and not excluded and not pragmas
     return 0 if ok else 1
 
 

@@ -86,6 +86,19 @@ def test_missing_goalie_gp_is_none() -> None:
     assert build_stat_map(LEAGUE, game).goalie_gp is None
 
 
+def test_ambiguous_goalie_gp_prefers_the_goalie_only_stat() -> None:
+    game = [cat("0", "GP", "P", "G"), cat("29", "GP", "G"), *GAME[2:]]
+    assert (build_stat_map(LEAGUE, game).skater_gp, build_stat_map(LEAGUE, game).goalie_gp) == (
+        "0",
+        "29",
+    )
+
+
+def test_goalie_gp_still_ambiguous_is_left_out_not_an_error() -> None:
+    game = [cat("0", "GP"), cat("28", "GP", "G"), cat("29", "GP", "G"), *GAME[2:]]
+    assert build_stat_map(LEAGUE, game).goalie_gp is None
+
+
 def test_goalie_stats_only_come_from_the_league() -> None:
     league = [c for c in LEAGUE if c.display_name != "GAA"]
     assert build_stat_map(league, GAME).goalie == {"W": "19", "SV%": "26"}

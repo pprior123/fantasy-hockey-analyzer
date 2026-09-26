@@ -56,6 +56,22 @@ def _find(
     return None
 
 
+def _goalie_gp(sources: Sequence[Sequence[StatCategory]]) -> str | None:
+    """Goalie GP, which never affects TTLTST: ambiguity narrows to a goalie-only
+    GP, or leaves goalie GP out, rather than failing the whole map."""
+    try:
+        return _find("GP", GOALIE, sources)
+    except StatMapError:
+        only = frozenset(GOALIE)
+        ids = {
+            c.stat_id
+            for cs in sources
+            for c in cs
+            if c.display_name == "GP" and c.position_types == only
+        }
+        return ids.pop() if len(ids) == 1 else None
+
+
 def build_stat_map(
     league_categories: Sequence[StatCategory], game_categories: Sequence[StatCategory]
 ) -> StatMap:
@@ -82,7 +98,7 @@ def build_stat_map(
     return StatMap(
         categories=categories,
         skater_gp=need("GP"),
-        goalie_gp=_find("GP", GOALIE, sources),
+        goalie_gp=_goalie_gp(sources),
         goalie=goalie,
     )
 

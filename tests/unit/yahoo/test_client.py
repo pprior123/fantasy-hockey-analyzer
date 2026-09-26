@@ -140,6 +140,34 @@ async def test_concurrent_401s_share_one_refresh() -> None:
     assert len(fake.requests) == 16  # each request: one 401, one retry
 
 
+class RefusingYahoo(FakeYahoo):
+    """Every token is rejected, and so is every refresh (e.g. a revoked grant)."""
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == oauth.TOKEN_URL:
+            self.refreshes += 1
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        return await super().__call__(request)
+
+
+async def test_concurrent_401s_share_one_refused_refresh() -> None:
+    fake = RefusingYahoo()
+    fake.valid = set()
+    yahoo = client(fake, max_concurrency=8)
+    results = await asyncio.gather(*(yahoo.get(f"x/{i}") for i in range(8)), return_exceptions=True)
+    assert fake.refreshes == 1
+    assert all(isinstance(r, YahooAuthError) and "invalid_grant" in str(r) for r in results)
+
+
+async def test_an_expired_token_is_refused_once_for_every_waiting_request() -> None:
+    fake = RefusingYahoo()
+    yahoo = client(fake, MemoryStore(Token("access-1", "refresh-1", NOW - 1)), max_concurrency=8)
+    results = await asyncio.gather(*(yahoo.get(f"x/{i}") for i in range(8)), return_exceptions=True)
+    assert fake.refreshes == 1
+    assert all(isinstance(r, YahooAuthError) for r in results)
+    assert fake.requests == []
+
+
 async def test_401_after_a_refresh_is_an_auth_error() -> None:
     def always_401(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401)

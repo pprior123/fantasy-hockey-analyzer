@@ -67,6 +67,7 @@ class YahooClient:
         self._slots = asyncio.Semaphore(max_concurrency)
         self._token_lock = asyncio.Lock()
         self._token: Token | None = None
+        self._refused: tuple[Token, YahooAuthError] | None = None  # a refresh Yahoo refused
 
     async def get(self, path: str) -> JsonObject:
         """GET ``API_BASE + path`` and return its ``fantasy_content``.
@@ -113,7 +114,17 @@ class YahooClient:
             return token
 
     async def _renew(self, token: Token) -> Token:
-        renewed = await oauth.refresh(self._http, self._creds, token.refresh_token, self._clock())
+        """Refresh ``token`` (under the lock). If Yahoo refuses, requests waiting on
+        the same token get that refusal instead of each asking again."""
+        if self._refused is not None and self._refused[0] is token:
+            raise YahooAuthError(str(self._refused[1])) from self._refused[1]
+        try:
+            renewed = await oauth.refresh(
+                self._http, self._creds, token.refresh_token, self._clock()
+            )
+        except YahooAuthError as refused:
+            self._refused = (token, refused)
+            raise
         await self._store.save(renewed)
         return renewed
 

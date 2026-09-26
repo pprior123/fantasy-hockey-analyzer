@@ -329,3 +329,18 @@ def test_rounding_to_whole_dollars_is_not_a_discrepancy(payroll: int, differs: b
     assert report.matched_counted_total == 3_000_000
     assert report.summed_rows == 2
     assert report.payroll_differs is differs
+
+
+def test_a_stored_negative_amount_reads_back_as_unknown() -> None:
+    """M4R3A-2: a sheet stored before the parser refused negatives must not crash the
+    screens (Admin included, where the sheet is re-uploaded)."""
+    doc = encode_sheet(sheet())
+    doc["cap"] = -1
+    doc["tabs"][0]["payroll"] = -2
+    doc["tabs"][0]["cap"] = -3
+    doc["tabs"][0]["rows"][0]["salary"] = -500_000
+    back = decode_sheet(doc)
+    assert (back.cap, back.tabs[0].payroll, back.tabs[0].cap) == (None, None, None)
+    assert back.tabs[0].rows[0].salary is None
+    assert back.tabs[0].rows[1].salary == sheet().tabs[0].rows[1].salary  # others untouched
+    assert decode_sheet(encode_sheet(sheet())) == sheet()

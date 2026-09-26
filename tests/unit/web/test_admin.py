@@ -30,6 +30,7 @@ from fha.web.format import ago
 from fha.web.routes import admin
 from fha.web.routes.admin import (
     FLASH_SALT,
+    STORE_REFUSED,
     InputError,
     _sheet_source,
     parse_dollars,
@@ -252,8 +253,7 @@ def test_a_value_the_store_refuses_is_a_message_not_a_500() -> None:
     upload_sheet(c, to_xlsx(s.grid(sheet_tab("__x__", TEAM1))))
     result = post(c, "/admin/bind", data={"tab": "__x__", "team_key": TEAM1.team_key})
     assert result["kind"] == "error"
-    assert result["text"].startswith("__x__: ")
-    assert "is reserved" in result["text"]
+    assert result["text"] == f"__x__: {STORE_REFUSED}."
 
 
 def test_the_discrepancy_report_and_row_review() -> None:
@@ -386,7 +386,7 @@ def test_a_missing_or_mistyped_field_is_the_400_page_not_json(
     assert response.headers["content-type"].startswith("text/html")
     assert "A form value was missing" in response.text
     assert "Player,Pos" not in response.text
-    assert 'href="/admin"' in response.text
+    assert '<a href="/admin">Start over</a>' in response.text
 
 
 def test_an_oversized_csv_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,7 +825,7 @@ def test_a_store_that_refuses_writes_is_a_message_on_every_admin_post() -> None:
     key = re.search(r"Unbind his CSV row \(([^)]+)\)", c.get("/admin", params={"q": p.name}).text)
     assert key is not None
     repo.refuse = True
-    refused = "Firestore answered HTTP 503"
+    refused = STORE_REFUSED  # never Firestore's own text: the flash is in the URL
     assert post(c, "/admin/sheet/read")["text"] == f"The sheet couldn't be saved: {refused}."
     assert upload_sheet(c)["text"] == f"The sheet couldn't be saved: {refused}."
     csv = upload_csv(c, csv_row(p.name, p.display_position[0], "$2,000,000", p.nhl_team))
@@ -855,8 +855,41 @@ def test_a_store_that_refuses_writes_is_a_message_on_the_confirm_posts() -> None
     )
     assert key is not None
     repo.refuse = True
-    refused = "Firestore answered HTTP 503"
+    refused = STORE_REFUSED  # never Firestore's own text: the flash is in the URL
     row = {"tab": "Pinecone", "key": "zed nobody|F", "player_id": TEAM1.roster[-1].player.player_id}
     assert post(c, "/admin/sheet/confirm", data=row)["text"] == f"Pinecone: {refused}."
     fa = {"key": key[1], "player_id": target.player_id}
     assert post(c, "/admin/fa/confirm", data=fa) == {"kind": "error", "text": f"{refused}."}
+
+
+def test_a_store_error_never_puts_its_text_in_the_redirect(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """M4R3A-3: the flash is signed, not encrypted, and travels in the URL (history,
+    request logs); Firestore's text can name the project."""
+    repo = Refusing()
+    base = make_services()
+    services = replace(
+        base, repo=repo, refresh=RefreshService(FakeYahooSource(DEMO), repo, base.clock)
+    )
+    c = client(services)
+    c.get("/admin")
+    repo.refuse = True
+    response = c.post(
+        "/admin/aav", data={"player_id": FREE[0].player_id, "aav": "1M"}, follow_redirects=False
+    )
+    assert "Firestore" not in flash_of(response)["text"]
+    assert "Firestore" not in caplog.text
+    assert "storage refused an Admin change (RepositoryError)" in caplog.text
+
+
+def test_no_alias_is_saved_when_the_names_already_match() -> None:
+    """An alias from a name to itself would be noise ("Alias saved: X = X")."""
+    target = FREE[0]
+    c = client()
+    upload_csv(c, csv_row(target.name, "G" if target.is_goalie else "D", "$2,000,000", "XXX"))
+    html = c.get("/admin").text
+    key = re.search(r'action="/admin/fa/confirm".*?name="key" value="([^"]+)"', html, re.S)
+    assert key is not None
+    form = {"key": key[1], "player_id": target.player_id, "alias": "1"}
+    assert post(c, "/admin/fa/confirm", data=form) == {"kind": "ok", "text": "Matched."}

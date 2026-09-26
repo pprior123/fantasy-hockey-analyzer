@@ -161,9 +161,15 @@ def test_a_post_after_the_session_expired_returns_to_the_page_it_came_from() -> 
             follow_redirects=False,
         )
         none = anonymous.post("/admin/aav", follow_redirects=False)
+        sneaky = anonymous.post(
+            "/refresh",
+            headers={"referer": "http://testserver//evil.example/x"},
+            follow_redirects=False,
+        )
     assert here.headers["location"] == "/login?next=%2Frosters%3Fseason%3Dlast"
     assert foreign.headers["location"] == "/login?next=%2Fplayers"
     assert none.headers["location"] == "/login?next=%2Fplayers"
+    assert sneaky.headers["location"] == "/login?next=%2Fplayers"  # never //evil.example
 
 
 def api_routes(routes: Any) -> Iterator[APIRoute]:

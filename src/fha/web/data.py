@@ -59,7 +59,10 @@ class PageData:
             return None
         if error.startswith("not saved:"):
             return "Fresh from Yahoo, but it couldn't be saved; it will be retried."
-        return f"Yahoo couldn't be reached, so this is data from {self.refreshed_label}."
+        note = f"Yahoo couldn't be reached, so this is data from {self.refreshed_label}."
+        if "retrying after" in error:  # within the backoff: a Refresh now won't ask Yahoo
+            note += " Yahoo is asked again a minute after a failure."
+        return note
 
 
 def season_param(raw: str | None) -> Season | None:
@@ -67,7 +70,7 @@ def season_param(raw: str | None) -> Season | None:
     try:
         return Season(raw) if raw else None
     except ValueError:
-        raise BadQueryError(f"season must be current or last, got {raw!r}") from None
+        raise BadQueryError(f"season must be current or last, got {_shown(raw)!r}") from None
 
 
 VIEWS = ("money", "cats")  # the Categories toggle (SPEC §7): salary columns, or the 7 norms
@@ -77,8 +80,13 @@ def view_param(raw: str | None) -> str:
     """The Categories toggle from the URL: "cats", or blank for the salary columns."""
     mode = raw or "money"
     if mode not in VIEWS:
-        raise BadQueryError(f"view must be cats or left out, got {raw!r}")
+        raise BadQueryError(f"view must be cats or left out, got {_shown(raw)!r}")
     return mode
+
+
+def _shown(raw: str | None) -> str | None:
+    """A bad value as the 400 page quotes it: at most 12 characters."""
+    return raw if raw is None or len(raw) <= 12 else raw[:12] + "…"
 
 
 async def page_data(

@@ -65,7 +65,7 @@ async def free_agents(request: Request) -> HTMLResponse:
         return bad_request(
             request, "week must be current or next, and fits 1 or left out.", "/matchup", "matchup"
         )
-    view_param(params.get("view"))
+    mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     game = matchup_view(data.view, next_week=week == "next")
     need = free_agents_by_need(data.view, game, fits_my_cap=fits == "1") if game else None
@@ -82,6 +82,7 @@ async def free_agents(request: Request) -> HTMLResponse:
         game=game,
         need=need,
         fits=fits == "1",
+        mode=mode,
         categories=data.view.config.categories,
         here=_here(request),
     )

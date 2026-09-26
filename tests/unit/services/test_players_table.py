@@ -198,3 +198,16 @@ def test_the_position_filter_uses_eligible_positions_not_the_display_text() -> N
     snap = replace(snap, available=tuple(wider if p is target else p for p in snap.available))
     view = build_view(snap, DEFAULT_CONFIG, Salaries())
     assert target.player_id in ids(select(view, PlayersQuery(position="LW")))
+
+
+def test_equal_names_break_ties_by_player_id() -> None:
+    """Two players with one name (like the two Elias Petterssons) and equal values:
+    player_id decides, in the sort's direction-independent tie order."""
+    snap = demo_snapshot()
+    a, b = snap.available[0], snap.available[1]
+    twins = (replace(a, name="Elias Twin"), replace(b, name="Elias Twin"))
+    snap = replace(snap, available=(*twins, *snap.available[2:]))
+    view = build_view(snap, DEFAULT_CONFIG, Salaries())
+    rows = [r for r in select(view, PlayersQuery(sort=SortKey.NAME, descending=False))]
+    got = [r.player_id for r in rows if r.name == "Elias Twin"]
+    assert got == sorted([a.player_id, b.player_id])

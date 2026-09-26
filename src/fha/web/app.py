@@ -266,6 +266,7 @@ def create_app(context: AppContext) -> FastAPI:
         return Response(json.dumps(MANIFEST), media_type="application/manifest+json")
 
     from fastapi.exceptions import RequestValidationError
+    from starlette.exceptions import HTTPException
 
     from fha.services.settings import SettingsError
     from fha.storage.repository import RepositoryError
@@ -309,6 +310,27 @@ def create_app(context: AppContext) -> FastAPI:
             back=f"/{active}" if active else None,
         )
 
+    async def http_error(request: Request, exc: Exception) -> HTMLResponse:
+        """404, 405, a malformed body: the app's page, not FastAPI's JSON."""
+        status = exc.status_code if isinstance(exc, HTTPException) else 500
+        headers = exc.headers if isinstance(exc, HTTPException) else None
+        from http import HTTPStatus
+
+        response = render(
+            request,
+            "bad_request.html",
+            status_code=status,
+            active=_active(request.url.path),
+            title=HTTPStatus(status).phrase,
+            message={
+                404: "There's no such page.",
+                405: "That page can't be used that way.",
+            }.get(status, "The request wasn't one the app understands."),
+            back=None,
+        )
+        response.headers.update(headers or {})
+        return response
+
     async def bad_settings(request: Request, exc: Exception) -> HTMLResponse:
         return render(
             request,
@@ -337,6 +359,7 @@ def create_app(context: AppContext) -> FastAPI:
         app.add_exception_handler(kind, no_data)
     app.add_exception_handler(BadQueryError, bad_query)
     app.add_exception_handler(RequestValidationError, bad_form)
+    app.add_exception_handler(HTTPException, http_error)
     app.add_exception_handler(SettingsError, bad_settings)
     app.add_exception_handler(RepositoryError, store_down)
     for module in (players, rosters, league, matchup, admin):

@@ -320,3 +320,48 @@ def test_equal_scores_are_ordered_by_name_then_id(snap: LeagueSnapshot) -> None:
     assert swap is not None
     order = [r.player.player_id for r in swap.rows]
     assert order.index("136") == order.index("101") - 1
+
+
+def test_an_ir_plus_slot_is_outside_the_profile_too(snap: LeagueSnapshot) -> None:
+    """SPEC §5: IR and IR+ slots are both excluded (not only "IR")."""
+    moved = replace(
+        snap,
+        teams=tuple(
+            replace(
+                t,
+                roster=tuple(
+                    replace(e, selected_position="IR+") if e.player.player_id == "5" else e
+                    for e in t.roster
+                ),
+            )
+            for t in snap.teams
+        ),
+    )
+    view = view_of(moved)
+    theirs = view.team(THEIRS)
+    assert theirs is not None
+    rating = view.by_id["5"].rating
+    assert rating is not None
+    assert rating.rated
+    assert [p.player_id for p in summarize(view, theirs).profile.players] == ["4"]
+
+
+def test_exactly_no_room_is_not_over_the_cap(snap: LeagueSnapshot) -> None:
+    view = view_of(snap, payrolls={MINE: CAP})
+    mine = view.team(MINE)
+    assert mine is not None
+    summary = summarize(view, mine)
+    assert (summary.cap_room, summary.over_cap) == (0, False)
+
+
+async def test_the_league_table_puts_a_team_with_no_rated_player_last() -> None:
+    snap = await synthetic_snapshot()
+    goalies_only = tuple(
+        replace(t, is_mine=False, roster=tuple(e for e in t.roster if e.player.is_goalie))
+        if t.team_key == MINE
+        else replace(t, is_mine=False)
+        for t in snap.teams
+    )
+    table = league_table(view_of(replace(snap, teams=goalies_only)))
+    assert [s.team.team_key for s in table] == [THEIRS, MINE]
+    assert table[1].profile.ttltst is None

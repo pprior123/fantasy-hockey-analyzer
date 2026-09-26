@@ -92,8 +92,10 @@ def encode_sheet(sheet: ParsedSheet) -> dict[str, Any]:
 
 
 def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
+    """A stored sheet back. A negative salary or cap reads as unknown, as the parser
+    now reads it, so a sheet stored before that rule can't crash the screens."""
     return ParsedSheet(
-        cap=doc["cap"],
+        cap=_amount(doc["cap"]),
         cap_source=doc["cap_source"],
         other_tabs=tuple(doc["other_tabs"]),
         tabs=tuple(
@@ -101,8 +103,8 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
                 name=t["name"],
                 status=t["status"],
                 reason=t["reason"],
-                payroll=t["payroll"],
-                cap=t["cap"],
+                payroll=_amount(t["payroll"]),
+                cap=_amount(t["cap"]),
                 salary_column=t["salary_column"],
                 payroll_formula=t["payroll_formula"],
                 payroll_range=t["payroll_range"],
@@ -112,7 +114,7 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
                         r["name"],
                         r["position"],
                         r["team"],
-                        r["salary"],
+                        _amount(r["salary"]),
                         r["counted"],
                         r["ir"],
                     )
@@ -122,6 +124,10 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
             for t in doc["tabs"]
         ),
     )
+
+
+def _amount(value: Any) -> Any:
+    return None if isinstance(value, int | float) and value < 0 else value
 
 
 # ---------------------------------------------------------------- tab <-> team

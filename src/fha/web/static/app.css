@@ -76,6 +76,7 @@ table.data th.sorted a { color: var(--brand); }
 table.data tr.ir td { color: var(--muted); }
 table.data tr.mine td { font-weight: 600; }
 table.data tr.trailing td, table.data tr.trailing th { background: #fff1f0; }
+table.data th.trailing, table.data td.trailing { background: #fff1f0; }
 table.data tr.total th, table.data tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
 table.data details summary { cursor: pointer; list-style: none; }
 table.data details summary::-webkit-details-marker { display: none; }

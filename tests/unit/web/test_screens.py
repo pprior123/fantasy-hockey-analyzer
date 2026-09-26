@@ -93,6 +93,7 @@ def names_in(html: str, table: str) -> list[str]:
         (1_000, "$0.001M"),
         (999.5, "$0.001M"),  # rounds to $1,000: millions, not "$1000"
         (999.4, "$999"),
+        (-0.4, "$0"),  # rounds to nothing: no sign
         (400.4, "$400"),
         (0, "$0"),
         (float("inf"), "—"),
@@ -702,3 +703,49 @@ def test_empty_roster_and_replace_tables_span_their_columns(view: str, columns: 
     want = len(re.findall(r"<th\b", head))
     assert want == (6 if not view else 11)
     assert f'<td colspan="{want}" class="muted">No free agents at' in page
+
+
+def test_the_need_list_has_the_categories_toggle() -> None:
+    """M4R3B-1: SPEC §7, "common to the tables": the norms explain a Need score.
+    The trailing categories are highlighted, in SPEC order."""
+    c = client()
+    money_view = c.get("/matchup/free-agents").text
+    cats = c.get("/matchup/free-agents?view=cats").text
+    head = lambda html: html.split('class="data need"', 1)[1].split("</thead>", 1)[0]  # noqa: E731
+    toggle = money_view.split('aria-label="Columns"', 1)[1].split("</nav>", 1)[0]
+    assert 'href="/matchup/free-agents?view=cats">Categories</a>' in toggle
+    assert ">AAV</th>" in head(money_view)
+    assert ">AAV</th>" not in head(cats)
+    assert ">Fits</th>" not in head(cats)
+    for cat in ("G", "PPP", "BLK"):
+        assert f">{cat}</th>" in head(cats)
+    assert 'class="num trailing"' in head(cats)
+    order = ["G", "A", "PPP", "PIM", "HIT", "SOG", "BLK"]
+    intro = cats.split("behind or close in:", 1)[1].split("</p>", 1)[0]
+    badges = re.findall(r'<span class="badge">([A-Z]+)</span>', intro)
+    assert badges == [c for c in order if c in badges]
+    assert len(badges) >= 2
+
+
+def test_the_players_filter_form_keeps_the_view() -> None:
+    html = client().get("/players?view=cats&season=last").text
+    form = html.split('class="toolbar filters"', 1)[1].split("</form>", 1)[0]
+    assert '<input type="hidden" name="view" value="cats">' in form
+    assert '<input type="hidden" name="season" value="last">' in form
+
+
+def test_a_bad_value_is_quoted_short_on_the_400_page() -> None:
+    response = client().get("/league?season=" + "x" * 3000)
+    assert response.status_code == 400
+    assert "got &#39;xxxxxxxxxxxx…&#39;" in response.text
+    assert "x" * 13 not in response.text
+
+
+def test_the_stale_note_says_when_yahoo_is_asked_again() -> None:
+    clock = FakeClock()
+    repo = InMemoryRepository()
+    svc = Services(repo, RefreshService(FlakySource(demo_snapshot()), repo, clock), clock)
+    c = client(svc)
+    c.get("/players")
+    html = c.post("/refresh", data={"next": "/players"}).text
+    assert "Yahoo is asked again a minute after a failure." in html

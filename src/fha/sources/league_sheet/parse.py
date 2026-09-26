@@ -39,7 +39,7 @@ LABEL_REACH = 3  # the formula is at most this many columns right of its label
 MAX_REFERENCES = 2  # PAYROLL may point at another cell, which may point at one more
 HEADER_ROWS_ABOVE = 3
 
-REF = r"\$?[A-Za-z]{1,3}\$?\d+"
+REF = r"\$?[A-Za-z]{1,3}\$?\d{1,12}"  # never int() of a huge string
 SUM_OF_RANGE = re.compile(rf"=\s*SUM\(\s*({REF})\s*:\s*({REF})\s*\)\s*", re.IGNORECASE)
 ONE_REFERENCE = re.compile(rf"=\s*(?:SUM\(\s*({REF})\s*\)|({REF}))\s*", re.IGNORECASE)
 # 'Quoted title' (a quote inside is doubled, as Sheets writes it) or a bare title.

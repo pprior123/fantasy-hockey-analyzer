@@ -418,3 +418,9 @@ def test_an_unrecognized_reason_quotes_the_formula_as_written() -> None:
     assert (
         tab.reason == """PAYROLL formula "=IF('Pat''s Team'!B3="",0,1)" is not a SUM of one range"""
     )
+
+
+def test_a_formula_with_a_huge_row_number_is_unrecognized_not_a_crash() -> None:
+    """M4R3A-1: int() refuses over 4300 digits; the reference pattern stops at 12."""
+    tab = one(TeamTab("Vast", roster(2), payroll_formula=f"=SUM(F7:F{'9' * 5000})"))
+    assert tab.status == "unrecognized"

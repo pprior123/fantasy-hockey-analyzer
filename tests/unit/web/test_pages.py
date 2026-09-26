@@ -157,8 +157,10 @@ def test_every_response_carries_the_security_headers() -> None:
     with TestClient(create_error_app("APP_PASSWORD not set")) as broken:
         responses.append(broken.get("/players"))
     for response in responses:
-        assert "default-src 'self'" in response.headers["content-security-policy"]
-        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+        assert response.headers["content-security-policy"] == (
+            "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+            "form-action 'self'; object-src 'none'"
+        )
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["referrer-policy"] == "same-origin"
         assert response.headers["x-frame-options"] == "DENY"
@@ -293,7 +295,11 @@ def test_a_failed_lazy_build_is_retried_on_the_next_request() -> None:
     client = TestClient(create_app(AppContext(SETTINGS, factory)))
     client.post("/login", data={"password": PASSWORD}, follow_redirects=False)
     assert client.get("/players").status_code == 500  # the page without details
+    first = client.app.state.http  # type: ignore[attr-defined]
     assert client.get("/players").status_code == 200
+    assert (
+        client.app.state.http is first
+    )  # one client, not a new one per attempt  # type: ignore[attr-defined]
     assert client.get("/league").status_code == 200
     assert attempts == [1, 1]
 
@@ -342,3 +348,29 @@ def test_damaged_rating_settings_point_every_rated_screen_at_admin() -> None:
         assert "The stored rating settings are invalid" in response.text
         assert 'href="/admin#settings"' in response.text
     assert client.get("/admin").status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kw", "status", "text"),
+    [
+        ("GET", "/nowhere", {}, 404, "There&#39;s no such page."),
+        ("GET", "/refresh", {}, 405, "That page can&#39;t be used that way."),
+        (
+            "POST",
+            "/refresh",
+            {"content": b"--x\r\nbroken", "headers": {"content-type": "multipart/form-data"}},
+            400,
+            "The request wasn&#39;t one the app understands.",
+        ),
+    ],
+)
+def test_http_errors_are_the_apps_pages_not_json(
+    method: str, path: str, kw: dict[str, Any], status: int, text: str
+) -> None:
+    """M4R3B-3: FastAPI's own 404 / 405 / bad-body answers were JSON."""
+    response = logged_in(make_app()).request(method, path, **kw)
+    assert response.status_code == status
+    assert response.headers["content-type"].startswith("text/html")
+    assert text in response.text
+    if status == 405:
+        assert response.headers["allow"] == "POST"

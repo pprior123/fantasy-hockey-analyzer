@@ -18,6 +18,7 @@ named ``__x__``) is a message, not a 500.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -60,6 +61,7 @@ from fha.web.data import NO_DATA, PageData, page_data
 from fha.web.format import ago
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 MAX_SHEET_BYTES = 4 * 1024 * 1024  # a league sheet download is ~100 KB; under Vercel's 4.5 MB
 MAX_CSV_BYTES = 2 * 1024 * 1024  # every PuckPedia page pasted is ~200 KB
@@ -121,6 +123,18 @@ def percent_text(fraction: float) -> str:
 
 
 # ---------------------------------------------------------------- flash
+
+STORE_REFUSED = "the app's storage refused the change (try again in a minute)"
+
+
+def _why(error: Exception) -> str:
+    """An error for the flash, which travels in the redirect URL (so browser history
+    and request logs). A store error's own text can name the Firestore project, so
+    it is replaced, and only its type is logged."""
+    if isinstance(error, RepositoryError):
+        log.warning("storage refused an Admin change (%s)", type(error).__name__)
+        return STORE_REFUSED
+    return str(error)
 
 
 def _signer(request: Request) -> URLSafeTimedSerializer:
@@ -288,7 +302,7 @@ async def sheet_read(request: Request) -> RedirectResponse:
     except LeagueSheetError as e:
         return _back(request, "error", f"The sheet couldn't be read: {e}", anchor="sheet")
     except RepositoryError as e:
-        return _back(request, "error", f"The sheet couldn't be saved: {e}.", anchor="sheet")
+        return _back(request, "error", f"The sheet couldn't be saved: {_why(e)}.", anchor="sheet")
     return _back(request, "ok", _sheet_summary(sheet), anchor="sheet")
 
 
@@ -305,7 +319,7 @@ async def sheet_upload(request: Request, file: UploadFile) -> RedirectResponse:
             request, "error", f"That file isn't a league sheet we can read: {e}", anchor="sheet"
         )
     except RepositoryError as e:
-        return _back(request, "error", f"The sheet couldn't be saved: {e}.", anchor="sheet")
+        return _back(request, "error", f"The sheet couldn't be saved: {_why(e)}.", anchor="sheet")
     return _back(request, "ok", _sheet_summary(sheet), anchor="sheet")
 
 
@@ -340,7 +354,7 @@ async def bind(request: Request, tab: str = Form(), team_key: str = Form("")) ->
                 raise InputError("that team isn't in the league")
         await bind_tab(svc.repo, tab, team_key or None)
     except (InputError, LeagueSheetServiceError, RepositoryError) as e:
-        return _back(request, "error", f"{tab}: {e}.", anchor="bindings")
+        return _back(request, "error", f"{tab}: {_why(e)}.", anchor="bindings")
     text = f"{tab} is now bound." if team_key else f"{tab} is unbound."
     return _back(request, "ok", text, anchor="bindings")
 
@@ -362,7 +376,7 @@ async def sheet_confirm(
             raise InputError("that player isn't on the tab's Yahoo roster")
         await confirm_row(svc.repo, tab, key, player_id)
     except (InputError, LeagueSheetServiceError, RepositoryError) as e:
-        return _back(request, "error", f"{tab}: {e}.", anchor="discrepancies")
+        return _back(request, "error", f"{tab}: {_why(e)}.", anchor="discrepancies")
     return _back(request, "ok", f"{tab}: row matched.", anchor="discrepancies")
 
 
@@ -391,7 +405,7 @@ async def csv_import(request: Request, file: UploadFile) -> RedirectResponse:
             svc.repo, rows, data.view.snapshot.pool, await load_aliases(svc.repo)
         )
     except RepositoryError as e:
-        return _back(request, "error", f"The CSV couldn't be saved: {e}.", anchor="csv")
+        return _back(request, "error", f"The CSV couldn't be saved: {_why(e)}.", anchor="csv")
     if not report.changed:
         text = f"No changes: the same {report.rows} rows as last time."
     else:
@@ -423,7 +437,7 @@ async def fa_confirm(
             await add_alias(svc.repo, player.name, row.name)
             text += f" Alias saved: {row.name} = {player.name}."
     except (InputError, FreeAgentError, RepositoryError) as e:
-        return _back(request, "error", f"{e}.", anchor="review")
+        return _back(request, "error", f"{_why(e)}.", anchor="review")
     return _back(request, "ok", text, anchor="review")
 
 
@@ -432,7 +446,7 @@ async def fa_unbind(request: Request, key: str = Form(), q: str = Form("")) -> R
     try:
         await unbind(services(request).repo, key)
     except RepositoryError as e:
-        return _back(request, "error", f"{e}.", anchor="aav", q=q)
+        return _back(request, "error", f"{_why(e)}.", anchor="aav", q=q)
     return _back(request, "ok", "Unbound: that row waits for review again.", anchor="aav", q=q)
 
 
@@ -453,7 +467,7 @@ async def aav(
                 raise InputError("that player isn't in the pool")
         await set_aav_override(svc.repo, player_id, value)
     except (InputError, FreeAgentError, RepositoryError) as e:
-        return _back(request, "error", f"{e}.", anchor="aav", q=q)
+        return _back(request, "error", f"{_why(e)}.", anchor="aav", q=q)
     text = "Override cleared." if value is None else f"Cap hit set to ${value:,}."
     return _back(request, "ok", text, anchor="aav", q=q)
 
@@ -480,7 +494,7 @@ async def rating_settings(
             },
         )
     except (InputError, SettingsError, RepositoryError) as e:
-        return _back(request, "error", f"Not saved: {e}.", anchor="settings")
+        return _back(request, "error", f"Not saved: {_why(e)}.", anchor="settings")
     text = (
         f"Saved: {METHOD_LABELS[config.divisor_method]}, top {config.top_n}, "
         f"GP floor {percent_text(config.gp_floor_fraction)}%. Every player is re-rated."

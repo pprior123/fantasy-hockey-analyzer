@@ -25,6 +25,22 @@ from fha.web.app import services
 from fha.web.format import ago
 
 NO_DATA = (RefreshError, ViewError)
+RETRY_NOTE = "Yahoo is asked again a minute after a failure."
+SIGN_IN_NOTE = "The app's Yahoo sign-in may need renewing (the consent flow)."
+
+
+def failure_kind(note: str) -> str:
+    """The failed error's type, which a refresh note starts with (``refresh._describe``).
+    The notes say what failed, not why (M4R9A-1)."""
+    return note.removeprefix("refresh failed: ").split(":", 1)[0].split(" (", 1)[0]
+
+
+def no_data_hint(exc: Exception) -> str:
+    """What the no-data page says happens next (M4R10A-1)."""
+    if isinstance(exc, ViewError):
+        return "Admin works without it. Yahoo's data arrived but can't be rated."
+    hint = f"Admin works without it. {RETRY_NOTE}"
+    return f"{hint} {SIGN_IN_NOTE}" if failure_kind(str(exc)) == "YahooAuthError" else hint
 
 
 class BadQueryError(ValueError):
@@ -59,16 +75,14 @@ class PageData:
             return None
         if error.startswith("not saved:"):
             return "Fresh from Yahoo, but it couldn't be saved; it will be retried."
-        # Say what failed, not why (M4R9A-1): a refused sign-in or a changed response
-        # isn't "couldn't be reached". The note starts with the error's type.
-        kind = error.split(":", 1)[0].split(" (", 1)[0]
+        kind = failure_kind(error)
         note = (
             f"Refreshing from Yahoo failed ({kind}), so this is data from {self.refreshed_label}."
         )
         if kind == "YahooAuthError":
-            note += " The app's Yahoo sign-in may need renewing (the consent flow)."
+            note += f" {SIGN_IN_NOTE}"
         if "retrying after" in error:  # within the backoff: a Refresh now won't ask Yahoo
-            note += " Yahoo is asked again a minute after a failure."
+            note += f" {RETRY_NOTE}"
         return note
 
 

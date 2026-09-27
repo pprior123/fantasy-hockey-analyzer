@@ -6,9 +6,9 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from fha.services.league_view import Season
-from fha.services.refresh import Cached
-from fha.web.data import BadQueryError, PageData, page_data, season_param
+from fha.services.league_view import Season, ViewError
+from fha.services.refresh import Cached, RefreshError
+from fha.web.data import BadQueryError, PageData, no_data_hint, page_data, season_param
 from tests.unit.web.helpers import T0, FakeClock, make_app, make_services
 
 
@@ -95,3 +95,17 @@ def test_season_param() -> None:
     assert season_param("") is None
     with pytest.raises(BadQueryError, match="season must be current or last, got 'bogus'"):
         season_param("bogus")
+
+
+def test_the_no_data_hint_says_what_happens_next() -> None:
+    """M4R10A-1: not "comes back once Yahoo answers", which a refused sign-in, a changed
+    response or unratable data make false."""
+    retry = "Admin works without it. Yahoo is asked again a minute after a failure."
+    assert no_data_hint(RefreshError("refresh failed: YahooParseError: games")) == retry
+    refused = RefreshError("refresh failed: YahooAuthError: invalid_grant (5 s ago; retrying)")
+    assert no_data_hint(refused) == (
+        f"{retry} The app's Yahoo sign-in may need renewing (the consent flow)."
+    )
+    assert no_data_hint(ViewError("no stat map")) == (
+        "Admin works without it. Yahoo's data arrived but can't be rated."
+    )

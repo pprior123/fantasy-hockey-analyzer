@@ -314,8 +314,12 @@ def test_without_any_yahoo_data_the_screens_say_so_instead_of_crashing() -> None
         response = c.get(path)
         assert response.status_code == 503, path
         assert "No Yahoo data" in response.text
-        assert "ConnectTimeout: timed out" in response.text
-        assert "Admin works without it" in response.text
+        assert (
+            "There&#39;s no Yahoo data to show (RefreshError: refresh failed: ConnectTimeout"
+            in (response.text)
+        )
+        assert "Admin works without it. Yahoo is asked again a minute after" in response.text
+        assert "sign-in" not in response.text
         assert 'aria-current="page"' in response.text  # the nav, to reach Admin
     refreshed = c.post("/refresh", data={"next": "/league"})
     assert refreshed.status_code == 503
@@ -532,13 +536,28 @@ def test_a_drop_whose_row_may_await_review_has_an_unknown_room_after() -> None:
     drop = my_skater()
     seed(svc, misspell=drop)
     html = client(svc).get(f"/rosters/replace?drop={drop}").text
-    assert "rows on my tab await review in Admin, so the room after is unknown" in html
+    assert (
+        "counted rows on my tab match no roster player (see Admin), so the room after is unknown"
+        in html
+    )
     body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
     rooms = [row.split('<td class="num')[-1] for row in body.split("</tr>")[:-1]]
     assert rooms
     assert all(">—</td>" in cell for cell in rooms)  # the last cell: Room after
     swaps = client(svc).get(f"/rosters/replace?drop={drop}&swap_ok=1").text
     assert "left out: a cap hit or the room isn" in swaps
+
+
+def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:
+    """M4R10B-1: only a *counted* row in review can be the drop's; an IR row frees nothing."""
+    svc = make_services()
+    ir_player = next(e.player.player_id for e in MINE.roster if e.in_ir_slot)
+    drop = my_skater()
+    seed(svc, skip=[e.player.player_id for e in MINE.roster].index(drop) + 1, misspell=ir_player)
+    html = client(svc).get(f"/rosters/replace?drop={drop}").text
+    assert "(no sheet row matched him: frees nothing)" in html
+    body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert re.search(r'<td class="num ">\$\d', body)  # a room after, not "—"
 
 
 def test_without_my_tab_replace_says_the_room_is_unavailable() -> None:

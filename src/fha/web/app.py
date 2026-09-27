@@ -270,7 +270,7 @@ def create_app(context: AppContext) -> FastAPI:
 
     from fha.services.settings import SettingsError
     from fha.storage.repository import RepositoryError
-    from fha.web.data import NO_DATA, BadQueryError
+    from fha.web.data import NO_DATA, BadQueryError, no_data_hint
     from fha.web.routes import admin, league, matchup, players, rosters
 
     async def no_data(request: Request, exc: Exception) -> HTMLResponse:
@@ -281,7 +281,7 @@ def create_app(context: AppContext) -> FastAPI:
             active=_active(request.url.path),
             title="No Yahoo data",
             message=f"There's no Yahoo data to show ({type(exc).__name__}: {exc}).",
-            hint="Admin works without it; this page comes back once Yahoo answers.",
+            hint=no_data_hint(exc),
         )
 
     async def bad_query(request: Request, exc: Exception) -> HTMLResponse:

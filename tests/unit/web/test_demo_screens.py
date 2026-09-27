@@ -1,8 +1,10 @@
 """The demo (``FHA_DEMO=1``) shows salaries with no uploads (issue #14)."""
 
+import logging
 import re
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from fha.sources.demo_salaries import CAP, DemoLeagueSheet
@@ -61,7 +63,7 @@ def test_admin_names_the_built_in_sheet_and_holds_the_rows_to_review() -> None:
     assert html.count('<span class="good">matches</span>') == 5
 
 
-def test_demo_salaries_are_prepared_before_the_first_page_only_when_wired() -> None:
+def test_prepare_is_awaited_on_every_page() -> None:
     calls: list[str] = []
 
     async def prepare() -> None:
@@ -72,5 +74,30 @@ def test_demo_salaries_are_prepared_before_the_first_page_only_when_wired() -> N
     client = logged_in(make_app(services))
     client.get("/players")
     client.get("/league")
-    assert calls == ["prepared", "prepared"]  # awaited every page; DemoSalaries runs once
-    assert "Payroll" in logged_in(make_app(make_services())).get("/league").text
+    assert calls == ["prepared", "prepared"]  # DemoSalaries makes the repeats free
+
+
+def test_without_prepare_no_payroll_is_known() -> None:
+    html = logged_in(make_app(make_services())).get("/league").text
+    assert not re.findall(r'<td class="num">\$[\d.]+M</td>', html)
+
+
+def test_a_failed_prepare_is_logged_and_the_pages_still_work(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R1-M3: Admin must stay usable, so the demo's salaries are optional."""
+    calls: list[str] = []
+
+    async def prepare() -> None:
+        calls.append("tried")
+        raise ValueError("secret detail")
+
+    services = make_services()
+    services.prepare = prepare
+    client = logged_in(make_app(services))
+    with caplog.at_level(logging.WARNING):
+        assert client.get("/admin").status_code == 200
+        assert client.get("/players").status_code == 200
+    assert calls == ["tried", "tried"]  # tried again on the next page
+    assert "demo salaries not stored: ValueError" in caplog.text
+    assert "secret detail" not in caplog.text

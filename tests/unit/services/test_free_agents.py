@@ -18,6 +18,7 @@ from fha.services.free_agents import (
 from fha.sources.puckpedia import SalaryRow, parse_salary_csv
 from fha.sources.yahoo.models import Player
 from fha.storage.memory import InMemoryRepository
+from tests.unit.services.repos import CountingRepository
 
 
 def player(pid: str, name: str, team: str = "", pos: str = "C") -> Player:
@@ -47,20 +48,6 @@ ROWS = [
     row("Wall, Cy", "G", 2_500_000, 6),
     row("Nobody, Known", "R", 800_000, 7),
 ]
-
-
-class CountingRepository(InMemoryRepository):
-    def __init__(self) -> None:
-        super().__init__()
-        self.writes = 0
-
-    async def put(self, collection: str, doc_id: str, doc: dict[str, Any]) -> None:
-        self.writes += 1
-        await super().put(collection, doc_id, doc)
-
-    async def replace_all(self, collection: str, docs: Any) -> None:
-        self.writes += 1
-        await super().replace_all(collection, docs)
 
 
 def test_row_key_is_normalized_name_and_position_group() -> None:

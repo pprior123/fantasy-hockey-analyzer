@@ -12,6 +12,7 @@ as a "no Yahoo data" page, and Admin keeps working around it.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -27,6 +28,7 @@ from fha.web.format import ago
 NO_DATA = (RefreshError, ViewError)
 RETRY_NOTE = "Yahoo is asked again a minute after a failure."
 SIGN_IN_NOTE = "The app's Yahoo sign-in may need renewing (the consent flow)."
+log = logging.getLogger(__name__)
 
 
 def failure_kind(note: str) -> str:
@@ -115,7 +117,10 @@ async def page_data(
     svc = services(request)
     settings = request.app.state.context.settings
     if svc.prepare is not None:
-        await svc.prepare()
+        try:
+            await svc.prepare()
+        except Exception as e:  # optional (the demo's salaries): Admin must keep working
+            log.warning("demo salaries not stored: %s", type(e).__name__)
     cached = await svc.refresh.current(force=force)
     config = await load_rating_settings(svc.repo)
     salaries, reports = await load_salaries(

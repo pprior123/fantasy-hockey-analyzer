@@ -93,7 +93,7 @@ class _Row:
 def demo_sheet_grid(snapshot: LeagueSnapshot) -> Grid:
     rng = random.Random(SEED)  # noqa: S311 - demo data, not security
     tabs = [_summary()]
-    for t, (team, target) in enumerate(zip(snapshot.teams, PAYROLL_TARGETS, strict=False)):
+    for t, (team, target) in enumerate(zip(snapshot.teams, PAYROLL_TARGETS, strict=True)):
         counted = [e.player for e in team.roster if not e.in_ir_slot]
         ir = [e for e in team.roster if e.in_ir_slot]
         everyone = counted + [e.player for e in ir]

@@ -2,9 +2,12 @@
 
 ``seed_demo_salaries`` does what the owner would do in Admin: read the
 sheet, save each tab's suggested team, and import the free-agent rows. It
-fills only what is empty, so a sheet or rows the owner already read or
-uploaded (e.g. in a ``FHA_LOCAL_REPOSITORY`` file) are kept as they are,
-and a second run writes nothing. ``DemoSalaries`` runs it once per process.
+fills only what is empty, so a sheet, bindings or rows the owner already
+made (e.g. in a ``FHA_LOCAL_REPOSITORY`` file) are kept as they are, and a
+second run writes nothing. Tabs are bound while no binding has ever been
+saved, whichever sheet is stored: Admin's Read sheet may come before the
+first page, and a crash may fall between the two writes (DECISIONS).
+``DemoSalaries`` runs it once per process.
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ from fha.services.aliases import load_aliases
 from fha.services.clock import Clock
 from fha.services.free_agents import ROWS, import_free_agent_salaries
 from fha.services.league_sheet import (
+    COLLECTION,
+    TAB_BINDINGS,
     bind_tab,
     load_league_sheet,
     read_league_sheet,
@@ -36,11 +41,11 @@ async def seed_demo_salaries(
     free_agent_rows: Sequence[SalaryRow],
 ) -> None:
     aliases = await load_aliases(repo)
-    if await load_league_sheet(repo) is None:
-        parsed = await read_league_sheet(repo, sheet, clock)
+    stored = await load_league_sheet(repo)
+    parsed = stored[0] if stored else await read_league_sheet(repo, sheet, clock)
+    if await repo.get(COLLECTION, TAB_BINDINGS) is None:  # never bound; {} is the owner's
         for tab, team_key in suggest_bindings(parsed, snapshot.teams, aliases).items():
-            if team_key is not None:
-                await bind_tab(repo, tab, team_key)
+            await bind_tab(repo, tab, team_key)  # None: no clear fit, left unbound
     if await load_chunked(repo, ROWS) is None:
         await import_free_agent_salaries(repo, free_agent_rows, snapshot.pool, aliases)
 

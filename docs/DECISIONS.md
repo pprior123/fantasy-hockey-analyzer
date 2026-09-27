@@ -2012,11 +2012,26 @@ players:
   `parse_sheet`, like the real sheet does. No `.xlsx` is written, and
   `openpyxl` isn't imported.
 - `fha.services.demo.seed_demo_salaries` fills only what is empty: a
-  sheet or rows already stored (an owner upload, or a
+  sheet, bindings or rows already stored (an owner upload, or a
   `FHA_LOCAL_REPOSITORY` file such as the walkthrough's) are kept, and a
   second run writes nothing.
+  - The sheet is read if none is stored. The free-agent rows are imported
+    if none are stored.
+  - Tabs are bound to their suggested teams while no binding has ever been
+    saved, whichever sheet is stored. An empty bindings document is the
+    owner's unbinding and is kept.
+  - Review round 1 (M1, M2): binding used to depend on the sheet being
+    absent. Admin's "Read sheet" as the first request (a `--reload`
+    restart keeps the session cookie), or a crash between the two writes,
+    then left the demo with no payrolls.
 - `Services.prepare` runs it, once per process (`DemoSalaries`, under a
   lock), awaited at the top of `page_data`.
+  - If it fails, the error's type is logged and the pages carry on
+    without built-in salaries. The next page tries again. Admin must stay
+    usable (review round 1, M3).
+- In the demo, Admin's "Read sheet" now re-reads the built-in sheet. It
+  replaces an `.xlsx` the owner uploaded, as it would with a configured
+  live sheet. Before this change, it said no sheet was configured.
 - A configured sheet (`LEAGUE_SHEET_ID` / `LEAGUE_SHEET_XLSX`) turns the
   built-in salaries off entirely. Production is unchanged
   (`prepare=None`).

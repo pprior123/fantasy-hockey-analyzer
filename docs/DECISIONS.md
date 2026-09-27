@@ -1562,3 +1562,45 @@ which parameter a Players 400 message names. Only a hand-edited store can
 set fewer categories.
 
 Round 5 found one medium, fixed with a test, so round 6 runs.
+
+## 2026-09-26 — M4 review round 6: what changed
+Reviewed at `5dfdac2`.
+- **Reviewer A:** 1 medium, under the rubric (a fix without a test), plus lows.
+- **Reviewer B:** 2 narrow mediums, both false statements in rare states.
+
+Both reverted every round-5 fix in their scope; all but one failed a test
+(A-1 below).
+
+**Fixed:**
+- **"There is no next week" without my team (M4R6B-1).** With no owner's team,
+  Matchup's Next week said the season had ended. It now says my team isn't in
+  the league's data, as the current week did. With my team present, `game`
+  can only be None for next week, since the current scoreboard is always in
+  the snapshot.
+- **"No rated skaters" when they're on IR (M4R6B-2).** Profiles leave out
+  IR / IR+ slots (SPEC §5), so the need list now says "no rated skaters
+  outside IR / IR+", as Rosters' profile note does.
+- **An unknown cap (M4R6B-3).** When the sheet's cap is unknown, and no
+  `SALARY_CAP` is set, every room is unknown too. Replace now says my cap room
+  is unavailable, and League's note adds that room needs the cap.
+- **The kept search (M4R6A-1, A-2)** is trimmed and then capped at 100
+  characters, and is now tested. Cutting before trimming could turn a padded
+  search into blanks.
+- **The flash cap cut real messages (M4R6A-3).** Round 5's 300-character cut
+  could drop the end of a CSV import summary, including the unknown teams,
+  which nothing else shows. Now the parts that can grow are cut instead:
+  - quoted form or CSV input stops at 40 characters;
+  - the conflict and unknown-team lists show 8 names, then "and N more".
+
+  A 1000-character cut stays as a last guard, which real messages never
+  reach.
+- **Tests:** the signed-in bad-form page keeps the nav (M4R6A-4).
+
+**Recorded, not changed:**
+- Replace's "No free agents at C,LW fit the cap" can read as "none fit" when
+  every row was left out as unknown. The note above it gives the count.
+- Grammar: "(1 players)" on the Rosters profile note.
+- The conflict list names raw row keys (`name|F`).
+- A 1e-7% floor shows as "1e-07%".
+
+Round 6 found three narrow mediums, each fixed with a test, so round 7 runs.

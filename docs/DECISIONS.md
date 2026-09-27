@@ -1724,3 +1724,37 @@ test.
 SPEC §5's `counts` now notes the unknown case.
 
 Round 9 found two mediums, fixed with tests, so round 10 runs.
+
+## 2026-09-26 — M4 review round 10: what changed
+Reviewed at `d283d45`.
+- **Reviewer A:** 1 medium.
+- **Reviewer B:** approve with lows. It traced every consumer of `counts`
+  and of a missing rostered salary, and found only Replace affected by a
+  row awaiting review; the rest use the tab's official PAYROLL or the CSV
+  fallback.
+
+Both reverted every round-9 change in their scope. All but one failed a
+test: the no-data page's wording, below.
+
+**Fixed:**
+- **The no-data page guessed a cause (M4R10A-1, medium).** Its hint said
+  "this page comes back once Yahoo answers". That's false for a refused
+  sign-in, for a response the parser doesn't know (likely on the first real
+  fetch, since the M2 shapes are unrecorded), and for a snapshot that can't
+  be rated (a `ViewError`, A-2). The hint now says what happens next:
+  - Yahoo is asked again a minute after a failure;
+  - for a `YahooAuthError`, the sign-in may need renewing;
+  - for a `ViewError`, Yahoo's data arrived but can't be rated.
+
+  The stale note and this page share `failure_kind`. The message's wording
+  is now tested.
+- **The IR-row case (M4R10B-1).** Only a *counted* row awaiting review can
+  be the drop's, since an IR row frees nothing either way. A test now pins
+  that.
+- **Replace's label (M4R10B-2)** says "counted rows on my tab match no
+  roster player (see Admin)" rather than "await review". A no-name row, or
+  a traded player's row the commissioner hasn't removed, matches no one and
+  can't be confirmed in Admin. The maths stays conservative: unknown, never
+  a wrong number.
+
+Round 10 found one medium, fixed with a test, so round 11 runs.

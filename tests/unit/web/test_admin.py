@@ -280,10 +280,25 @@ def test_a_flash_quoting_huge_input_stays_short() -> None:
     tab = secrets.token_urlsafe(30_000)
     response = c.post("/admin/bind", data={"tab": tab}, follow_redirects=False)
     assert len(response.headers["location"]) < 1000
-    text = flash_of(response)["text"]
-    assert len(text) == 300
-    assert text.startswith(tab[:40])
-    assert text.endswith("…")
+    assert flash_of(response)["text"] == f"{tab[:39]}…: that tab isn't in the stored sheet."
+
+
+def test_the_kept_search_is_trimmed_and_capped() -> None:
+    """M4R6A-1/A-2: the search rides in the redirect URL too; padding doesn't count."""
+    c = client()
+    response = c.post(
+        "/admin/fa/unbind", data={"key": "nope", "q": "  " + "y" * 5000}, follow_redirects=False
+    )
+    assert parse_qs(urlsplit(response.headers["location"]).query)["q"] == ["y" * 100]
+
+
+def test_a_long_import_summary_keeps_its_counts_and_every_section() -> None:
+    """M4R6A-3: a cut at the end of the message dropped the unknown teams."""
+    rows = [csv_row(f"Player{i:02d} Name", "C", f"${n}", "TOR") for i in range(14) for n in (1, 2)]
+    teams = [csv_row(f"Some Else{i}", "C", "$3", f"Nowhere City {i:02d}") for i in range(10)]
+    text = upload_csv(client(), *rows, *teams)["text"]
+    assert " and 6 more. Unknown teams: " in text
+    assert text.endswith("Nowhere City 07 and 2 more.")
 
 
 def test_a_value_the_store_refuses_is_a_message_not_a_500() -> None:
@@ -424,6 +439,7 @@ def test_a_missing_or_mistyped_field_is_the_400_page_not_json(
     assert response.status_code == 400
     assert response.headers["content-type"].startswith("text/html")
     assert "A form value was missing" in response.text
+    assert 'class="topnav"' in response.text  # M4R6A-4: signed in, so the nav stays
     assert "Player,Pos" not in response.text
     assert '<a href="/admin">Start over</a>' in response.text
 

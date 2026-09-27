@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -69,7 +70,9 @@ REVIEW_LIMIT = 30  # review rows shown at once; the rest wait for the next visit
 SEARCH_LIMIT = 20
 FLASH_SALT = "fha-admin-flash-v1"
 FLASH_MAX_AGE = 600  # seconds: a message belongs to the redirect that carried it
-MAX_FLASH = 300  # characters: the longest real message is ~150
+MAX_FLASH = 1000  # characters: a last guard; quoted input and lists are cut first
+MAX_QUOTED = 40  # characters of form or CSV input a message quotes
+MAX_LISTED = 8  # names a message lists before "and N more"
 SEARCH_MAX = 100  # characters of a search kept across a redirect
 MAX_CAP_HIT = 1_000_000_000  # dollars: far above any real cap hit (the cap is ~$120M)
 
@@ -105,17 +108,29 @@ def parse_dollars(text: str) -> int:
         if scaled == scaled.to_integral_value():
             amount = scaled
     if amount is None:
-        raise InputError(f"enter a cap hit like $7,250,000, 7250000 or 7.25M (got {text!r})")
+        raise InputError(
+            f"enter a cap hit like $7,250,000, 7250000 or 7.25M (got {_short(text)!r})"
+        )
     if amount > MAX_CAP_HIT:
-        raise InputError(f"a cap hit can't be over ${MAX_CAP_HIT:,} (got {text!r})")
+        raise InputError(f"a cap hit can't be over ${MAX_CAP_HIT:,} (got {_short(text)!r})")
     return int(amount)
+
+
+def _short(text: str, limit: int = MAX_QUOTED) -> str:
+    """``text`` cut to ``limit`` characters: the flash rides in the redirect URL."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _listed(names: Sequence[str]) -> str:
+    shown = ", ".join(_short(n) for n in names[:MAX_LISTED])
+    return shown + (f" and {len(names) - MAX_LISTED} more" if len(names) > MAX_LISTED else "")
 
 
 def parse_percent(text: str) -> str:
     """The GP floor as a percent ("2" or "2%") -> the fraction as text ("0.02")."""
     m = PERCENT.fullmatch(text.strip())
     if m is None:
-        raise InputError(f"enter the GP floor as a percent, e.g. 2 (got {text!r})")
+        raise InputError(f"enter the GP floor as a percent, e.g. 2 (got {_short(text)!r})")
     return str(Decimal(m[1]) / 100)
 
 
@@ -146,8 +161,8 @@ def _signer(request: Request) -> URLSafeTimedSerializer:
 
 def _back(request: Request, kind: str, text: str, *, anchor: str, q: str = "") -> RedirectResponse:
     # The flash rides in the redirect URL, and a message can quote form input.
-    text = text if len(text) <= MAX_FLASH else text[: MAX_FLASH - 1] + "…"
-    q = q[:SEARCH_MAX]
+    text = _short(text, MAX_FLASH)
+    q = q.strip()[:SEARCH_MAX]
     token = _signer(request).dumps({"kind": kind, "text": text})
     params = {"flash": token, **({"q": q} if q else {})}
     return RedirectResponse(f"/admin?{urlencode(params)}#{anchor}", status_code=303)
@@ -359,7 +374,7 @@ async def bind(request: Request, tab: str = Form(), team_key: str = Form("")) ->
                 raise InputError("that team isn't in the league")
         await bind_tab(svc.repo, tab, team_key or None)
     except (InputError, LeagueSheetServiceError, RepositoryError) as e:
-        return _back(request, "error", f"{tab}: {_why(e)}.", anchor="bindings")
+        return _back(request, "error", f"{_short(tab)}: {_why(e)}.", anchor="bindings")
     text = f"{tab} is now bound." if team_key else f"{tab} is unbound."
     return _back(request, "ok", text, anchor="bindings")
 
@@ -373,7 +388,7 @@ async def sheet_confirm(
         data = await _data_for(request, "Matching a row")
         report = next((r for r in data.reports if r.tab.name == tab), None)
         if report is None or report.team_key is None:
-            raise InputError(f"tab {tab!r} isn't bound to a team yet")
+            raise InputError(f"tab {_short(tab)!r} isn't bound to a team yet")
         if key not in {m.key for m in report.rows}:
             raise InputError("that row isn't on the tab")
         team = data.view.team(report.team_key)
@@ -381,7 +396,7 @@ async def sheet_confirm(
             raise InputError("that player isn't on the tab's Yahoo roster")
         await confirm_row(svc.repo, tab, key, player_id)
     except (InputError, LeagueSheetServiceError, RepositoryError) as e:
-        return _back(request, "error", f"{tab}: {_why(e)}.", anchor="discrepancies")
+        return _back(request, "error", f"{_short(tab)}: {_why(e)}.", anchor="discrepancies")
     return _back(request, "ok", f"{tab}: row matched.", anchor="discrepancies")
 
 
@@ -419,9 +434,9 @@ async def csv_import(request: Request, file: UploadFile) -> RedirectResponse:
             f"{report.already_bound} already bound, {len(report.reviews)} to review."
         )
     if report.conflicts:
-        text += f" Not imported (two cap hits for one player): {', '.join(report.conflicts)}."
+        text += f" Not imported (two cap hits for one player): {_listed(report.conflicts)}."
     if report.unknown_teams:
-        text += f" Unknown teams: {', '.join(report.unknown_teams)}."
+        text += f" Unknown teams: {_listed(report.unknown_teams)}."
     return _back(request, "ok", text, anchor="csv")
 
 

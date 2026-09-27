@@ -40,7 +40,7 @@
     {% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="{{ 4 + (2 if mode == 'money' else categories|length) }}" class="muted">{% if game.comparison is none %}No opponent {{ 'next week' if week == 'next' else 'this week' }}, so no category to help with.{% elif game.me.profile.ttltst is none or game.opponent.profile.ttltst is none %}Nothing to compare yet: {{ (game.me if game.me.profile.ttltst is none else game.opponent).team.name }} has no rated skaters in these numbers, so no category to help with.{% elif not game.comparison.trailing %}You lead everywhere, by more than the close margin: no category to help with.{% else %}No free agents to show.{% endif %}</td></tr>
+  <tr><td colspan="{{ 4 + (2 if mode == 'money' else categories|length) }}" class="muted">{% if game.comparison is none %}No opponent {{ 'next week' if week == 'next' else 'this week' }}, so no category to help with.{% elif game.me.profile.ttltst is none or game.opponent.profile.ttltst is none %}Nothing to compare yet: {{ (game.me if game.me.profile.ttltst is none else game.opponent).team.name }} has no rated skaters outside IR / IR+ in these numbers, so no category to help with.{% elif not game.comparison.trailing %}You lead everywhere, by more than the close margin: no category to help with.{% else %}No free agents to show.{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

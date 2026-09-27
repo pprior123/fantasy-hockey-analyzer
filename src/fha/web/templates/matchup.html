@@ -12,7 +12,7 @@
 </div>
 
 {% if game is none %}
-<p class="card">{% if week == 'next' %}There is no next week: the season's last week is this one.{% else %}Your team isn't in this league's data.{% endif %}</p>
+<p class="card">{% if data.view.my_team is none %}Your team isn't in this league's data.{% else %}There is no next week: the season's last week is this one.{% endif %}</p>
 {% elif game.opponent is none %}
 <p class="card">Week {{ game.week }}: a bye, no opponent.</p>
 {% else %}

@@ -428,6 +428,9 @@ def test_the_salary_cap_setting_fills_in_for_an_unreadable_cap() -> None:
     assert money(100_000_000 - payroll) in html
     without = logged_in(make_app(svc)).get("/rosters").text
     assert "Cap —" in without  # no cap anywhere: unknown, never $0
+    replace_page = logged_in(make_app(svc)).get(f"/rosters/replace?drop={my_skater()}").text
+    assert "(my cap room is unavailable)" in replace_page  # M4R6B-3: the tab is bound
+    assert "room also needs the cap" in logged_in(make_app(svc)).get("/league").text
     sheet_cap = make_services()
     seed(sheet_cap)
     html = logged_in(make_app(sheet_cap, salary_cap=100_000_000)).get("/rosters").text
@@ -606,7 +609,7 @@ def test_with_no_rated_skaters_the_list_doesnt_claim_a_lead() -> None:
     preseason = replace(SNAP, stats={}, last_season_stats=SNAP.last_season_stats or SNAP.stats)
     html = client(services_for(preseason)).get("/matchup/free-agents?season=current").text
     assert "You lead everywhere" not in html
-    assert f"Nothing to compare yet: {MINE.name} has no rated skaters in these numbers" in html
+    assert f"Nothing to compare yet: {MINE.name} has no rated skaters outside IR / IR+" in html
     opp = next(t for t in SNAP.teams if t.team_key == SNAP.scoreboard.opponent(MINE.team_key))
     gone = {e.player.player_key for e in opp.roster}
     empty_opp = replace(SNAP, stats={k: v for k, v in SNAP.stats.items() if k not in gone})
@@ -636,6 +639,7 @@ def test_without_my_team() -> None:
     orphan = replace(SNAP, teams=tuple(replace(t, is_mine=False) for t in SNAP.teams))
     c = client(services_for(orphan))
     assert "Your team isn" in c.get("/matchup").text
+    assert "Your team isn" in c.get("/matchup?week=next").text  # M4R6B-1: not "no next week"
     html = c.get("/rosters").text
     assert SNAP.teams[0].name in html  # the first team instead
     assert c.get(f"/rosters/replace?drop={my_skater()}").status_code == 400

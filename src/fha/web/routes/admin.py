@@ -69,6 +69,8 @@ REVIEW_LIMIT = 30  # review rows shown at once; the rest wait for the next visit
 SEARCH_LIMIT = 20
 FLASH_SALT = "fha-admin-flash-v1"
 FLASH_MAX_AGE = 600  # seconds: a message belongs to the redirect that carried it
+MAX_FLASH = 300  # characters: the longest real message is ~150
+SEARCH_MAX = 100  # characters of a search kept across a redirect
 MAX_CAP_HIT = 1_000_000_000  # dollars: far above any real cap hit (the cap is ~$120M)
 
 DOLLARS = re.compile(r"\$?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)")
@@ -143,6 +145,9 @@ def _signer(request: Request) -> URLSafeTimedSerializer:
 
 
 def _back(request: Request, kind: str, text: str, *, anchor: str, q: str = "") -> RedirectResponse:
+    # The flash rides in the redirect URL, and a message can quote form input.
+    text = text if len(text) <= MAX_FLASH else text[: MAX_FLASH - 1] + "…"
+    q = q[:SEARCH_MAX]
     token = _signer(request).dumps({"kind": kind, "text": text})
     params = {"flash": token, **({"q": q} if q else {})}
     return RedirectResponse(f"/admin?{urlencode(params)}#{anchor}", status_code=303)

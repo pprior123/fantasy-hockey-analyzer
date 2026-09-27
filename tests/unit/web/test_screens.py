@@ -117,6 +117,7 @@ def test_numbers_and_urls() -> None:
     per82 = EngineConfig(divisor_method=DivisorMethod.TOP_PER82, gp_floor_fraction=0.05)
     assert rating_settings(per82) == "per-82 top-10, floor 5%"
     assert rating_settings(EngineConfig(gp_floor_fraction=0.025)).endswith("floor 2.5%")
+    assert rating_settings(EngineConfig(gp_floor_fraction=0.0125)).endswith("floor 1.25%")
 
 
 # ---------------------------------------------------------------- players
@@ -506,8 +507,19 @@ def test_replace_needs_my_player_and_a_known_toggle(query: str) -> None:
 
 
 def test_replacing_a_player_missing_from_the_sheet_frees_nothing() -> None:
-    html = client().get(f"/rosters/replace?drop={my_skater()}").text
+    svc = make_services()
+    drop = my_skater()
+    seed(svc, skip=[e.player.player_id for e in MINE.roster].index(drop) + 1)
+    html = client(svc).get(f"/rosters/replace?drop={drop}").text
     assert "not on the sheet: frees nothing" in html
+
+
+def test_without_my_tab_replace_says_the_room_is_unavailable() -> None:
+    """M4R5B-2: with no sheet every player's ``counts`` is unknown; that isn't
+    "not on the sheet"."""
+    html = client().get(f"/rosters/replace?drop={my_skater()}").text
+    assert "(my cap room is unavailable)" in html
+    assert "frees nothing" not in html
 
 
 # ---------------------------------------------------------------- league
@@ -586,6 +598,20 @@ def test_fits_my_cap_counts_the_unknown() -> None:
     seed(svc)
     html = client(svc).get("/matchup/free-agents?fits=1").text
     assert "left out: a cap hit or the room isn" in html
+
+
+def test_with_no_rated_skaters_the_list_doesnt_claim_a_lead() -> None:
+    """M4R5B-1: before opening night with "This season" forced (SPEC §5), no team has a
+    profile, so nothing trails; the list said "You lead everywhere"."""
+    preseason = replace(SNAP, stats={}, last_season_stats=SNAP.last_season_stats or SNAP.stats)
+    html = client(services_for(preseason)).get("/matchup/free-agents?season=current").text
+    assert "You lead everywhere" not in html
+    assert f"Nothing to compare yet: {MINE.name} has no rated skaters in these numbers" in html
+    opp = next(t for t in SNAP.teams if t.team_key == SNAP.scoreboard.opponent(MINE.team_key))
+    gone = {e.player.player_key for e in opp.roster}
+    empty_opp = replace(SNAP, stats={k: v for k, v in SNAP.stats.items() if k not in gone})
+    html = client(services_for(empty_opp)).get("/matchup/free-agents?season=current").text
+    assert f"Nothing to compare yet: {opp.name} has no rated skaters" in html
 
 
 def test_a_bye_and_no_next_week() -> None:
@@ -766,7 +792,7 @@ def test_the_players_filter_form_keeps_the_view() -> None:
 )
 def test_a_bad_value_is_quoted_short_on_the_400_page(query: str) -> None:
     """M4R3B-6, M4R4B-3: every quoted query value, not only ``season``."""
-    response = client().get(query + "x" * 3000)
+    response = client().get(query + "x" * 13)  # one past the 12 quoted
     assert response.status_code == 400
     assert "&#39;xxxxxxxxxxxx…&#39;" in response.text
     assert "x" * 13 not in response.text

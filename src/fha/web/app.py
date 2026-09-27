@@ -296,6 +296,13 @@ def create_app(context: AppContext) -> FastAPI:
             back=f"/{active}" if active else None,
         )
 
+    def chrome(request: Request) -> dict[str, str | None]:
+        """The nav and Log out, for a signed-in viewer only (the error pages also
+        answer public paths)."""
+        if not sessions.valid(request.cookies.get(COOKIE)):
+            return {}
+        return {"active": _active(request.url.path)}
+
     async def bad_form(request: Request, exc: Exception) -> HTMLResponse:
         """A missing or mistyped form field: the 400 page, never FastAPI's JSON (which
         echoes the input back)."""
@@ -304,7 +311,7 @@ def create_app(context: AppContext) -> FastAPI:
             request,
             "bad_request.html",
             status_code=400,
-            active=active,
+            **chrome(request),
             title="Not understood",
             message="A form value was missing or not what the page expected.",
             back=f"/{active}" if active else None,
@@ -316,12 +323,11 @@ def create_app(context: AppContext) -> FastAPI:
         headers = exc.headers if isinstance(exc, HTTPException) else None
         from http import HTTPStatus
 
-        signed_in = sessions.valid(request.cookies.get(COOKIE))  # else no nav, no Log out
         response = render(
             request,
             "bad_request.html",
             status_code=status,
-            **({"active": _active(request.url.path)} if signed_in else {}),
+            **chrome(request),
             title=HTTPStatus(status).phrase,
             message={
                 404: "There's no such page.",

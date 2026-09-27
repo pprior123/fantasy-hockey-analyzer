@@ -271,6 +271,21 @@ def test_binding_checks_the_tab_and_the_team(form: dict[str, str], text: str) ->
     assert "bound to" not in c.get("/admin").text
 
 
+def test_a_flash_quoting_huge_input_stays_short() -> None:
+    """M4R5A-2: the flash rides in the redirect URL; random input doesn't compress."""
+    import secrets
+
+    c = client()
+    upload_sheet(c)
+    tab = secrets.token_urlsafe(30_000)
+    response = c.post("/admin/bind", data={"tab": tab}, follow_redirects=False)
+    assert len(response.headers["location"]) < 1000
+    text = flash_of(response)["text"]
+    assert len(text) == 300
+    assert text.startswith(tab[:40])
+    assert text.endswith("…")
+
+
 def test_a_value_the_store_refuses_is_a_message_not_a_500() -> None:
     """A tab name Firestore can't hold as a map key (``__x__``) fails in the store."""
     c = client()

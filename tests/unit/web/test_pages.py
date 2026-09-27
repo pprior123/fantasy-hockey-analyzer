@@ -397,3 +397,11 @@ def test_an_error_page_for_a_visitor_has_no_nav(method: str, path: str) -> None:
     assert response.status_code in (404, 405)
     assert "Log out" not in response.text
     assert 'class="topnav"' not in response.text
+
+
+def test_a_bad_login_form_from_a_visitor_has_no_nav() -> None:
+    """M4R5A-1: a file posted as the password is the 400 page, still without the nav."""
+    response = TestClient(make_app()).post("/login", files={"password": ("a.txt", b"x")})
+    assert response.status_code == 400
+    assert "Log out" not in response.text
+    assert 'class="topnav"' not in response.text

@@ -321,7 +321,9 @@ of date; the sheet is authoritative.)
 ```
 counts(p)          = p is in the tab's PAYROLL range (so not an IR row);
                      false for a player missing from the tab (a discrepancy,
-                     flagged per §4a)
+                     flagged per §4a); unknown (None) instead while the tab
+                     has counted rows awaiting match review, since one may
+                     be his (DECISIONS, M4 review round 9)
 payroll(team)      = the tab's official PAYROLL value
 cap_room(team)     = cap - payroll(team)
 fits(p, team)      = aav(p) <= cap_room(team)

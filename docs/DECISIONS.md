@@ -1673,3 +1673,54 @@ test (A-1 below).
   that matched a stored sheet tab.
 
 Round 8 found one medium, fixed with a test, so round 9 runs.
+
+## 2026-09-26 — M4 review round 9: what changed
+Reviewed at `2b70f95`. Both reviewers were asked to check every message
+against round 8's lesson: say what the data shows, not a cause it can't
+tell. Each found 1 medium.
+
+Both reverted every round-8 change in their scope, and each revert failed a
+test.
+
+**Fixed:**
+- **The stale note guessed "Yahoo couldn't be reached" (M4R9A-1, medium).**
+  With a cache, the note said that for every failure: a refused sign-in
+  (`YahooAuthError`), a changed response (`YahooParseError`), a store error
+  reading the token. So a revoked token would never have pointed the owner
+  at the consent flow. The note now says "Refreshing from Yahoo failed
+  ({type})". For a `YahooAuthError` it adds that the sign-in may need
+  renewing.
+  - For the same reason, the storage page says "Reading or writing the app's
+    storage failed", not "couldn't be reached": Firestore can also refuse a
+    request.
+  - The no-data messages drop "yet", since an outage or an unratable
+    snapshot isn't "not yet".
+- **Replace's cap maths when a row awaits review (M4R9B-1, medium).**
+  `counts` is None when no sheet row is matched to the player. SPEC §5
+  reads that as "missing from the tab: frees nothing". But when my bound
+  tab has counted rows matched to no roster player (in match review, e.g.
+  a misspelled name), one of them may be his. Then his cap hit is in
+  PAYROLL, and "frees nothing" understated the room after every swap.
+  - `Salaries.unmatched_counted` names such teams, and `TeamInfo` carries
+    the flag.
+  - Replace then treats the drop's cap hit as unknown: room after is "—",
+    and the `swap_ok` toggle counts each row as left out.
+  - The label says so and points at Admin. Without unmatched counted rows,
+    the label now reads "no sheet row matched him: frees nothing", not
+    "not on the sheet", which a matching miss can't tell apart.
+- **"By at least the close margin" (M4R9B-3):** a category ties the margin
+  when it doesn't trail.
+
+**Recorded, not changed:**
+- **"Free Agents" includes players on waivers (M4R9B-2).** Yahoo's
+  `status=A` list holds both, and a waiver claim isn't a free-agent pickup.
+  Whether the M2 recording carries the ownership type (W / FA) decides the
+  fix, so it waits for the recording.
+- **`FreeAgentError` quotes a form key whole (M4R9A-2):**
+  `/admin/fa/confirm` with an unknown key. The flash's 1000-character last
+  guard bounds it, alongside the CSV parser's and the engine's errors listed
+  in round 6.
+
+SPEC §5's `counts` now notes the unknown case.
+
+Round 9 found two mediums, fixed with tests, so round 10 runs.

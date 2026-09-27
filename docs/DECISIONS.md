@@ -1527,3 +1527,38 @@ fixes, and don't guard a claim made here, are listed rather than coded):
 
 Round 4 found one medium, fixed with a test, so round 5 runs: the loop ends
 at the first round with no medium or worse.
+
+## 2026-09-26 — M4 review round 5: what changed
+Reviewed at `a4e6114`.
+- **Reviewer A:** approve with 2 lows.
+- **Reviewer B:** 1 medium, lows.
+
+Both reverted every round-4 fix in their scope, and each revert failed a
+test.
+
+**Fixed:**
+- **"You lead everywhere" with nothing to compare (M4R5B-1, medium).** If
+  either team has no profile players (SPEC §5: nothing trails), the need
+  list said "You lead everywhere, by more than the close margin". That's
+  reachable through the UI before opening night with "This season" forced.
+  It now says "Nothing to compare yet: {team} has no rated skaters in these
+  numbers", naming the empty team.
+- **Replace without my tab (M4R5B-2).** With no sheet, or my tab unbound,
+  every drop was labelled "not on the sheet: frees nothing". It now says my
+  cap room is unavailable. "Not on the sheet" is kept for a player missing
+  from a bound tab.
+- **The 400 page for a bad login form (M4R5A-1).** A visitor who posted a
+  file as the password saw the nav and Log out. `bad_form` now shares
+  `http_error`'s signed-in check.
+- **The Admin flash's length (M4R5A-2).** A message quoting huge random
+  input made the redirect URL too long. The flash text is cut at 300
+  characters, and the kept search at 100.
+- **Tests:** the 13-character boundary of the quoted query values, and a
+  1.25% floor label (M4R5B-3).
+
+**Recorded, not changed (M4R5B-3):** the fewer-categories screens are
+tested for rendering, not for their colspans or headers, and no test checks
+which parameter a Players 400 message names. Only a hand-edited store can
+set fewer categories.
+
+Round 5 found one medium, fixed with a test, so round 6 runs.

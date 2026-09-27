@@ -1841,3 +1841,44 @@ rated routes gave no 5xx.
 
 Round 12's mediums were both missing tests, now added. Under the rule,
 round 13 runs, on a one-line change and tests.
+
+## 2026-09-26 — M4 review round 13: the loop ends
+Reviewed at `492363b`. Both reviewers approved, with nothing of medium or
+worse, so under the agreed rule the M4 review loop ends here.
+
+- **Reviewer A** reverted round 12's `self._token = renewed` line, and each
+  of the three new client tests fails for the mutant it names. With a save
+  that raises, only the request that renewed sees the error. Concurrent
+  waiters and the 401 path use the renewed token without a second
+  renewal, and the store is healed by the next successful save.
+- **Reviewer B** checked that the `twice=` seed builds the state it claims:
+  both rows are in review, the player has no sheet row, and the payroll and
+  cap are known. It reverted each guarded line. Its sweep of 460 odd
+  queries over a seeded state with a skipped row, a row in review and a row
+  with no salary gave no 5xx.
+
+**Recorded, not changed.** Both depend on whether Yahoo rotates and retires
+refresh tokens on renewal, which the M2 recording will show:
+- **After a failed save, the store keeps the older token (M4R13A-1).** A cold
+  instance loads that one. If Yahoo retired it, that instance is refused
+  until a warm one saves, or for good if the warm one is recycled first.
+  Revisit with the recording: retry the save while a flag says the store is
+  behind.
+- **A save failure fails the whole fetch (M4R13A-2),** though the token is
+  valid. It costs one stale note and the 60 s backoff.
+
+**The review loop in numbers:** 13 rounds. From round 4 on, each round found
+one or two mediums until round 13. The ones a user would have hit on real
+data:
+- a binding orphaned by a renamed tab (R4);
+- understated cap room while a sheet row awaits review (R9);
+- a stale note that hid a refused sign-in (R9);
+- a Yahoo client wedged by one refused renewal (R11).
+
+The rest were messages that guessed at causes, and tests missing for
+fixes. Process lessons:
+- a message should state what the data shows;
+- a reviewer's report needs the commit hash and quoted output, since one
+  report in round 11 described code that doesn't exist;
+- a wording change made in answer to a low can create a new medium (R7 to
+  R8).

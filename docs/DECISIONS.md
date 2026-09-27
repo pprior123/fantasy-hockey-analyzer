@@ -1936,3 +1936,18 @@ test when reverted.
     would re-save the token it just loaded from the store.
   - The backward-clock guard on the save retry: without it, a stepped-back
     clock would delay one retry.
+
+## 2026-09-27 — M3 sheet check on the 2026-27 sheet (owner sign-off)
+The owner re-downloaded the league sheet with its 2026-27 contents and ran
+`scripts/check_league_sheet.py` on it, which prints only statuses, counts,
+sums and row numbers. It passes:
+- All 8 team tabs parse, and each tab's PAYROLL equals its parsed salaries
+  exactly. Every tab's cap matches the summary cap ($119.6M). There are 3
+  non-team tabs.
+- The `???` salary flagged on 2026-09-26 is gone.
+- One tab has two IR rows with no salary. That's fine, since IR salaries
+  aren't counted.
+- One tab's payroll is over the cap, by about $4.1M (pre-season, before
+  keeper cuts). The app shows its cap room as negative, so `fits` fails
+  for it, and `swap_ok` passes only a swap that brings it back under
+  (SPEC §5).

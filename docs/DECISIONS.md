@@ -1951,3 +1951,40 @@ sums and row numbers. It passes:
   keeper cuts). The app shows its cap room as negative, so `fits` fails
   for it, and `swap_ok` passes only a swap that brings it back under
   (SPEC §5).
+
+## 2026-09-27 — M2–M4 merged; real-data checks move to M4.5
+**What.** PRs #4 (M2), #5 (M3) and #6 (M4) merge into `main` now, while
+Yahoo API access is pending. The criteria that need real Yahoo responses
+move to a new milestone, **M4.5 — Yahoo verification** (SPEC §10), which
+comes before M5:
+- the owner's recording and the sanitized real fixtures;
+- replay and hygiene tests on them;
+- the PPP answer;
+- the real refresh time;
+- the owner's sign-off on real data at 390 px.
+
+M2 is accepted on synthetic Yahoo-shaped fixtures. M4 is accepted on the
+owner's demo walkthrough (2026-09-27, Mac and phone, with synthetic salary
+files). This was the owner's decision (2026-09-27): "proceed with this and
+complete the merges yourself".
+
+**Why.**
+- The code is complete. Each milestone went through its review loop (M2
+  rounds 1–2, M3 rounds 1–3, M4 rounds 1–13) and CI is green on all three
+  PRs.
+- What's missing is verification against real responses, not code.
+- Waiting kept three branches stacked on an M1 `main`. Any new work would
+  have stacked further, and every post-recording fix would have had to be
+  rebased through all three.
+- Merging deploys nothing: M5 hasn't started.
+
+**How.** The branches are strictly linear (`main` ⊂ M2 ⊂ M3 ⊂ M4), so
+each merges by fast-forwarding `main` to its head, in order. That leaves no
+merge commits and no rewritten SHAs, so each next PR, retargeted to `main`,
+shows only its own commits. A GitHub squash or rebase merge would rewrite
+the lower PR's commits and make the next one conflict.
+
+**Alternatives.**
+- Keep waiting for Yahoo (rejected, for the reasons above).
+- Merge only M2 and M3 (rejected: M4 is equally complete, and the stack
+  would remain).

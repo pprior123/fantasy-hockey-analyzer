@@ -116,3 +116,6 @@ formulas over the row-2 labels, which are wrong in places.
 M1 is a tight sequential loop — a team adds little there. M2–M4 have
 independent workstreams (Yahoo source, storage/salaries, web) that
 parallelize well.
+
+M2–M4 are merged. M4.5 (Yahoo verification) waits on Yahoo API access; see
+SPEC §10.

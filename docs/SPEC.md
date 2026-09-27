@@ -76,7 +76,7 @@ Phone browser ──HTTPS──▶ Vercel (Python serverless, FastAPI)
   the whole-league pool (§4; last season's stats can be cached, since they
   never change); they must run **concurrently** (async `httpx`, bounded
   concurrency, e.g. 8), never sequentially. Target: full refresh under 8
-  seconds, measured by the M2 recording.
+  seconds, measured by the M4.5 recording.
 - Ephemeral filesystem. No token files, no SQLite, no local caches in
   production. All persistent state lives in Firestore.
 - Cold starts. Keep imports light; avoid heavy dependencies (no pandas in the
@@ -564,6 +564,10 @@ HttpOnly, Secure session cookie (long-lived). No user table.
 Each milestone ends with CI green and every acceptance criterion met. Do not
 start the next milestone until the current one is accepted.
 
+M2–M4 were accepted on synthetic Yahoo-shaped data while Yahoo API access
+was pending. Their real-data criteria moved to M4.5 (owner's decision,
+2026-09-27; DECISIONS "M2–M4 merged; real-data checks move to M4.5").
+
 ### M0 — Scaffolding
 - `uv` project, Python 3.12, `src/` layout, ruff, mypy, pytest config.
 - GitHub Actions CI running all gates (with a placeholder test).
@@ -585,12 +589,13 @@ start the next milestone until the current one is accepted.
   slot, so IR / IR+ is known), player pool, current- and last-season stats,
   league scoreboard for the current and next week. Concurrent fetch with bounded concurrency; token refresh
   on 401.
-- Record + sanitize real responses into fixtures (owner runs the recording
-  once after consent).
-- **Accept:** all Yahoo tests pass offline from fixtures; a mocked full
-  refresh completes with calls issued concurrently (asserted); PPP question
-  answered in DECISIONS.md; last-season stats and next week's opponent are
-  retrieved from fixtures.
+- The recording and sanitizing scripts (`scripts/record_yahoo.py`,
+  `scripts/sanitize_yahoo.py`); the owner runs the recording once after
+  consent (M4.5).
+- **Accept:** all Yahoo tests pass offline from synthetic Yahoo-shaped
+  fixtures; a mocked full refresh completes with calls issued concurrently
+  (asserted); last-season stats and next week's opponent are retrieved from
+  fixtures. (The real fixtures and the PPP answer moved to M4.5.)
 
 ### M3 — Storage and salaries
 - `Repository` protocol, `InMemoryRepository`, `FirestoreRepository`
@@ -622,9 +627,28 @@ start the next milestone until the current one is accepted.
 - Team profile, matchup, `need_score` and salary-cap functions in `domain/`
   (test-first).
 - Rating settings form in Admin (§7).
-- **Accept:** route tests pass; the owner runs the app **locally against real
-  Yahoo data** (`LocalJsonRepository`), on laptop and on their phone over the
-  local network at 390 px, and signs off; all gates green.
+- **Accept:** route tests pass; the owner walks through the app on the demo
+  league (`FHA_DEMO=1`), on laptop and on their phone over the local network
+  at 390 px (done 2026-09-27); all gates green. (The sign-off on real Yahoo
+  data moved to M4.5.)
+
+### M4.5 — Yahoo verification
+Everything that needs real Yahoo responses. It starts when Yahoo grants API
+access (DECISIONS, "Yahoo API access: pending approval").
+- The owner re-runs consent if the token has lapsed, then runs
+  `scripts.record_yahoo`.
+- Sanitize the recording into committed fixtures, with hygiene tests: no
+  manager contact details, emails or tokens.
+- Replay tests from the real fixtures: game-key resolution, the stat-ID map,
+  rosters with slots, the pool, both seasons' stats, and the current and next
+  week's scoreboards.
+- Answer the PPP question in DECISIONS.md. Record the real refresh time and
+  call count against the 8-second target.
+- Fix whatever the real data shows, as PRs against `main`.
+- **Accept:** all Yahoo tests pass offline from the real fixtures; PPP
+  answered; the owner runs the app **locally against real Yahoo data**
+  (`LocalJsonRepository`), with the real league sheet and a PuckPedia CSV, on
+  laptop and on their phone at 390 px, and signs off; all gates green.
 
 ### M5 — Deploy
 - Vercel project, env vars, Firestore project with deny-all rules, service
@@ -648,7 +672,8 @@ start the next milestone until the current one is accepted.
 ## 11. Open questions
 
 1. ~~Keeper count and cost~~ — resolved: exactly 8, each paid full cap hit.
-2. Whether Yahoo exposes PPP directly — resolved in M2.
+2. Whether Yahoo exposes PPP directly — resolved in M4.5, from real league
+   settings (the code handles both).
 3. Firestore vs. a free Postgres (e.g. Neon) — Firestore is the default;
    revisit only if the Repository implementation fights it.
 4. PuckPedia CSV export columns — owner to supply the header row before M3.

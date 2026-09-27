@@ -465,8 +465,9 @@ Common to the tables: a **Categories** toggle swaps the salary columns
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in
    red; "unavailable" when the tab is unrecognized or unbound; a badge when
    the discrepancy report for the team is non-empty). Goalies listed with raw W / GAA / SV%
-   and Yahoo rank (no TTLTST; the rank lands with the M2 recording, DECISIONS,
-   "M4 review round 1").
+   and their AAV (no TTLTST). In Phase 1 goalies count toward the cap, and my
+   goalies can be replaced like skaters; their Yahoo rank and any other goalie
+   view are deferred (owner, 2026-09-27; issue #7).
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:

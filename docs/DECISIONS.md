@@ -1882,3 +1882,41 @@ fixes. Process lessons:
   report in round 11 described code that doesn't exist;
 - a wording change made in answer to a low can create a new medium (R7 to
   R8).
+
+## 2026-09-27 — M4: three owner decisions after the review loop
+**Goalies count toward the cap, and that's all for now.** No goalie rank
+or goalie rating. The deferred goalie work is issue #7, and SPEC §7.2 says
+so. Checking the cap path found goalies already handled:
+- their sheet rows are matched and counted in PAYROLL, and they show their
+  AAV;
+- Replace accepts a goalie drop and lists free-agent goalies (`POSITIONS`
+  includes G).
+
+The one gap: Rosters' goalie table had no Replace link, so a goalie swap
+was reachable only by URL. My goalies now link to Replace like skaters do.
+A test checks that dropping a goalie frees his cap hit in the room after.
+
+**A renewed Yahoo token that fails to save (M4R13A-1/A-2).** The owner left
+this to me. `YahooClient._save` now logs the error's type and doesn't
+raise. The renewed token stays in memory and serves the request, and the
+save is retried on a later request at most every `SAVE_RETRY_SECONDS`
+(30 s) until the store has it. So:
+- a store outage no longer fails a fetch whose token is valid;
+- a cold instance sees the older stored token only while the store is
+  down, which holds whether or not Yahoo retires old refresh tokens.
+
+A refusal clears the pending save, since no token is then held.
+Alternatives:
+- raising, as before (rejected: it fails a fetch for nothing);
+- retrying on every request (rejected: during a store outage that's one
+  failing write per API call).
+
+**Matchup shows each category's std dev for both teams (M4R7B-3,
+resolved).** The owner wants to judge whether a difference is large next
+to each team's spread. The table is Cat, Me, SD, Them, SD, Diff, with the
+SDs muted.
+- The per-row "behind or close" text moved to one legend under the table
+  ("Shaded: behind or close"), with a screen-reader label kept in each
+  shaded row.
+- Checked in Chrome at 390 px: the page and the matchup table both fit
+  (scrollWidth 364 of 364), with no console errors.

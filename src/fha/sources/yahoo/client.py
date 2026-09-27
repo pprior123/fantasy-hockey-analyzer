@@ -21,6 +21,8 @@ from fha.sources.yahoo.oauth import Credentials, Token, TokenStore, YahooAuthErr
 
 API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2/"
 DEFAULT_MAX_CONCURRENCY = 8
+# A refused token renewal is shared by one fetch's requests, then Yahoo is asked again.
+REFUSAL_REPLAY_SECONDS = 30.0
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 RATE_LIMITED = 999  # Yahoo's status code for "too many requests"
 
@@ -67,7 +69,8 @@ class YahooClient:
         self._slots = asyncio.Semaphore(max_concurrency)
         self._token_lock = asyncio.Lock()
         self._token: Token | None = None
-        self._refused: tuple[Token, YahooAuthError] | None = None  # a refresh Yahoo refused
+        # A renewal Yahoo refused: (its refresh token, when, the error).
+        self._refused: tuple[str, float, YahooAuthError] | None = None
 
     async def get(self, path: str) -> JsonObject:
         """GET ``API_BASE + path`` and return its ``fantasy_content``.
@@ -114,16 +117,23 @@ class YahooClient:
             return token
 
     async def _renew(self, token: Token) -> Token:
-        """Refresh ``token`` (under the lock). If Yahoo refuses, requests waiting on
-        the same token get that refusal instead of each asking again."""
-        if self._refused is not None and self._refused[0] is token:
-            raise YahooAuthError(str(self._refused[1])) from self._refused[1]
+        """Refresh ``token`` (under the lock). If Yahoo refuses, requests of the same
+        fetch get that refusal instead of each asking again; after
+        ``REFUSAL_REPLAY_SECONDS`` Yahoo is asked again (M4R11A-1)."""
+        refused = self._refused
+        if (
+            refused is not None
+            and refused[0] == token.refresh_token
+            and 0 <= self._clock() - refused[1] < REFUSAL_REPLAY_SECONDS
+        ):
+            raise YahooAuthError(str(refused[2])) from refused[2]
         try:
             renewed = await oauth.refresh(
                 self._http, self._creds, token.refresh_token, self._clock()
             )
-        except YahooAuthError as refused:
-            self._refused = (token, refused)
+        except YahooAuthError as error:
+            self._refused = (token.refresh_token, self._clock(), error)
+            self._token = None  # load the store again: the owner may re-run consent
             raise
         await self._store.save(renewed)
         return renewed

@@ -76,6 +76,7 @@ async def test_stale_notes_word_the_two_cases_differently() -> None:
     stale = replace(data, cached=replace(data.cached, refresh_error="YahooHTTPError: 503"))
     assert stale.stale_note == (
         "Refreshing from Yahoo failed (YahooHTTPError), so this is data from just now."
+        " Yahoo is asked again a minute after a failure."
     )
     note = "YahooAuthError: refused (5 s ago; retrying after 60 s)"
     refused = replace(data, cached=replace(data.cached, refresh_error=note))
@@ -106,6 +107,4 @@ def test_the_no_data_hint_says_what_happens_next() -> None:
     assert no_data_hint(refused) == (
         f"{retry} The app's Yahoo sign-in may need renewing (the consent flow)."
     )
-    assert no_data_hint(ViewError("no stat map")) == (
-        "Admin works without it. Yahoo's data arrived but can't be rated."
-    )
+    assert no_data_hint(ViewError("no stat map")) == "Admin works without it."

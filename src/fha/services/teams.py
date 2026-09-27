@@ -193,7 +193,7 @@ def replace_view(
     room = cap_room(view.cap, mine.payroll)
     if drop.counts is not None:
         hit: CapHit | None = CapHit(drop.aav, bool(drop.counts))
-    elif mine.unmatched_counted:  # his counted row may be one awaiting review (M4R9B-1)
+    elif mine.unmatched_counted:  # his counted row may be one no player matched (M4R9B-1)
         hit = CapHit(None, True)  # so what the drop frees is unknown
     else:
         hit = None  # missing from the tab: frees nothing (SPEC §5)

@@ -10,6 +10,7 @@ import pytest
 from fha.sources.yahoo import oauth
 from fha.sources.yahoo.client import (
     API_BASE,
+    REFUSAL_REPLAY_SECONDS,
     YahooClient,
     YahooError,
     YahooHTTPError,
@@ -166,6 +167,28 @@ async def test_an_expired_token_is_refused_once_for_every_waiting_request() -> N
     assert fake.refreshes == 1
     assert all(isinstance(r, YahooAuthError) for r in results)
     assert fake.requests == []
+
+
+async def test_a_refusal_is_replayed_briefly_then_yahoo_and_the_store_are_asked_again() -> None:
+    """M4R11A-1: one refused renewal (even a one-off 503) wedged a warm instance: every
+    later request replayed it, and a re-run consent was never loaded."""
+    fake = RefusingYahoo()
+    store = MemoryStore(Token("access-1", "refresh-1", NOW - 1))
+    now = [NOW]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    yahoo = YahooClient(http, CREDS, store, clock=lambda: now[0])
+    for _ in range(2):  # the same fetch: the refusal is shared, Yahoo asked once
+        with pytest.raises(YahooAuthError, match="invalid_grant"):
+            await yahoo.get("x")
+    assert fake.refreshes == 1
+    now[0] += REFUSAL_REPLAY_SECONDS
+    with pytest.raises(YahooAuthError):
+        await yahoo.get("x")
+    assert fake.refreshes == 2  # a later fetch asks Yahoo again
+    store.token = Token("access-9", "refresh-9", now[0] + 3600)  # the owner re-ran consent
+    fake.valid = {"access-9"}
+    assert await yahoo.get("x") == {"ok": 1}
+    assert fake.refreshes == 2
 
 
 async def test_401_after_a_refresh_is_an_auth_error() -> None:

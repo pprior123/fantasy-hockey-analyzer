@@ -38,7 +38,7 @@ def failure_kind(note: str) -> str:
 def no_data_hint(exc: Exception) -> str:
     """What the no-data page says happens next (M4R10A-1)."""
     if isinstance(exc, ViewError):
-        return "Admin works without it. Yahoo's data arrived but can't be rated."
+        return "Admin works without it."
     hint = f"Admin works without it. {RETRY_NOTE}"
     return f"{hint} {SIGN_IN_NOTE}" if failure_kind(str(exc)) == "YahooAuthError" else hint
 
@@ -81,8 +81,7 @@ class PageData:
         )
         if kind == "YahooAuthError":
             note += f" {SIGN_IN_NOTE}"
-        if "retrying after" in error:  # within the backoff: a Refresh now won't ask Yahoo
-            note += f" {RETRY_NOTE}"
+        note += f" {RETRY_NOTE}"  # a Refresh within the minute won't ask Yahoo (M4R11A-3)
         return note
 
 

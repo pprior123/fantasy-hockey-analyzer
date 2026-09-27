@@ -39,15 +39,22 @@ def services_for(snapshot: LeagueSnapshot) -> Services:
 
 
 def seed(
-    svc: Services, *, salary: int = 1_000_000, skip: int = 0, misspell: str | None = None
+    svc: Services,
+    *,
+    salary: int = 1_000_000,
+    skip: int = 0,
+    misspell: str | None = None,
+    unpriced: str | None = None,
 ) -> None:
     """A sheet tab for my team (bound), and cap hits for a few free agents. ``misspell``:
-    a player whose row's name no match finds, so it waits for review."""
+    a player whose row's name no match finds, so it waits for review. ``unpriced``: a
+    player whose row's salary cell is "???"."""
     counted, ir = [], []
     for entry in MINE.roster[skip:]:
         p = entry.player
         name = f"Zqx {p.name}" if p.player_id == misspell else p.name
-        row = s.Player(name, p.eligible_positions[0], p.nhl_team, salary)
+        cell = "???" if p.player_id == unpriced else salary
+        row = s.Player(name, p.eligible_positions[0], p.nhl_team, cell)
         (ir if entry.in_ir_slot else counted).append((entry, row))
     tab = s.TeamTab("Mine", [r for _, r in counted], below=[s.IRRow("IR", r) for _, r in ir])
 
@@ -325,6 +332,16 @@ def test_without_any_yahoo_data_the_screens_say_so_instead_of_crashing() -> None
     assert refreshed.status_code == 503
 
 
+def test_data_that_cant_be_rated_says_so_not_no_yahoo_data() -> None:
+    """M4R11A-2: Yahoo answered, so "No Yahoo data" contradicted the reason."""
+    unratable = replace(SNAP, game_stat_categories=())
+    response = client(services_for(unratable)).get("/players")
+    assert response.status_code == 503
+    assert "<h1>Yahoo data can&#39;t be rated</h1>" in response.text
+    assert "Yahoo&#39;s data arrived but can&#39;t be rated (" in response.text
+    assert "No Yahoo data" not in response.text
+
+
 def test_a_stale_note_is_shown_when_yahoo_fails() -> None:
     clock = FakeClock()
     repo = InMemoryRepository()
@@ -537,8 +554,8 @@ def test_a_drop_whose_row_may_await_review_has_an_unknown_room_after() -> None:
     seed(svc, misspell=drop)
     html = client(svc).get(f"/rosters/replace?drop={drop}").text
     assert (
-        "counted rows on my tab match no roster player (see Admin), so the room after is unknown"
-        in html
+        "counted rows on my tab match no roster player, or share one (see Admin),"
+        " so the room after is unknown" in html
     )
     body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
     rooms = [row.split('<td class="num')[-1] for row in body.split("</tr>")[:-1]]
@@ -558,6 +575,15 @@ def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:
     assert "(no sheet row matched him: frees nothing)" in html
     body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
     assert re.search(r'<td class="num ">\$\d', body)  # a room after, not "—"
+
+
+def test_a_drop_with_no_cap_hit_on_his_row_says_why_the_room_is_unknown() -> None:
+    """M4R11B-2."""
+    svc = make_services()
+    drop = my_skater()
+    seed(svc, unpriced=drop)
+    html = client(svc).get(f"/rosters/replace?drop={drop}").text
+    assert "(his sheet row has no cap hit, so the room after is unknown)" in html
 
 
 def test_without_my_tab_replace_says_the_room_is_unavailable() -> None:

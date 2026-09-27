@@ -268,19 +268,25 @@ def create_app(context: AppContext) -> FastAPI:
     from fastapi.exceptions import RequestValidationError
     from starlette.exceptions import HTTPException
 
+    from fha.services.league_view import ViewError
     from fha.services.settings import SettingsError
     from fha.storage.repository import RepositoryError
     from fha.web.data import NO_DATA, BadQueryError, no_data_hint
     from fha.web.routes import admin, league, matchup, players, rosters
 
     async def no_data(request: Request, exc: Exception) -> HTMLResponse:
+        unratable = isinstance(exc, ViewError)  # M4R11A-2: Yahoo answered; the data didn't fit
         return render(
             request,
             "error.html",
             status_code=503,
             active=_active(request.url.path),
-            title="No Yahoo data",
-            message=f"There's no Yahoo data to show ({type(exc).__name__}: {exc}).",
+            title="Yahoo data can't be rated" if unratable else "No Yahoo data",
+            message=(
+                f"Yahoo's data arrived but can't be rated ({exc})."
+                if unratable
+                else f"There's no Yahoo data to show ({type(exc).__name__}: {exc})."
+            ),
             hint=no_data_hint(exc),
         )
 

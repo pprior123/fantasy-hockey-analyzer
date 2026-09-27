@@ -1805,3 +1805,39 @@ so a Yahoo outage during a renewal shows the "sign-in may need renewing"
 hint. It says "may", and the next fetch asks again.
 
 Round 11 found one medium, fixed with a test, so round 12 runs.
+
+## 2026-09-26 — M4 review round 12: what changed
+Reviewed at `c205e6e`. Both reviewers worked under the evidence rule.
+- **Reviewer A:** 1 medium, under the rubric (a fix without a test), plus 2
+  lows.
+- **Reviewer B:** approve. It also raised 1 rubric medium and 1 low.
+
+No bug a user can reach was found. Reviewer A checked the round-11 token
+fix and found it sound:
+- one fetch's requests share one refusal, with no stampede of token
+  requests or store loads;
+- the 401 path behaves with no token held;
+- a stale waiter can't overwrite a newer token;
+- a refusal can't be replayed across fetches, since the 30 s window is
+  shorter than the refresh service's 60 s backoff.
+
+Reviewer B walked every Replace label branch, in order, and found each true
+in every state that reaches it. Its sweep of 510 odd query values over the
+rated routes gave no 5xx.
+
+**Fixed:**
+- **The warm-instance refusal had no test (M4R12A-1).** Round 11's test
+  covered a cold start only. A new test holds a token in memory, lets it
+  expire, has the renewal refused, then stores a new consent and checks
+  it's used. It fails without `self._token = None` on refusal.
+- **A renewed token was lost if saving it failed (M4R12A-2).** If Yahoo
+  retires the old refresh token on renewal, that loses the grant. `_renew`
+  now keeps the renewed token in memory before saving, and the save error
+  still propagates. Tested.
+- **A clock stepping back (M4R12A-3)** doesn't extend a refusal. Tested.
+- **Rosters' payroll note (M4R12B-1)** is asserted whole.
+- **Two rows on one player (M4R12B-2)**, the case round 11's "or share
+  one" wording was for, has its own test.
+
+Round 12's mediums were both missing tests, now added. Under the rule,
+round 13 runs, on a one-line change and tests.

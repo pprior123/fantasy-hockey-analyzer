@@ -876,7 +876,11 @@ def test_the_sheet_source_names_each_kind() -> None:
     class Other:
         pass
 
+    class DemoLeagueSheet:
+        pass
+
     assert _sheet_source(SheetsApiLeagueSheet()) == "the live Google Sheet (LEAGUE_SHEET_ID)"
+    assert _sheet_source(DemoLeagueSheet()) == "the built-in demo sheet (FHA_DEMO)"
     assert _sheet_source(Other()) == "Other"
 
 

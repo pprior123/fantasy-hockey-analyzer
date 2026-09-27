@@ -3,7 +3,15 @@
 import subprocess
 import sys
 
-HEAVY = ("openpyxl", "google.auth", "cryptography", "rapidfuzz", "fha.sources.yahoo.demo")
+HEAVY = (
+    "openpyxl",
+    "google.auth",
+    "cryptography",
+    "rapidfuzz",
+    "fha.sources.yahoo.demo",
+    "fha.sources.demo_salaries",
+    "fha.services.demo",
+)
 
 
 def test_importing_the_entry_point_loads_nothing_heavy() -> None:

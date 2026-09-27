@@ -111,7 +111,7 @@ def test_demo_mode_needs_no_yahoo_and_keeps_data_in_memory() -> None:
     context = AppContext.from_env({**BASE, "FHA_DEMO": "1"})
     services = context.factory(HTTP)
     assert isinstance(services.repo, InMemoryRepository)
-    assert services.sheet is None
+    assert type(services.sheet).__name__ == "DemoLeagueSheet"  # built-in salaries (issue #14)
 
 
 def test_demo_mode_can_use_the_dev_file_and_a_downloaded_sheet() -> None:

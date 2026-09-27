@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,6 +98,8 @@ class Services:
     refresh: RefreshService
     clock: Clock
     sheet: LeagueSheetSource | None = None  # None: no league sheet configured
+    # Awaited before every page (``page_data``): the demo's built-in salaries.
+    prepare: Callable[[], Awaitable[None]] | None = None
 
 
 ServicesFactory = Callable[[httpx.AsyncClient], Services]
@@ -178,7 +180,11 @@ def demo_services(
     environ: Mapping[str, str], http: httpx.AsyncClient, settings: Settings
 ) -> Services:
     """The synthetic league (``FHA_DEMO=1``): no Yahoo, no cloud. Storage is the dev
-    file if ``FHA_LOCAL_REPOSITORY`` is set, else in memory (lost on restart)."""
+    file if ``FHA_LOCAL_REPOSITORY`` is set, else in memory (lost on restart).
+
+    Salaries are built in (issue #14): a synthetic league sheet, read and bound,
+    and free-agent rows, stored before the first page. A configured sheet
+    (``LEAGUE_SHEET_ID`` or ``LEAGUE_SHEET_XLSX``) replaces them all."""
     from fha.sources.yahoo.demo import demo_snapshot
     from fha.sources.yahoo.fake import FakeYahooSource
     from fha.storage.memory import InMemoryRepository
@@ -195,7 +201,16 @@ def demo_services(
     else:
         repo = InMemoryRepository()
     clock = SystemClock()
+    snapshot = demo_snapshot()
     refresh = RefreshService(
-        FakeYahooSource(demo_snapshot()), repo, clock, ttl_seconds=settings.ttl_seconds
+        FakeYahooSource(snapshot), repo, clock, ttl_seconds=settings.ttl_seconds
     )
-    return Services(repo, refresh, clock, league_sheet_from_env(environ, http))
+    sheet = league_sheet_from_env(environ, http)
+    if sheet is not None:
+        return Services(repo, refresh, clock, sheet)
+    from fha.services.demo import DemoSalaries
+    from fha.sources.demo_salaries import DemoLeagueSheet, demo_free_agent_rows
+
+    built_in = DemoLeagueSheet(snapshot)
+    salaries = DemoSalaries(repo, clock, snapshot, built_in, demo_free_agent_rows(snapshot))
+    return Services(repo, refresh, clock, built_in, salaries.ensure)

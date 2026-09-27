@@ -161,6 +161,9 @@ from env `LEAGUE_SHEET_ID`. Dev reads a downloaded `.xlsx` at
 `.xlsx` in any environment, as a fallback when the live read is unavailable
 (e.g. before the service account exists, or if sharing is revoked). The
 upload path imports `openpyxl` lazily so it stays off the cold-start path.
+The demo league (`FHA_DEMO=1`) has a built-in synthetic sheet and
+free-agent rows, stored before its first page, unless a sheet is configured
+(DECISIONS, "Demo mode: built-in salaries").
 
 Binding: each tab is bound once to a Yahoo team (Admin; suggested by
 roster-name overlap), then each sheet row is matched **within that team's

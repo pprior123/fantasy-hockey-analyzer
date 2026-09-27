@@ -1988,3 +1988,49 @@ the lower PR's commits and make the next one conflict.
 - Keep waiting for Yahoo (rejected, for the reasons above).
 - Merge only M2 and M3 (rejected: M4 is equally complete, and the stack
   would remain).
+
+## 2026-09-27 — Demo mode: built-in salaries (issue #14)
+**What.** The demo league (`FHA_DEMO=1`) shows salaries, payrolls, room,
+Replace and the cap filters with no uploads. Before its first page it:
+- reads a synthetic league sheet (`fha.sources.demo_salaries.DemoLeagueSheet`);
+- saves each tab's suggested team;
+- imports synthetic free-agent rows.
+
+This is what the owner did by hand for the 2026-09-27 walkthrough. The
+data is deterministic (seeded) and built from the demo league's made-up
+players:
+- payrolls from $112.0M to $123.7M, one team over the $119.6M cap;
+- about 12% entry-level deals;
+- salary column G on one tab, and a range starting at row 8 on another;
+- one "A. Surname" row on each of three tabs, which waits in Admin's
+  match review (so those three tabs show a payroll discrepancy; the other
+  five match);
+- no row for about 15% of free agents, so they show "—".
+
+**How.**
+- The sheet is built as an in-memory `Grid` and goes through
+  `parse_sheet`, like the real sheet does. No `.xlsx` is written, and
+  `openpyxl` isn't imported.
+- `fha.services.demo.seed_demo_salaries` fills only what is empty: a
+  sheet or rows already stored (an owner upload, or a
+  `FHA_LOCAL_REPOSITORY` file such as the walkthrough's) are kept, and a
+  second run writes nothing.
+- `Services.prepare` runs it, once per process (`DemoSalaries`, under a
+  lock), awaited at the top of `page_data`.
+- A configured sheet (`LEAGUE_SHEET_ID` / `LEAGUE_SHEET_XLSX`) turns the
+  built-in salaries off entirely. Production is unchanged
+  (`prepare=None`).
+- The demo sheet has no contact block.
+
+**Alternatives.**
+- **Commit the walkthrough generator as `scripts/make_demo_salaries.py`**
+  and keep uploads. Rejected: the owner would still need two uploads
+  per fresh demo, and the generator depended on `tests/` helpers.
+- **Reuse `tests/unit/league_sheet/sheets.py` for the builder.** Rejected:
+  that builder is the parser's adversarial fixture, with many layout knobs
+  and the fake contact block that the leak tests look for. The demo needs
+  one plain layout, in `src/`. The two stay separate.
+- **Seed in the app lifespan.** Rejected: hosts that send no lifespan
+  events build the services on the first request, synchronously, so a
+  lifespan-only seed could be skipped. `page_data` is on every rated
+  screen and Admin.

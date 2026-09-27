@@ -114,6 +114,8 @@ async def page_data(
 ) -> PageData:
     svc = services(request)
     settings = request.app.state.context.settings
+    if svc.prepare is not None:
+        await svc.prepare()
     cached = await svc.refresh.current(force=force)
     config = await load_rating_settings(svc.repo)
     salaries, reports = await load_salaries(

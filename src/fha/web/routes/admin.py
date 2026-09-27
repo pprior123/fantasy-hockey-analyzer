@@ -271,6 +271,7 @@ def _sheet_source(sheet: object | None) -> str:
     return {
         "SheetsApiLeagueSheet": "the live Google Sheet (LEAGUE_SHEET_ID)",
         "XlsxLeagueSheet": "a downloaded .xlsx (LEAGUE_SHEET_XLSX)",
+        "DemoLeagueSheet": "the built-in demo sheet (FHA_DEMO)",
         None: "none configured: set LEAGUE_SHEET_ID (live) or LEAGUE_SHEET_XLSX (a download)",
     }.get(kind, str(kind))
 

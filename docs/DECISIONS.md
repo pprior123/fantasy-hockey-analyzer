@@ -2000,7 +2000,8 @@ This is what the owner did by hand for the 2026-09-27 walkthrough. The
 data is deterministic (seeded) and built from the demo league's made-up
 players:
 - payrolls from $112.0M to $123.7M, one team over the $119.6M cap;
-- about 12% entry-level deals;
+- some entry-level deals: about 12% of skaters are drawn from the
+  $775K–$950K range before the payroll scaling;
 - salary column G on one tab, and a range starting at row 8 on another;
 - one "A. Surname" row on each of three tabs, which waits in Admin's
   match review (so those three tabs show a payroll discrepancy; the other
@@ -2032,6 +2033,12 @@ players:
 - In the demo, Admin's "Read sheet" now re-reads the built-in sheet. It
   replaces an `.xlsx` the owner uploaded, as it would with a configured
   live sheet. Before this change, it said no sheet was configured.
+- **Known limitation (review round 2, L1).** Uploading a sheet with other
+  tab names after the demo has seeded leaves the built-in "Manager A"–"H"
+  bindings in place. That gives no payrolls, and a new tab can't take a
+  team until the old tab is unbound in Admin. With built-in salaries there
+  is no need to upload in the demo. Clearing bindings on an upload would
+  change a general rule, so it is left for the owner to ask for.
 - A configured sheet (`LEAGUE_SHEET_ID` / `LEAGUE_SHEET_XLSX`) turns the
   built-in salaries off entirely. Production is unchanged
   (`prepare=None`).

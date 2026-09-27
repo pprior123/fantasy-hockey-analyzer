@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
+import pytest
+
 from fha.domain.matcher import NO_ALIASES, Status
 from fha.services.demo import DemoSalaries, seed_demo_salaries
 from fha.services.free_agents import import_free_agent_salaries, pending_reviews
@@ -15,7 +17,7 @@ from fha.services.league_sheet import (
 )
 from fha.services.league_view import load_salaries
 from fha.sources.demo_salaries import CAP, DemoLeagueSheet, demo_free_agent_rows
-from fha.sources.league_sheet.models import ParsedSheet
+from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
 from fha.sources.puckpedia import SalaryRow
 from fha.sources.yahoo.demo import demo_snapshot
@@ -161,3 +163,23 @@ async def test_bindings_the_owner_made_are_theirs_even_all_unbound() -> None:
         await bind_tab(repo, tab, None)
     await seed(repo)  # a restart with a dev file
     assert await load_tab_bindings(repo) == {}
+
+
+class FailingOnceSheet(FakeLeagueSheet):
+    async def fetch(self) -> ParsedSheet:
+        if self.fetches == 0:
+            self.fetches += 1
+            raise LeagueSheetError("not this time")
+        return await super().fetch()
+
+
+async def test_demo_salaries_try_again_after_a_failed_seed() -> None:
+    repo = InMemoryRepository()
+    sheet = FailingOnceSheet(await DemoLeagueSheet(SNAPSHOT).fetch())
+    once = DemoSalaries(repo, Clock(), SNAPSHOT, sheet, demo_free_agent_rows(SNAPSHOT))
+    with pytest.raises(LeagueSheetError):
+        await once.ensure()
+    assert await load_league_sheet(repo) is None
+    await once.ensure()
+    assert await load_league_sheet(repo) is not None
+    assert len(await load_tab_bindings(repo)) == len(SNAPSHOT.teams)

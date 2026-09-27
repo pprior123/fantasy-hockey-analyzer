@@ -77,8 +77,10 @@ def test_prepare_is_awaited_on_every_page() -> None:
     assert calls == ["prepared", "prepared"]  # DemoSalaries makes the repeats free
 
 
-def test_without_prepare_no_payroll_is_known() -> None:
-    html = logged_in(make_app(make_services())).get("/league").text
+def test_without_prepare_no_payroll_is_known(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        html = logged_in(make_app(make_services())).get("/league").text
+    assert "demo salaries" not in caplog.text  # nothing to prepare, nothing tried
     assert not re.findall(r'<td class="num">\$[\d.]+M</td>', html)
 
 

@@ -484,6 +484,8 @@ async def rating_settings(
 ) -> RedirectResponse:
     svc = services(request)
     try:
+        if len(divisor_top_n) > 6:  # int() refuses 4300+ digits in Python's own words
+            raise InputError("divisor_top_n must be a whole number of at most 6 digits")
         fraction = parse_percent(gp_floor_percent)
         config = await save_rating_settings(
             svc.repo,

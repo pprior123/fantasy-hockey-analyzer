@@ -142,6 +142,24 @@ async def test_a_transport_error_without_a_cache_is_a_refresh_error_too() -> Non
     assert isinstance(info.value.__cause__, httpx.ConnectTimeout)
 
 
+async def test_a_store_error_is_named_by_its_type_only(snap: LeagueSnapshot) -> None:
+    """The Yahoo token lives in the store, so a fetch can fail with a RepositoryError,
+    whose text can name the Firestore project: the pages show its type only (M4R4A-2)."""
+
+    class TokenStoreDown:
+        async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
+            raise RepositoryError("Firestore get: HTTP 403 (projects/secret-project)")
+
+    with pytest.raises(RefreshError) as info:
+        await service(TokenStoreDown(), InMemoryRepository(), FakeClock()).current()
+    assert str(info.value) == "refresh failed: RepositoryError"
+    assert isinstance(info.value.__cause__, RepositoryError)
+    repo, clock = InMemoryRepository(), FakeClock()
+    await save_cached(repo, Cached(snap, T0 - DEFAULT_TTL_SECONDS))
+    stale = await service(TokenStoreDown(), repo, clock).current()
+    assert stale.refresh_error == "RepositoryError"
+
+
 async def test_a_failed_forced_refresh_is_noted_on_the_fresh_snapshot(
     snap: LeagueSnapshot,
 ) -> None:
@@ -181,7 +199,7 @@ async def test_a_failed_refresh_note_replaces_a_not_saved_note(snap: LeagueSnaps
 
     clock = FakeClock()
     refresh = service(OnceThenDown(snap), ReadOnly(), clock)
-    assert (await refresh.current()).refresh_error == "not saved: Firestore HTTP 403"
+    assert (await refresh.current()).refresh_error == "not saved: RepositoryError"
     clock.t += 5
     forced = await refresh.current(force=True)
     assert forced.refresh_error is not None
@@ -402,7 +420,7 @@ async def test_a_failed_save_still_serves_what_yahoo_returned(snap: LeagueSnapsh
 
     got = await service(FakeYahooSource(snap), ReadOnly(), FakeClock()).current()
     assert got.snapshot == snap
-    assert got.refresh_error == "not saved: Firestore HTTP 503"
+    assert got.refresh_error == "not saved: RepositoryError"
 
 
 async def test_an_unreadable_cache_is_logged_without_content(
@@ -445,7 +463,7 @@ async def test_after_a_failed_save_the_fetched_snapshot_is_served_until_the_ttl(
     assert len(source.calls) == 1
     for got in [*together, *later]:
         assert (got.snapshot, got.fetched_at) == (snap, T0 + 9999)
-        assert got.refresh_error == "not saved: Firestore HTTP 403 (PERMISSION_DENIED)"
+        assert got.refresh_error == "not saved: RepositoryError"
     clock.t += DEFAULT_TTL_SECONDS  # past the TTL: fetch (and try the save) again
     await refresh.current()
     assert len(source.calls) == 2
@@ -581,9 +599,7 @@ async def test_a_save_that_landed_despite_an_error_loses_its_not_saved_note(
 
     repo, clock = LandsThenErrs(), FakeClock()
     refresh = service(FakeYahooSource(snap), repo, clock)
-    assert (
-        await refresh.current()
-    ).refresh_error == "not saved: Firestore commit failed: ReadTimeout"
+    assert (await refresh.current()).refresh_error == "not saved: RepositoryError"
     assert await refresh.current() == Cached(snap, T0)  # the store has it: no note
 
 

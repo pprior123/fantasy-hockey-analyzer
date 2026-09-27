@@ -116,6 +116,7 @@ def test_numbers_and_urls() -> None:
     assert rating_settings(EngineConfig()) == "workbook top-20, floor 2%"
     per82 = EngineConfig(divisor_method=DivisorMethod.TOP_PER82, gp_floor_fraction=0.05)
     assert rating_settings(per82) == "per-82 top-10, floor 5%"
+    assert rating_settings(EngineConfig(gp_floor_fraction=0.025)).endswith("floor 2.5%")
 
 
 # ---------------------------------------------------------------- players
@@ -591,9 +592,18 @@ def test_a_bye_and_no_next_week() -> None:
     bye = replace(SNAP, scoreboard=Scoreboard(3, None, None, ()), next_scoreboard=None)
     c = client(services_for(bye))
     assert "a bye, no opponent" in c.get("/matchup").text
-    assert "No opponent this week" in c.get("/matchup/free-agents").text
+    assert (
+        '<td colspan="6" class="muted">No opponent this week' in c.get("/matchup/free-agents").text
+    )
+    assert (
+        '<td colspan="11" class="muted">No opponent this week'
+        in c.get("/matchup/free-agents?view=cats").text
+    )
     assert "There is no next week" in c.get("/matchup?week=next").text
     assert "No matchup next week" in c.get("/matchup/free-agents?week=next").text
+    next_bye = replace(SNAP, next_scoreboard=Scoreboard(4, None, None, ()))
+    page = client(services_for(next_bye)).get("/matchup/free-agents?week=next").text
+    assert "No opponent next week, so" in page  # M4R4B-7
 
 
 def test_without_my_team() -> None:
@@ -705,6 +715,12 @@ def test_empty_roster_and_replace_tables_span_their_columns(view: str, columns: 
     assert f'<td colspan="{want}" class="muted">No free agents at' in page
 
 
+def badges_of(html: str) -> list[str]:
+    """The need list's trailing categories, as its intro lists them."""
+    intro = html.split("behind or close in:", 1)[1].split("</p>", 1)[0]
+    return re.findall(r'<span class="badge">([A-Z]+)</span>', intro)
+
+
 def test_the_need_list_has_the_categories_toggle() -> None:
     """M4R3B-1: SPEC §7, "common to the tables": the norms explain a Need score.
     The trailing categories are highlighted, in SPEC order."""
@@ -720,9 +736,15 @@ def test_the_need_list_has_the_categories_toggle() -> None:
     for cat in ("G", "PPP", "BLK"):
         assert f">{cat}</th>" in head(cats)
     assert 'class="num trailing"' in head(cats)
+    body = cats.split('class="data need"', 1)[1].split("<tbody>", 1)[1]
+    first = body.split("</tr>", 1)[0]
+    cells = re.findall(r'<td class="num( trailing)?">([^<]*)</td>', first)
+    assert len(cells) == 2 + 7  # Need, TTLTST, then the 7 norms
+    norms = cells[2:]
+    assert all(re.fullmatch(r"-?\d+\.\d\d", value) for _, value in norms)  # M4R4B-2
+    assert sum(1 for trailing, _ in norms if trailing) == len(badges_of(cats))
     order = ["G", "A", "PPP", "PIM", "HIT", "SOG", "BLK"]
-    intro = cats.split("behind or close in:", 1)[1].split("</p>", 1)[0]
-    badges = re.findall(r'<span class="badge">([A-Z]+)</span>', intro)
+    badges = badges_of(cats)
     assert badges == [c for c in order if c in badges]
     assert len(badges) >= 2
 
@@ -734,10 +756,19 @@ def test_the_players_filter_form_keeps_the_view() -> None:
     assert '<input type="hidden" name="season" value="last">' in form
 
 
-def test_a_bad_value_is_quoted_short_on_the_400_page() -> None:
-    response = client().get("/league?season=" + "x" * 3000)
+@pytest.mark.parametrize(
+    "query",
+    [
+        "/league?season=",
+        "/league?view=",
+        *(f"/players?{k}=" for k in ("owner", "pos", "sort", "dir")),
+    ],
+)
+def test_a_bad_value_is_quoted_short_on_the_400_page(query: str) -> None:
+    """M4R3B-6, M4R4B-3: every quoted query value, not only ``season``."""
+    response = client().get(query + "x" * 3000)
     assert response.status_code == 400
-    assert "got &#39;xxxxxxxxxxxx…&#39;" in response.text
+    assert "&#39;xxxxxxxxxxxx…&#39;" in response.text
     assert "x" * 13 not in response.text
 
 

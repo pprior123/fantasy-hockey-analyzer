@@ -316,11 +316,12 @@ def create_app(context: AppContext) -> FastAPI:
         headers = exc.headers if isinstance(exc, HTTPException) else None
         from http import HTTPStatus
 
+        signed_in = sessions.valid(request.cookies.get(COOKIE))  # else no nav, no Log out
         response = render(
             request,
             "bad_request.html",
             status_code=status,
-            active=_active(request.url.path),
+            **({"active": _active(request.url.path)} if signed_in else {}),
             title=HTTPStatus(status).phrase,
             message={
                 404: "There's no such page.",

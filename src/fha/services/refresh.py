@@ -65,6 +65,14 @@ async def save_cached(repo: Repository, cached: Cached) -> None:
     await save_chunked(repo, CACHE, {**meta, "fetched_at": cached.fetched_at}, lists)
 
 
+def _describe(error: Exception) -> str:
+    """A failure as the pages show it. A store error is named by its type only: its
+    text can quote Firestore's reason, which can name the project (M4R4A-2)."""
+    if isinstance(error, RepositoryError):
+        return type(error).__name__
+    return f"{type(error).__name__}: {error}"
+
+
 class RefreshError(Exception):
     """A refresh failed (now, or recently) and there is no cached snapshot to serve."""
 
@@ -128,7 +136,7 @@ class RefreshService:
             try:
                 snapshot = await self._source.fetch_snapshot()
             except Exception as error:
-                self._failure = (self._clock.now(), f"{type(error).__name__}: {error}")
+                self._failure = (self._clock.now(), _describe(error))
                 if latest is None:
                     raise RefreshError(f"refresh failed: {self._failure[1]}") from error
                 return replace(latest, refresh_error=self._failure[1])
@@ -141,7 +149,7 @@ class RefreshService:
                 # Keep serving what Yahoo gave (from memory) until the TTL, rather
                 # than calling Yahoo again on every request; the next refresh
                 # tries the save again.
-                self._memory = replace(fresh, refresh_error=f"not saved: {error}")
+                self._memory = replace(fresh, refresh_error=f"not saved: {_describe(error)}")
             return self._memory
 
     def _recent_failure(self) -> tuple[float, str] | None:

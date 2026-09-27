@@ -225,6 +225,30 @@ def test_tabs_are_suggested_and_bound() -> None:
     }
 
 
+def test_a_binding_whose_tab_left_the_sheet_is_shown_and_can_be_undone() -> None:
+    """M4R4A-1: a GM renames their tab; the old binding would hold the team forever."""
+    c = client()
+    upload_sheet(c)
+    post(c, "/admin/bind", data={"tab": "Pinecone", "team_key": TEAM1.team_key})
+    upload_sheet(c, to_xlsx(s.grid(sheet_tab("Pinecone FC", TEAM1), sheet_tab("Maple", TEAM2))))
+    html = c.get("/admin").text
+    (stale,) = [f for f in html.split("</form>") if 'admin-label">Pinecone<' in f]
+    assert 'action="/admin/bind"' in stale
+    assert '<input type="hidden" name="team_key" value="">' in stale
+    assert f"bound to {TEAM1.name}; no longer on the sheet" in stale
+    taken = post(c, "/admin/bind", data={"tab": "Pinecone FC", "team_key": TEAM1.team_key})
+    assert taken["kind"] == "error"
+    assert post(c, "/admin/bind", data={"tab": "Pinecone", "team_key": ""}) == {
+        "kind": "ok",
+        "text": "Pinecone is unbound.",
+    }
+    assert "no longer on the sheet" not in c.get("/admin").text
+    assert post(c, "/admin/bind", data={"tab": "Pinecone FC", "team_key": TEAM1.team_key}) == {
+        "kind": "ok",
+        "text": "Pinecone FC is now bound.",
+    }
+
+
 @pytest.mark.parametrize(
     ("form", "text"),
     [
@@ -577,6 +601,10 @@ def test_saving_rating_settings() -> None:
         (
             {"divisor_method": "workbook", "divisor_top_n": "x", "gp_floor_percent": "2"},
             "Not saved: divisor_top_n must be a whole number, got 'x'.",
+        ),
+        (  # M4R4A-3: not Python's "Exceeds the limit (4300 digits)" text
+            {"divisor_method": "workbook", "divisor_top_n": "9" * 5000, "gp_floor_percent": "2"},
+            "Not saved: divisor_top_n must be a whole number of at most 6 digits.",
         ),
         (
             {"divisor_method": "workbook", "divisor_top_n": "", "gp_floor_percent": "two"},

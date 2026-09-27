@@ -297,9 +297,7 @@ def test_a_failed_lazy_build_is_retried_on_the_next_request() -> None:
     assert client.get("/players").status_code == 500  # the page without details
     first = client.app.state.http  # type: ignore[attr-defined]
     assert client.get("/players").status_code == 200
-    assert (
-        client.app.state.http is first
-    )  # one client, not a new one per attempt  # type: ignore[attr-defined]
+    assert client.app.state.http is first  # one client, not a new one per attempt
     assert client.get("/league").status_code == 200
     assert attempts == [1, 1]
 
@@ -350,6 +348,21 @@ def test_damaged_rating_settings_point_every_rated_screen_at_admin() -> None:
     assert client.get("/admin").status_code == 200
 
 
+def test_stored_settings_with_fewer_categories_still_render_every_screen() -> None:
+    """M4R4B-1: the engine accepts a category subset (only a store edit can set one),
+    but the team profiles used all 7 and raised on the missing norms."""
+    import asyncio
+
+    from fha.services.settings import COLLECTION, RATING
+
+    services = make_services()
+    asyncio.run(services.repo.put(COLLECTION, RATING, {"categories": ["G", "A"]}))
+    client = logged_in(make_app(services))
+    for path in ("/players", "/rosters", "/league", "/matchup", "/matchup/free-agents"):
+        for view in ("money", "cats"):
+            assert client.get(f"{path}?view={view}").status_code == 200, (path, view)
+
+
 @pytest.mark.parametrize(
     ("method", "path", "kw", "status", "text"),
     [
@@ -374,3 +387,13 @@ def test_http_errors_are_the_apps_pages_not_json(
     assert text in response.text
     if status == 405:
         assert response.headers["allow"] == "POST"
+    assert "Log out" in response.text
+
+
+@pytest.mark.parametrize(("method", "path"), [("GET", "/static/nope.css"), ("PUT", "/login")])
+def test_an_error_page_for_a_visitor_has_no_nav(method: str, path: str) -> None:
+    """M4R4A-4: public paths reach the error pages without a login."""
+    response = TestClient(make_app()).request(method, path)
+    assert response.status_code in (404, 405)
+    assert "Log out" not in response.text
+    assert 'class="topnav"' not in response.text

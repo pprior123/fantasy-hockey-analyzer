@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from fha.domain.cap import CapHit, cap_room, fits, room_after, swap_ok
 from fha.domain.models import Category
@@ -57,7 +57,8 @@ def summarize(
     config: ProfileConfig = DEFAULT_PROFILE_CONFIG,
     discrepancies: Mapping[str, bool] | None = None,
 ) -> TeamSummary:
-    profile = team_profile(members(view, team.team_key), config)
+    categories = view.config.categories  # the engine's, so every member has these norms
+    profile = team_profile(members(view, team.team_key), replace(config, categories=categories))
     return TeamSummary(
         team=team,
         profile=profile,

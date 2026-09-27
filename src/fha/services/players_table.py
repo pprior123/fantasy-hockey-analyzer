@@ -62,6 +62,9 @@ class PlayersQuery:
             value = (params.get(name) or "").strip()
             return value or None
 
+        for name in ("owner", "pos", "sort", "dir"):  # the 400 page quotes 12 characters at most
+            if len(value := get(name) or "") > 12:
+                raise QueryError(f"unknown {name} {value[:12] + '…'!r}")
         try:
             owner = Owner(get("owner") or Owner.ALL)
             position = get("pos")

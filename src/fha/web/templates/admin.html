@@ -80,6 +80,16 @@
     {% if bound %}<span class="good">bound to {{ team_names.get(bound, bound) }}</span>{% endif %}
   </form>
   {% endfor %}
+  {% set on_sheet = sheet.tabs|map(attribute="name")|list %}
+  {% for tab, bound in tab_bindings|dictsort if tab not in on_sheet %}
+  <form method="post" action="/admin/bind" class="admin-row">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="team_key" value="">
+    <span class="admin-label">{{ tab }}</span>
+    <span class="warn">bound to {{ team_names.get(bound, bound) }}; no longer on the sheet</span>
+    <button class="btn secondary" type="submit">Unbind</button>
+  </form>
+  {% endfor %}
   {% endif %}
 </section>
 

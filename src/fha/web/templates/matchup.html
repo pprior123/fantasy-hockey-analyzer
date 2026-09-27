@@ -14,7 +14,7 @@
 {% if game is none %}
 <p class="card">{% if data.view.my_team is none %}Your team isn't in this league's data.{% else %}There is no next week: the season's last week is this one.{% endif %}</p>
 {% elif game.opponent is none %}
-<p class="card">Week {{ game.week }}: no opponent scheduled (a bye, or the playoff bracket isn't set yet).</p>
+<p class="card">Week {{ game.week }}: Yahoo lists no opponent for you.</p>
 {% else %}
 <p>Week {{ game.week }}{% if game.week_start %} ({{ game.week_start }} to {{ game.week_end }}){% endif %}:
   <strong>{{ game.me.team.name }}</strong> vs <strong>{{ game.opponent.team.name }}</strong></p>

@@ -18,7 +18,7 @@ from fha.sources.league_sheet.source import FakeLeagueSheet
 from fha.sources.puckpedia import SalaryRow
 from fha.sources.yahoo.demo import demo_snapshot
 from fha.sources.yahoo.fake import FakeYahooSource
-from fha.sources.yahoo.models import LeagueSnapshot, Scoreboard
+from fha.sources.yahoo.models import LeagueSnapshot, Matchup, Scoreboard
 from fha.storage.memory import InMemoryRepository
 from fha.web.context import Services
 from fha.web.format import money, number, percentile, rating_settings, signed, url
@@ -618,10 +618,24 @@ def test_with_no_rated_skaters_the_list_doesnt_claim_a_lead() -> None:
     assert f"Nothing to compare yet: {opp.name} has no rated skaters" in html
 
 
+def test_out_of_the_playoffs_the_page_gives_no_reason() -> None:
+    """M4R8B-1: the others play, so neither "a bye" nor "no bracket yet" would be true."""
+    others = [t.team_key for t in SNAP.teams if not t.is_mine][:2]
+    board = Scoreboard(25, None, None, (Matchup(25, (others[0], others[1])),))
+    html = (
+        client(services_for(replace(SNAP, scoreboard=board, next_scoreboard=None)))
+        .get("/matchup")
+        .text
+    )
+    assert "Week 25: Yahoo lists no opponent for you." in html
+    assert "bye" not in html
+    assert "bracket" not in html
+
+
 def test_a_bye_and_no_next_week() -> None:
     bye = replace(SNAP, scoreboard=Scoreboard(3, None, None, ()), next_scoreboard=None)
     c = client(services_for(bye))
-    assert "no opponent scheduled (a bye, or the playoff bracket" in c.get("/matchup").text
+    assert "Week 3: Yahoo lists no opponent for you." in c.get("/matchup").text
     assert (
         '<td colspan="6" class="muted">No opponent this week' in c.get("/matchup/free-agents").text
     )

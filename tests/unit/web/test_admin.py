@@ -824,6 +824,13 @@ def test_a_refused_value_is_quoted_short(parse: Any) -> None:
     assert f"(got '{'9x' * 19}9…')" in str(info.value)
 
 
+def test_a_padded_cap_hit_over_the_limit_is_quoted_short() -> None:
+    """M4R8A-1: spaces are dropped before the length check, not from the quote."""
+    with pytest.raises(InputError) as info:
+        parse_dollars("2" + " " * 3000 + "000000000")
+    assert str(info.value).endswith(f"(got '2{' ' * 38}…')")
+
+
 @pytest.mark.parametrize(
     "text", ["7.25", "1,5", "7M5", "7.1234567M", "0.5K5", "-5", "", "$", "7,25,000", chr(0x0667)]
 )

@@ -1463,3 +1463,67 @@ test. Domain mutmut killed 936 of 936.
 - **htmx is loaded but unused.** It's kept, since SPEC names it for the UI
   and Phase 2 is expected to use it.
 
+
+## 2026-09-26 — M4 review round 4: what changed
+Reviewed at `133264c`.
+- **Reviewer A:** 1 medium, lows.
+- **Reviewer B:** approve with lows.
+
+Both reverted every round-3 fix in their scope, and each revert failed a
+test. B applied 61 hand mutants to the services, formatting and templates;
+40 were killed, 5 of the survivors are equivalent, and the rest are below.
+
+**Fixed:**
+- **A binding whose tab left the sheet (M4R4A-1, medium).** When a GM renames
+  their tab, the old tab's binding still holds the team. Binding the renamed
+  tab was then refused, and Admin didn't list the old binding, so nothing
+  could undo it. Admin now lists such bindings, marked "no longer on the
+  sheet", each with an Unbind button. The POST already accepted a bound tab
+  that isn't on the sheet.
+- **Store text on the pages (M4R4A-2).** The Yahoo token lives in the store,
+  so a refresh can fail with a `RepositoryError`, and its text (Firestore's
+  reason) reached the no-data page, Admin and the stale note. The refresh
+  service now names a store error by its type only, in failure notes and in
+  "not saved" notes. With round 2's storage page and round 3's flash, the
+  app never shows Firestore's text on a page.
+- **A 5000-digit divisor count (M4R4A-3)** flashed Python's own "Exceeds the
+  limit (4300 digits)" text. The form now refuses anything over 6
+  characters, in its own words.
+- **Error pages for visitors (M4R4A-4).** A 404 under `/static/` or a 405 on
+  `/login` showed the nav and Log out without a login. They show neither
+  now.
+- **Profiles on the engine's categories (M4R4B-1).** Stored rating settings
+  with a category subset, which only a store edit can make, gave a 500 on
+  four screens: the team profiles always used all 7 categories. They now
+  use the engine's.
+- **Short quotes (M4R4B-3).** On Players, a bad `owner`, `pos`, `sort` or
+  `dir` is quoted at most 12 characters too, and the `view` quote is tested.
+- **Tests:**
+  - the need list's Categories cells, their trailing highlight and its
+    colspans (M4R4B-2);
+  - the 2.5% floor label (M4R4B-6).
+- **The bye message (M4R4B-7)** says "next week" on next week's list.
+
+**Recorded, not changed** (the round-4 triage: lows that aren't one-to-three-line
+fixes, and don't guard a claim made here, are listed rather than coded):
+- **Rendered details no test pins (M4R4B-4):**
+  - Rosters' SD column and its $/TTLTST cell;
+  - goalie SV%;
+  - the "Free agents who help here" link keeping `week=next`;
+  - the owner chips clearing a picked team;
+  - Replace's "IR row: frees nothing" and its `over` class;
+  - League's `over` class and "sheet" badge;
+  - the need list's "no" for Fits.
+
+  Each renders correctly today; a mutant that breaks one passes the suite.
+- **Tie-breaks no test pins (M4R4B-5):**
+  - Replace's unrated-last order;
+  - the need list's id tie-break;
+  - the League table's name tie-break;
+  - goalie name order in the league view.
+- **The stale note matches its backoff by text (M4R4A-5).** `data.py` finds
+  "retrying after" in the note, which can include Yahoo's own message. It's
+  brittle but pinned by a test; a flag on `Cached` would be cleaner.
+
+Round 4 found one medium, fixed with a test, so round 5 runs: the loop ends
+at the first round with no medium or worse.

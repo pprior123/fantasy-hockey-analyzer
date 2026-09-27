@@ -1589,8 +1589,9 @@ Both reverted every round-5 fix in their scope; all but one failed a test
 - **The flash cap cut real messages (M4R6A-3).** Round 5's 300-character cut
   could drop the end of a CSV import summary, including the unknown teams,
   which nothing else shows. Now the parts that can grow are cut instead:
-  - Admin's own messages quote at most 40 characters of form input (a tab,
-    a cap hit, a GP floor);
+  - Admin's own error messages quote at most 40 characters of form input
+    (a tab, a cap hit, a GP floor). A success message names a tab whole,
+    but only one that matched a stored sheet tab;
   - the conflict and unknown-team lists show 8 names, each cut at 40
     characters, then "and N more".
 
@@ -1632,10 +1633,9 @@ scope failed a test; in A's scope, the four cuts below didn't.
   corrected.
 - **Without my team, the need list (M4R7B-2)** says so, like Matchup does
   since round 6.
-- **An empty week (M4R7B-1)** says "no opponent scheduled (a bye, or the
-  playoff bracket isn't set yet)". The source fetches next week up to the
-  league's end week, playoffs included, so an empty board may be an
-  unset bracket. Recheck this against the M2 recording.
+- **An empty week (M4R7B-1)** no longer says "a bye": the source fetches
+  weeks up to the league's end week, playoffs included. Round 8 replaced
+  the round-7 wording (M4R8B-1).
 - **An unknown room isn't green (M4R7B-4)** on Rosters.
 
 **Recorded, for the owner:**
@@ -1646,3 +1646,30 @@ scope failed a test; in A's scope, the four cuts below didn't.
   at acceptance.
 
 Round 7's only medium was a missing test, now added, so round 8 runs.
+
+## 2026-09-26 — M4 review round 8: what changed
+Reviewed at `c322218`.
+- **Reviewer A:** approve with lows.
+- **Reviewer B:** 1 medium, in round 7's own wording.
+
+Both reverted every round-7 change in their scope. All but one failed a
+test (A-1 below).
+
+**Fixed:**
+- **"A bye, or the playoff bracket isn't set yet" (M4R8B-1, medium).** When
+  the owner's team is out of the playoffs, the other teams still play, so
+  neither reason is true. The app knows only the league's end week, not
+  which weeks are playoffs, so it can't tell a bye from an elimination or
+  an unset bracket. Matchup now says "Week N: Yahoo lists no opponent for
+  you.", which is true whatever the cause. Tested with a week where two
+  other teams play and mine doesn't.
+
+  The lesson: a message should state what the data shows, not guess at a
+  cause the data can't tell.
+- **A padded cap hit over the limit (M4R8A-1)** is quoted short too; spaces
+  are dropped before the length check, not from the quote. Now tested.
+- **The round-6 wording (M4R8A-2)** now says that Admin's *error* messages
+  cut quoted input. A success message names a tab whole, but only a tab
+  that matched a stored sheet tab.
+
+Round 8 found one medium, fixed with a test, so round 9 runs.

@@ -1589,11 +1589,15 @@ Both reverted every round-5 fix in their scope; all but one failed a test
 - **The flash cap cut real messages (M4R6A-3).** Round 5's 300-character cut
   could drop the end of a CSV import summary, including the unknown teams,
   which nothing else shows. Now the parts that can grow are cut instead:
-  - quoted form or CSV input stops at 40 characters;
-  - the conflict and unknown-team lists show 8 names, then "and N more".
+  - Admin's own messages quote at most 40 characters of form input (a tab,
+    a cap hit, a GP floor);
+  - the conflict and unknown-team lists show 8 names, each cut at 40
+    characters, then "and N more".
 
-  A 1000-character cut stays as a last guard, which real messages never
-  reach.
+  Some errors raised elsewhere still quote their input whole: the CSV
+  parser's (a `Pos` cell, a dollar amount) and the engine's (an unknown
+  divisor method). A 1000-character cut on the whole flash bounds those
+  (tested in round 7); real messages never reach it.
 - **Tests:** the signed-in bad-form page keeps the nav (M4R6A-4).
 
 **Recorded, not changed:**
@@ -1604,3 +1608,41 @@ Both reverted every round-5 fix in their scope; all but one failed a test
 - A 1e-7% floor shows as "1e-07%".
 
 Round 6 found three narrow mediums, each fixed with a test, so round 7 runs.
+
+## 2026-09-26 — M4 review round 7: what changed
+Reviewed at `e8d86c0`.
+- **Reviewer A:** 1 medium, under the rubric (a fix without a test), plus 2
+  lows.
+- **Reviewer B:** approve with lows. No medium or worse.
+
+Both reverted every round-6 fix in their scope. Every round-6 fix in B's
+scope failed a test; in A's scope, the four cuts below didn't.
+
+**Fixed:**
+- **The flash's last guard had no test (M4R7A-1).** Round 6 moved the old
+  test onto a path that `_short` cuts first. A new test posts 20,000
+  random hex characters as the divisor method, which the engine's error
+  quotes whole, and checks the flash is cut at 1000 characters and the URL
+  stays short.
+- **Three untested cuts (M4R7A-2):** a long tab in a row match, a long cap
+  hit or GP floor, and a long name in the conflict list. Each now has a test.
+- **The round-6 entry overstated the cut (M4R7A-3).** It said all quoted
+  input stops at 40 characters, but the CSV parser's and the engine's errors
+  quote theirs whole, bounded only by the last guard. The entry is
+  corrected.
+- **Without my team, the need list (M4R7B-2)** says so, like Matchup does
+  since round 6.
+- **An empty week (M4R7B-1)** says "no opponent scheduled (a bye, or the
+  playoff bracket isn't set yet)". The source fetches next week up to the
+  league's end week, playoffs included, so an empty board may be an
+  unset bracket. Recheck this against the M2 recording.
+- **An unknown room isn't green (M4R7B-4)** on Rosters.
+
+**Recorded, for the owner:**
+- **Matchup shows mean norms, not std devs (M4R7B-3).** SPEC §7.4 asks for
+  "side-by-side team profiles", and a profile (§5) has both. At 390 px the
+  table already holds me, the opponent and the difference per category. The
+  std devs are on each team's Rosters page. Adding them is the owner's call
+  at acceptance.
+
+Round 7's only medium was a missing test, now added, so round 8 runs.

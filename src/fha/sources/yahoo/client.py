@@ -135,6 +135,7 @@ class YahooClient:
             self._refused = (token.refresh_token, self._clock(), error)
             self._token = None  # load the store again: the owner may re-run consent
             raise
+        self._token = renewed  # kept even if saving fails: Yahoo may have retired the old one
         await self._store.save(renewed)
         return renewed
 

@@ -45,10 +45,11 @@ def seed(
     skip: int = 0,
     misspell: str | None = None,
     unpriced: str | None = None,
+    twice: str | None = None,
 ) -> None:
     """A sheet tab for my team (bound), and cap hits for a few free agents. ``misspell``:
     a player whose row's name no match finds, so it waits for review. ``unpriced``: a
-    player whose row's salary cell is "???"."""
+    player whose row's salary cell is "???". ``twice``: a player with two counted rows."""
     counted, ir = [], []
     for entry in MINE.roster[skip:]:
         p = entry.player
@@ -56,6 +57,8 @@ def seed(
         cell = "???" if p.player_id == unpriced else salary
         row = s.Player(name, p.eligible_positions[0], p.nhl_team, cell)
         (ir if entry.in_ir_slot else counted).append((entry, row))
+        if p.player_id == twice:
+            counted.append((entry, row))
     tab = s.TeamTab("Mine", [r for _, r in counted], below=[s.IRRow("IR", r) for _, r in ir])
 
     async def go() -> None:
@@ -398,7 +401,7 @@ def test_no_page_nests_forms(path: str) -> None:
 def test_rosters_defaults_to_my_team_with_payroll_unavailable() -> None:
     html = client().get("/rosters").text
     assert "(my team)" in html
-    assert "unavailable" in html
+    assert "(no stored sheet, or the team's tab isn't bound or recognized)." in html
     assert set(names_in(html, "roster")) == {
         e.player.name for e in MINE.roster if not e.player.is_goalie
     }
@@ -563,6 +566,19 @@ def test_a_drop_whose_row_may_await_review_has_an_unknown_room_after() -> None:
     assert all(">—</td>" in cell for cell in rooms)  # the last cell: Room after
     swaps = client(svc).get(f"/rosters/replace?drop={drop}&swap_ok=1").text
     assert "left out: a cap hit or the room isn" in swaps
+
+
+def test_two_rows_on_one_player_make_his_room_after_unknown() -> None:
+    """M4R12B-2: both rows go to review, so neither is his yet."""
+    svc = make_services()
+    drop = my_skater()
+    seed(svc, twice=drop)
+    html = client(svc).get(f"/rosters/replace?drop={drop}").text
+    assert "match no roster player, or share one (see Admin)" in html
+    body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    rooms = [row.split('<td class="num')[-1] for row in body.split("</tr>")[:-1]]
+    assert rooms
+    assert all(">—</td>" in cell for cell in rooms)
 
 
 def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:

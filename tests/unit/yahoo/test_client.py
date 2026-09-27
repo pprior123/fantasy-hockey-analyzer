@@ -191,6 +191,65 @@ async def test_a_refusal_is_replayed_briefly_then_yahoo_and_the_store_are_asked_
     assert fake.refreshes == 2
 
 
+async def test_a_warm_instance_whose_token_is_refused_loads_a_new_consent() -> None:
+    """M4R12A-1: the in-memory token expires and its renewal is refused; once the
+    window passes, a token the owner stored since is used, not the refused one."""
+
+    class RefusingAfterFirst(FakeYahoo):
+        refuse = False
+
+        async def __call__(self, request: httpx.Request) -> httpx.Response:
+            if str(request.url) == oauth.TOKEN_URL and self.refuse:
+                self.refreshes += 1
+                return httpx.Response(400, json={"error": "invalid_grant"})
+            return await super().__call__(request)
+
+    fake = RefusingAfterFirst()
+    store = MemoryStore()
+    now = [NOW]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    yahoo = YahooClient(http, CREDS, store, clock=lambda: now[0])
+    assert await yahoo.get("x") == {"ok": 1}  # warm: the token is held in memory
+    fake.refuse = True
+    now[0] += 3600
+    with pytest.raises(YahooAuthError):
+        await yahoo.get("x")
+    now[0] += REFUSAL_REPLAY_SECONDS
+    store.token = Token("access-9", "refresh-9", now[0] + 3600)
+    fake.valid = {"access-9"}
+    assert await yahoo.get("x") == {"ok": 1}
+
+
+async def test_a_clock_that_steps_back_doesnt_extend_a_refusal() -> None:
+    """M4R12A-3: a refusal "in the future" (the clock went back) isn't replayed."""
+    fake = RefusingYahoo()
+    now = [NOW]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    store = MemoryStore(Token("access-1", "refresh-1", NOW - 3600))
+    yahoo = YahooClient(http, CREDS, store, clock=lambda: now[0])
+    with pytest.raises(YahooAuthError):
+        await yahoo.get("x")
+    now[0] -= 1
+    with pytest.raises(YahooAuthError):
+        await yahoo.get("x")
+    assert fake.refreshes == 2
+
+
+async def test_a_renewed_token_is_kept_when_saving_it_fails() -> None:
+    """M4R12A-2: Yahoo may retire the old refresh token, so the new one mustn't be lost."""
+
+    class FailingSave(MemoryStore):
+        async def save(self, token: Token) -> None:
+            raise OSError("store down")
+
+    fake = FakeYahoo()
+    yahoo = client(fake, FailingSave(Token("access-1", "refresh-1", NOW - 1)))
+    with pytest.raises(OSError, match="store down"):
+        await yahoo.get("x")
+    assert await yahoo.get("x") == {"ok": 1}
+    assert fake.refreshes == 1  # the renewed token was used, not renewed again
+
+
 async def test_401_after_a_refresh_is_an_auth_error() -> None:
     def always_401(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401)

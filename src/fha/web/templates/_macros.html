@@ -45,8 +45,8 @@
   <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th>{% if replace is not none %}<th></th>{% endif %}</tr></thead>
   <tbody>
   {% for g in goalies %}
-  <tr>
-    <td class="first">{{ g.name }}{% if g.status %} <span class="badge">{{ g.status }}</span>{% endif %}</td>
+  <tr class="{{ 'ir' if g.in_ir_slot else '' }}">
+    <td class="first">{{ g.name }}{% if g.in_ir_slot %} <span class="badge">{{ g.slot }}</span>{% endif %}{% if g.status %} <span class="badge">{{ g.status }}</span>{% endif %}</td>
     <td>{{ g.nhl_team or DASH }}</td>
     <td class="num">{{ g.gp }}</td>
     <td class="num">{{ g.goalie.get('W')|number(0) }}</td>

@@ -1920,3 +1920,19 @@ SDs muted.
   shaded row.
 - Checked in Chrome at 390 px: the page and the matchup table both fit
   (scrollWidth 364 of 364), with no console errors.
+
+**Review of these three changes** (one fresh reviewer, at `c571fa2`,
+under the evidence rule): nothing of medium or worse. Each change fails a
+test when reverted.
+- **Fixed (R-4):** an IR goalie frees nothing, so the goalie table now marks
+  his slot with an IR badge and the `ir` row style, as the skater table
+  does.
+- **Tests added (R-1, R-3):**
+  - Matchup's TTLTST row cells and its legend;
+  - the 8-column "No goalies." row on my own roster;
+  - the goalie links keeping `season` and `view`.
+- **Justified, not tested (R-2):** two lines are close to harmless.
+  - A refusal clearing the pending save: without it, the next request
+    would re-save the token it just loaded from the store.
+  - The backward-clock guard on the save retry: without it, a stepped-back
+    clock would delay one retry.

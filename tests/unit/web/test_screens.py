@@ -612,6 +612,26 @@ def test_goalies_count_toward_the_cap_and_can_be_replaced() -> None:
     assert f">{money(after)}</td>" in row
     other = c.get(f"/rosters?team={SNAP.teams[1].team_key}").text
     assert "Replace</a>" not in other.split('class="data goalies"', 1)[1].split("</table>", 1)[0]
+    kept = c.get("/rosters?season=last&view=cats").text  # the links keep the toggles
+    assert f"/rosters/replace?season=last&amp;view=cats&amp;drop={goalie.player_id}" in kept
+
+
+def test_a_goalie_in_an_ir_slot_is_marked_and_no_goalies_spans_the_table() -> None:
+    """Post-loop review R-4, R-3: an IR goalie frees nothing, so the table shows his slot."""
+    first = next(i for i, e in enumerate(MINE.roster) if e.player.is_goalie)
+    roster = list(MINE.roster)
+    roster[first] = replace(roster[first], selected_position="IR")
+    teams = tuple(replace(t, roster=tuple(roster)) if t.is_mine else t for t in SNAP.teams)
+    html = client(services_for(replace(SNAP, teams=teams))).get("/rosters").text
+    table = html.split('class="data goalies"', 1)[1].split("</table>", 1)[0]
+    name = MINE.roster[first].player.name
+    assert f'<tr class="ir">\n    <td class="first">{name} <span class="badge">IR</span>' in table
+    no_goalies = tuple(
+        replace(t, roster=tuple(e for e in t.roster if not e.player.is_goalie)) if t.is_mine else t
+        for t in SNAP.teams
+    )
+    empty = client(services_for(replace(SNAP, teams=no_goalies))).get("/rosters").text
+    assert '<td colspan="8" class="muted">No goalies.</td>' in empty
 
 
 def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:
@@ -709,6 +729,15 @@ def test_the_matchup_shows_each_teams_spread(monkeypatch: pytest.MonkeyPatch) ->
         ]
         labelled = '<span class="sr-only"> (behind or close)</span>' in row
         assert labelled == (cat in game.comparison.trailing)  # the shading, for a reader
+    total = table.split('<tr class="total">', 1)[1].split("</tr>", 1)[0]
+    assert re.findall(r"<td[^>]*>([^<]*)</td>", total) == [
+        number(me.ttltst, 3),
+        "",
+        number(them.ttltst, 3),
+        "",
+        "",
+    ]
+    assert '<span class="trailing legend">Shaded</span>: behind or close.' in html
     assert "SD: the spread within each team" in html
 
 

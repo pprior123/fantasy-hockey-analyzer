@@ -59,7 +59,14 @@ class PageData:
             return None
         if error.startswith("not saved:"):
             return "Fresh from Yahoo, but it couldn't be saved; it will be retried."
-        note = f"Yahoo couldn't be reached, so this is data from {self.refreshed_label}."
+        # Say what failed, not why (M4R9A-1): a refused sign-in or a changed response
+        # isn't "couldn't be reached". The note starts with the error's type.
+        kind = error.split(":", 1)[0].split(" (", 1)[0]
+        note = (
+            f"Refreshing from Yahoo failed ({kind}), so this is data from {self.refreshed_label}."
+        )
+        if kind == "YahooAuthError":
+            note += " The app's Yahoo sign-in may need renewing (the consent flow)."
         if "retrying after" in error:  # within the backoff: a Refresh now won't ask Yahoo
             note += " Yahoo is asked again a minute after a failure."
         return note

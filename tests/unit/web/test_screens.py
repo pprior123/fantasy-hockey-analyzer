@@ -38,12 +38,16 @@ def services_for(snapshot: LeagueSnapshot) -> Services:
     return Services(repo, RefreshService(FakeYahooSource(snapshot), repo, clock), clock)
 
 
-def seed(svc: Services, *, salary: int = 1_000_000, skip: int = 0) -> None:
-    """A sheet tab for my team (bound), and cap hits for a few free agents."""
+def seed(
+    svc: Services, *, salary: int = 1_000_000, skip: int = 0, misspell: str | None = None
+) -> None:
+    """A sheet tab for my team (bound), and cap hits for a few free agents. ``misspell``:
+    a player whose row's name no match finds, so it waits for review."""
     counted, ir = [], []
     for entry in MINE.roster[skip:]:
         p = entry.player
-        row = s.Player(p.name, p.eligible_positions[0], p.nhl_team, salary)
+        name = f"Zqx {p.name}" if p.player_id == misspell else p.name
+        row = s.Player(name, p.eligible_positions[0], p.nhl_team, salary)
         (ir if entry.in_ir_slot else counted).append((entry, row))
     tab = s.TeamTab("Mine", [r for _, r in counted], below=[s.IRRow("IR", r) for _, r in ir])
 
@@ -280,14 +284,17 @@ def test_a_failed_refresh_says_so_on_the_page_it_returns_to() -> None:
     repo = InMemoryRepository()
     svc = Services(repo, RefreshService(FlakySource(demo_snapshot()), repo, clock), clock)
     c = client(svc)
-    assert "couldn&#39;t be reached" not in c.get("/rosters").text
+    assert "Refreshing from Yahoo failed" not in c.get("/rosters").text
     clock.t += 120
     response = c.post("/refresh", data={"next": "/rosters"})
     assert response.status_code == 200
     assert str(response.url).endswith("/rosters")
-    assert "Yahoo couldn&#39;t be reached, so this is data from 2 min ago." in response.text
+    assert (
+        "Refreshing from Yahoo failed (ConnectionError), so this is data from 2 min ago."
+        in response.text
+    )
     clock.t += 61
-    assert "couldn&#39;t be reached" not in c.get("/rosters").text  # fresh again, not retried
+    assert "Refreshing from Yahoo failed" not in c.get("/rosters").text  # fresh again, not retried
 
 
 def test_without_any_yahoo_data_the_screens_say_so_instead_of_crashing() -> None:
@@ -322,7 +329,7 @@ def test_a_stale_note_is_shown_when_yahoo_fails() -> None:
     c.get("/players")
     clock.t += 3 * 3600  # past the TTL: the refresh fails, the old data is served
     html = c.get("/players").text
-    assert "Yahoo couldn&#39;t be reached, so this is data from 3 h ago." in html
+    assert "Refreshing from Yahoo failed (ConnectionError), so this is data from 3 h ago." in html
 
 
 # ---------------------------------------------------------------- rosters
@@ -515,7 +522,23 @@ def test_replacing_a_player_missing_from_the_sheet_frees_nothing() -> None:
     drop = my_skater()
     seed(svc, skip=[e.player.player_id for e in MINE.roster].index(drop) + 1)
     html = client(svc).get(f"/rosters/replace?drop={drop}").text
-    assert "not on the sheet: frees nothing" in html
+    assert "(no sheet row matched him: frees nothing)" in html
+
+
+def test_a_drop_whose_row_may_await_review_has_an_unknown_room_after() -> None:
+    """M4R9B-1: his counted row is in match review, so his cap hit is in PAYROLL; treating
+    him as freeing nothing understated the room after every swap."""
+    svc = make_services()
+    drop = my_skater()
+    seed(svc, misspell=drop)
+    html = client(svc).get(f"/rosters/replace?drop={drop}").text
+    assert "rows on my tab await review in Admin, so the room after is unknown" in html
+    body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    rooms = [row.split('<td class="num')[-1] for row in body.split("</tr>")[:-1]]
+    assert rooms
+    assert all(">—</td>" in cell for cell in rooms)  # the last cell: Room after
+    swaps = client(svc).get(f"/rosters/replace?drop={drop}&swap_ok=1").text
+    assert "left out: a cap hit or the room isn" in swaps
 
 
 def test_without_my_tab_replace_says_the_room_is_unavailable() -> None:

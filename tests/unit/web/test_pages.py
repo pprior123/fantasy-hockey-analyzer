@@ -325,7 +325,7 @@ def test_a_storage_outage_is_a_503_page_without_details(caplog: pytest.LogCaptur
     repo.down = True
     for response in (client.get("/players"), client.post("/refresh", data={"next": "/league"})):
         assert response.status_code == 503
-        assert "The app&#39;s storage couldn&#39;t be reached." in response.text
+        assert "Reading or writing the app&#39;s storage failed." in response.text
         assert "secret-project" not in response.text
     assert "storage failed (RepositoryError) on /players" in caplog.text
     assert "secret-project" not in caplog.text

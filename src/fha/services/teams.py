@@ -191,7 +191,12 @@ def replace_view(
     if mine is None or drop is None or drop.owner_key != mine.team_key:
         return None
     room = cap_room(view.cap, mine.payroll)
-    hit = CapHit(drop.aav, bool(drop.counts)) if drop.counts is not None else None
+    if drop.counts is not None:
+        hit: CapHit | None = CapHit(drop.aav, bool(drop.counts))
+    elif mine.unmatched_counted:  # his counted row may be one awaiting review (M4R9B-1)
+        hit = CapHit(None, True)  # so what the drop frees is unknown
+    else:
+        hit = None  # missing from the tab: frees nothing (SPEC §5)
     wanted = positions(drop)
     rows: list[ReplaceRow] = []
     unknown = 0

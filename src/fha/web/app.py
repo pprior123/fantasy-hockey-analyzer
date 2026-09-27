@@ -280,7 +280,7 @@ def create_app(context: AppContext) -> FastAPI:
             status_code=503,
             active=_active(request.url.path),
             title="No Yahoo data",
-            message=f"There's no Yahoo data to show yet ({type(exc).__name__}: {exc}).",
+            message=f"There's no Yahoo data to show ({type(exc).__name__}: {exc}).",
             hint="Admin works without it; this page comes back once Yahoo answers.",
         )
 
@@ -358,7 +358,7 @@ def create_app(context: AppContext) -> FastAPI:
             status_code=503,
             active=_active(request.url.path),
             title="Storage unavailable",
-            message="The app's storage couldn't be reached.",
+            message="Reading or writing the app's storage failed.",
             hint="Try again in a minute.",
         )
 

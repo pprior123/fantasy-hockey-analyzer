@@ -747,7 +747,7 @@ def no_yahoo() -> Any:
 def test_without_yahoo_data_the_page_still_works_and_imports_wait() -> None:
     c = client(no_yahoo())
     html = c.get("/admin", params={"q": "anyone"}).text
-    assert "No Yahoo data yet" in html
+    assert "No Yahoo data, so the sections" in html
     assert "The search needs Yahoo data" in html  # nothing to search without the pool
     upload_sheet(c)
     assert "Needs Yahoo data (the teams)." in c.get("/admin").text
@@ -775,7 +775,7 @@ def test_a_transport_error_without_a_cache_still_renders_admin() -> None:
     for path in ("/admin", "/admin?q=x"):
         response = c.get(path)
         assert response.status_code == 200
-        assert "No Yahoo data yet" in response.text
+        assert "No Yahoo data, so the sections" in response.text
         assert "ConnectTimeout: timed out" in response.text
     assert upload_csv(c, csv_row("Ada Big", "C", "$1"))["kind"] == "error"
 

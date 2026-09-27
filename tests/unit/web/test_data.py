@@ -74,7 +74,18 @@ async def test_stale_notes_word_the_two_cases_differently() -> None:
     unsaved = replace(data, cached=replace(data.cached, refresh_error="not saved: HTTP 503"))
     assert unsaved.stale_note == "Fresh from Yahoo, but it couldn't be saved; it will be retried."
     stale = replace(data, cached=replace(data.cached, refresh_error="YahooHTTPError: 503"))
-    assert stale.stale_note == "Yahoo couldn't be reached, so this is data from just now."
+    assert stale.stale_note == (
+        "Refreshing from Yahoo failed (YahooHTTPError), so this is data from just now."
+    )
+    note = "YahooAuthError: refused (5 s ago; retrying after 60 s)"
+    refused = replace(data, cached=replace(data.cached, refresh_error=note))
+    assert refused.stale_note == (  # M4R9A-1: a refused sign-in isn't "couldn't be reached"
+        "Refreshing from Yahoo failed (YahooAuthError), so this is data from just now."
+        " The app's Yahoo sign-in may need renewing (the consent flow)."
+        " Yahoo is asked again a minute after a failure."
+    )
+    store = replace(data, cached=replace(data.cached, refresh_error="RepositoryError (5 s ago)"))
+    assert "failed (RepositoryError), so" in (store.stale_note or "")
 
 
 def test_season_param() -> None:

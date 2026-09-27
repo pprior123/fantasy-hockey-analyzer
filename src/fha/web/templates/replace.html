@@ -9,7 +9,7 @@
 </div>
 <section class="card">
   <p><strong>{{ drop.name }}</strong> ({{ drop.position }}) · TTLTST {{ drop.ttltst|number(3) }} · AAV {{ drop.aav|money }}
-    {% if data.view.my_team.payroll is none or data.view.cap is none %}<span class="muted">(my cap room is unavailable)</span>{% elif drop.counts is none %}<span class="muted">(not on the sheet: frees nothing)</span>{% elif not drop.counts %}<span class="muted">(IR row: frees nothing)</span>{% endif %}</p>
+    {% if data.view.my_team.payroll is none or data.view.cap is none %}<span class="muted">(my cap room is unavailable)</span>{% elif drop.counts is none and data.view.my_team.unmatched_counted %}<span class="muted">(no sheet row matched him; rows on my tab await review in Admin, so the room after is unknown)</span>{% elif drop.counts is none %}<span class="muted">(no sheet row matched him: frees nothing)</span>{% elif not drop.counts %}<span class="muted">(IR row: frees nothing)</span>{% endif %}</p>
   <p><a href="{{ url('/rosters', {'season': params.get('season', ''), 'view': params.get('view', '')}) }}">Back to my roster</a></p>
 </section>
 

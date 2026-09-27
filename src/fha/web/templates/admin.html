@@ -5,7 +5,7 @@
 <p class="admin-flash {{ 'good' if flash.kind == 'ok' else 'error' }}" role="status">{{ flash.text }}</p>
 {% endif %}
 {% if data_error %}
-<p class="card warn">No Yahoo data yet, so the sections that need rosters are hidden ({{ data_error }}).</p>
+<p class="card warn">No Yahoo data, so the sections that need rosters are hidden ({{ data_error }}).</p>
 {% endif %}
 
 <nav class="chips admin-jump" aria-label="Sections">

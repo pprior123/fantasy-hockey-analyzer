@@ -66,6 +66,9 @@ class Salaries:
     free_agents: Mapping[str, int] = field(default_factory=dict)  # by player_id
     payrolls: Mapping[str, int | None] = field(default_factory=dict)  # by team_key, bound tabs
     cap: int | None = None
+    # Teams whose bound tab has counted rows matched to no roster player (in review):
+    # one of them may be a rostered player who shows no sheet row.
+    unmatched_counted: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,7 @@ class TeamInfo:
     is_mine: bool
     payroll: int | None  # the tab's PAYROLL; None if unbound or unrecognized (SPEC §5)
     player_ids: tuple[str, ...]
+    unmatched_counted: bool = False  # see Salaries.unmatched_counted
 
 
 @dataclass(frozen=True)
@@ -196,6 +200,7 @@ def build_view(
             t.is_mine,
             salaries.payrolls.get(t.team_key),
             tuple(e.player.player_id for e in t.roster),
+            t.team_key in salaries.unmatched_counted,
         )
         for t in snapshot.teams
     )
@@ -300,5 +305,8 @@ async def load_salaries(
         free_agents=free_agents.aav,
         payrolls=payrolls(reports),
         cap=cap if cap is not None else cap_override,
+        unmatched_counted=frozenset(
+            r.team_key for r in reports if r.team_key and any(x.counted for x in r.not_on_roster)
+        ),
     )
     return salaries, reports

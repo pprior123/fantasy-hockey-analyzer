@@ -428,6 +428,7 @@ def test_the_salary_cap_setting_fills_in_for_an_unreadable_cap() -> None:
     assert money(100_000_000 - payroll) in html
     without = logged_in(make_app(svc)).get("/rosters").text
     assert "Cap —" in without  # no cap anywhere: unknown, never $0
+    assert 'Room <span class="">—</span>' in without  # M4R7B-4: not green
     replace_page = logged_in(make_app(svc)).get(f"/rosters/replace?drop={my_skater()}").text
     assert "(my cap room is unavailable)" in replace_page  # M4R6B-3: the tab is bound
     assert "room also needs the cap" in logged_in(make_app(svc)).get("/league").text
@@ -620,7 +621,7 @@ def test_with_no_rated_skaters_the_list_doesnt_claim_a_lead() -> None:
 def test_a_bye_and_no_next_week() -> None:
     bye = replace(SNAP, scoreboard=Scoreboard(3, None, None, ()), next_scoreboard=None)
     c = client(services_for(bye))
-    assert "a bye, no opponent" in c.get("/matchup").text
+    assert "no opponent scheduled (a bye, or the playoff bracket" in c.get("/matchup").text
     assert (
         '<td colspan="6" class="muted">No opponent this week' in c.get("/matchup/free-agents").text
     )
@@ -640,6 +641,7 @@ def test_without_my_team() -> None:
     c = client(services_for(orphan))
     assert "Your team isn" in c.get("/matchup").text
     assert "Your team isn" in c.get("/matchup?week=next").text  # M4R6B-1: not "no next week"
+    assert "Your team isn" in c.get("/matchup/free-agents?week=next").text  # M4R7B-2
     html = c.get("/rosters").text
     assert SNAP.teams[0].name in html  # the first team instead
     assert c.get(f"/rosters/replace?drop={my_skater()}").status_code == 400

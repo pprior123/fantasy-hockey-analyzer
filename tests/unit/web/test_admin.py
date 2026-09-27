@@ -296,9 +296,37 @@ def test_a_long_import_summary_keeps_its_counts_and_every_section() -> None:
     """M4R6A-3: a cut at the end of the message dropped the unknown teams."""
     rows = [csv_row(f"Player{i:02d} Name", "C", f"${n}", "TOR") for i in range(14) for n in (1, 2)]
     teams = [csv_row(f"Some Else{i}", "C", "$3", f"Nowhere City {i:02d}") for i in range(10)]
-    text = upload_csv(client(), *rows, *teams)["text"]
-    assert " and 6 more. Unknown teams: " in text
+    long_names = [
+        csv_row(f"A{'a' * 300} Long{i}", "C", f"${n}", "TOR") for i in range(2) for n in (1, 2)
+    ]
+    text = upload_csv(client(), *long_names, *rows, *teams)["text"]
+    assert " and 8 more. Unknown teams: " in text  # each long name is cut, too (M4R7A-2)
     assert text.endswith("Nowhere City 07 and 2 more.")
+
+
+def test_the_last_guard_bounds_a_message_that_quotes_input_in_full() -> None:
+    """M4R7A-1: an engine error quotes the method whole; random text doesn't compress."""
+    import secrets
+
+    method = secrets.token_hex(10_000)
+    response = client().post(
+        "/admin/settings",
+        data={"divisor_method": method, "gp_floor_percent": "2"},
+        follow_redirects=False,
+    )
+    assert len(response.headers["location"]) < 1500
+    text = flash_of(response)["text"]
+    assert len(text) == 1000
+    assert text.endswith("…")
+
+
+def test_a_row_match_quotes_a_long_tab_short() -> None:
+    tab = "t" * 5000
+    form = {"tab": tab, "key": "k", "player_id": "p"}
+    short = "t" * 39 + "…"
+    assert post(client(), "/admin/sheet/confirm", data=form)["text"] == (
+        f"{short}: tab '{short}' isn't bound to a team yet."
+    )
 
 
 def test_a_value_the_store_refuses_is_a_message_not_a_500() -> None:
@@ -787,6 +815,13 @@ def test_a_refused_service_account_is_a_message() -> None:
 )
 def test_parse_dollars(text: str, dollars: int) -> None:
     assert parse_dollars(text) == dollars
+
+
+@pytest.mark.parametrize("parse", [parse_dollars, parse_percent])
+def test_a_refused_value_is_quoted_short(parse: Any) -> None:
+    with pytest.raises(InputError) as info:
+        parse("9x" * 2500)
+    assert f"(got '{'9x' * 19}9…')" in str(info.value)
 
 
 @pytest.mark.parametrize(

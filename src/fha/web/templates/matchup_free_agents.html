@@ -8,7 +8,7 @@
 </div>
 <p><a href="{{ url('/matchup', params, fits=None) }}">Back to the matchup</a></p>
 {% if need is none %}
-<p class="card">No matchup {{ 'next week' if week == 'next' else 'this week' }}, so nothing to help with.</p>
+<p class="card">{% if data.view.my_team is none %}Your team isn't in this league's data.{% else %}No matchup {{ 'next week' if week == 'next' else 'this week' }}, so nothing to help with.{% endif %}</p>
 {% else %}
 <p>Sorted by how much each free agent adds in the categories you're behind or close in:
   {% for cat in categories if game.comparison and cat in game.comparison.trailing %}<span class="badge">{{ cat.value }}</span> {% else %}<span class="muted">none</span>{% endfor %}</p>

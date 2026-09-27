@@ -24,7 +24,7 @@
   <p>Payroll: <span class="muted">unavailable</span> (the team's sheet tab isn't bound or recognized yet).</p>
   {% else %}
   <p>Payroll {{ summary.payroll|money }} · Cap {{ cap|money }} ·
-    Room <span class="{{ 'over' if summary.over_cap else 'good' }}">{{ summary.cap_room|money }}</span>{% if summary.over_cap %} <strong class="over">over the cap</strong>{% endif %}</p>
+    Room <span class="{{ 'over' if summary.over_cap else ('good' if summary.cap_room is not none else '') }}">{{ summary.cap_room|money }}</span>{% if summary.over_cap %} <strong class="over">over the cap</strong>{% endif %}</p>
   {% endif %}
 </section>
 

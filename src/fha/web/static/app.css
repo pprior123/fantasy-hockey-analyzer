@@ -106,3 +106,6 @@ dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
 .admin-config { margin: 0; padding-left: 1.1rem; }
 .admin-wrap { white-space: normal; }
 .card h2 { font-size: 1.05rem; margin: 0 0 .4rem; }
+.data td.sd, .data th.sd { color: var(--muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.legend { padding: 0 .3em; }

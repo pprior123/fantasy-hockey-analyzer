@@ -38,10 +38,11 @@
 </dl>
 {%- endmacro %}
 
-{% macro goalie_table(goalies) -%}
+{#- replace: the link parameters on my own roster (goalies count toward the cap), else none -#}
+{% macro goalie_table(goalies, replace=none) -%}
 <div class="table-wrap">
 <table class="data goalies">
-  <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th></tr></thead>
+  <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th>{% if replace is not none %}<th></th>{% endif %}</tr></thead>
   <tbody>
   {% for g in goalies %}
   <tr>
@@ -52,9 +53,10 @@
     <td class="num">{{ g.goalie.get('GAA')|number(2) }}</td>
     <td class="num">{{ g.goalie.get('SV%')|number(3) }}</td>
     <td class="num">{{ g.aav|money }}</td>
+    {% if replace is not none %}<td><a href="{{ url('/rosters/replace', replace, drop=g.player_id) }}">Replace</a></td>{% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="7" class="muted">No goalies.</td></tr>
+  <tr><td colspan="{{ 8 if replace is not none else 7 }}" class="muted">No goalies.</td></tr>
   {% endfor %}
   </tbody>
 </table>

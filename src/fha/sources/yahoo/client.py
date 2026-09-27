@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -23,6 +24,10 @@ API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2/"
 DEFAULT_MAX_CONCURRENCY = 8
 # A refused token renewal is shared by one fetch's requests, then Yahoo is asked again.
 REFUSAL_REPLAY_SECONDS = 30.0
+# A renewed token the store refused is saved again at most this often, until it takes.
+SAVE_RETRY_SECONDS = 30.0
+
+log = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 RATE_LIMITED = 999  # Yahoo's status code for "too many requests"
 
@@ -71,6 +76,7 @@ class YahooClient:
         self._token: Token | None = None
         # A renewal Yahoo refused: (its refresh token, when, the error).
         self._refused: tuple[str, float, YahooAuthError] | None = None
+        self._unsaved_at: float | None = None  # when saving ``_token`` last failed
 
     async def get(self, path: str) -> JsonObject:
         """GET ``API_BASE + path`` and return its ``fantasy_content``.
@@ -104,6 +110,10 @@ class YahooClient:
                 )
             if token.expired(self._clock()):
                 token = await self._renew(token)
+            elif self._unsaved_at is not None and not (
+                0 <= self._clock() - self._unsaved_at < SAVE_RETRY_SECONDS
+            ):
+                await self._save(token)
             self._token = token
             return token
 
@@ -134,10 +144,23 @@ class YahooClient:
         except YahooAuthError as error:
             self._refused = (token.refresh_token, self._clock(), error)
             self._token = None  # load the store again: the owner may re-run consent
+            self._unsaved_at = None  # nothing held in memory to save any more
             raise
         self._token = renewed  # kept even if saving fails: Yahoo may have retired the old one
-        await self._store.save(renewed)
+        await self._save(renewed)
         return renewed
+
+    async def _save(self, token: Token) -> None:
+        """Save a renewed token. A failure is logged by type and retried on a later
+        request (``SAVE_RETRY_SECONDS``), never raised: the token in memory works, and
+        failing the fetch would only cost a stale page (M4R13A-1/A-2)."""
+        try:
+            await self._store.save(token)
+        except Exception as error:  # the store's errors (RepositoryError, OSError)
+            log.warning("Yahoo token not saved (%s); retrying later", type(error).__name__)
+            self._unsaved_at = self._clock()
+        else:
+            self._unsaved_at = None
 
 
 def _content(response: httpx.Response, path: str) -> JsonObject:

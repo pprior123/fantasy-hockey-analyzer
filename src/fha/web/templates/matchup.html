@@ -21,21 +21,24 @@
 {{ m.rates_note() }}
 <div class="table-wrap">
 <table class="data matchup">
-  <thead><tr><th class="first">Cat</th><th class="num">Me</th><th class="num">Them</th><th class="num">Diff</th></tr></thead>
+  <thead><tr><th class="first">Cat</th><th class="num">Me</th><th class="num sd">SD</th><th class="num">Them</th><th class="num sd">SD</th><th class="num">Diff</th></tr></thead>
   <tbody>
   {% for cat in categories %}
   {% set behind = cat in game.comparison.trailing %}
   <tr class="{{ 'trailing' if behind else '' }}">
-    <th class="first">{{ cat.value }}{% if behind %} <span class="bad">behind or close</span>{% endif %}</th>
+    <th class="first">{{ cat.value }}{% if behind %}<span class="sr-only"> (behind or close)</span>{% endif %}</th>
     <td class="num">{{ game.me.profile.mean_norm.get(cat)|number }}</td>
+    <td class="num sd">{{ game.me.profile.sd_norm.get(cat)|number }}</td>
     <td class="num">{{ game.opponent.profile.mean_norm.get(cat)|number }}</td>
+    <td class="num sd">{{ game.opponent.profile.sd_norm.get(cat)|number }}</td>
     <td class="num">{{ game.comparison.diff.get(cat)|signed }}</td>
   </tr>
   {% endfor %}
-  <tr class="total"><th class="first">TTLTST</th><td class="num">{{ game.me.profile.ttltst|number(3) }}</td><td class="num">{{ game.opponent.profile.ttltst|number(3) }}</td><td></td></tr>
+  <tr class="total"><th class="first">TTLTST</th><td class="num">{{ game.me.profile.ttltst|number(3) }}</td><td></td><td class="num">{{ game.opponent.profile.ttltst|number(3) }}</td><td></td><td></td></tr>
   </tbody>
 </table>
 </div>
+<p class="muted"><span class="trailing legend">Shaded</span>: behind or close. SD: the spread within each team (std dev of its skaters' norms). A difference that is small next to both SDs is not much of an edge.</p>
 <p><a class="btn" href="{{ url('/matchup/free-agents', params, week=(week if week == 'next' else None)) }}">Free agents who help here</a></p>
 
 <h2>Goalies</h2>

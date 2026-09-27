@@ -73,6 +73,11 @@ def seed(
     asyncio.run(go())
 
 
+def parse_money(text: str) -> int:
+    """ "$94.60M" -> 94_600_000 (the page's own rounding)."""
+    return round(float(text.strip().removeprefix("$").removesuffix("M")) * 1_000_000)
+
+
 def client(svc: Services | None = None) -> TestClient:
     return logged_in(make_app(svc or make_services()))
 
@@ -581,6 +586,34 @@ def test_two_rows_on_one_player_make_his_room_after_unknown() -> None:
     assert all(">—</td>" in cell for cell in rooms)
 
 
+def test_goalies_count_toward_the_cap_and_can_be_replaced() -> None:
+    """The owner (2026-09-27): goalies count toward the cap; no goalie rating yet. My
+    goalies link to Replace, and dropping one frees his cap hit."""
+    svc = make_services()
+    seed(svc)
+    goalie = next(e.player for e in MINE.roster if e.player.is_goalie and not e.in_ir_slot)
+    fa_goalie = next(p for p in SNAP.available if p.is_goalie)
+
+    async def price() -> None:
+        row = SalaryRow(fa_goalie.name, "G", None, 3_000_000, 2)
+        await import_free_agent_salaries(svc.repo, [row], SNAP.pool, NO_ALIASES)
+
+    asyncio.run(price())
+    c = client(svc)
+    rosters = c.get("/rosters").text
+    goalies = rosters.split('class="data goalies"', 1)[1].split("</table>", 1)[0]
+    assert f'href="/rosters/replace?drop={goalie.player_id}">Replace</a>' in goalies
+    html = c.get(f"/rosters/replace?drop={goalie.player_id}").text
+    room = re.search(r'Room <span class="[^"]*">([^<]+)</span>', rosters)
+    assert room is not None
+    row = html.split(f">{fa_goalie.name}<", 1)[1].split("</tr>", 1)[0]
+    # room after = room + his $1.00M - the free agent's $3.00M
+    after = parse_money(room.group(1)) + 1_000_000 - 3_000_000
+    assert f">{money(after)}</td>" in row
+    other = c.get(f"/rosters?team={SNAP.teams[1].team_key}").text
+    assert "Replace</a>" not in other.split('class="data goalies"', 1)[1].split("</table>", 1)[0]
+
+
 def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:
     """M4R10B-1: only a *counted* row in review can be the drop's; an IR row frees nothing."""
     svc = make_services()
@@ -643,6 +676,40 @@ def test_this_weeks_matchup_highlights_trailing_categories() -> None:
     assert "Profiles compare rates" in html
     assert "Free agents who help here" in html
     assert html.count('class="data goalies"') == 2
+
+
+def test_the_matchup_shows_each_teams_spread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner (2026-09-27): each category's std dev for both teams, to judge whether
+    a difference is large next to the spread within each team (M4R7B-3)."""
+    from fha.web.routes import matchup as route
+
+    real = route.matchup_view
+    seen: list[Any] = []
+
+    def spy(*args: Any, **kw: Any) -> Any:
+        seen.append(real(*args, **kw))
+        return seen[-1]
+
+    monkeypatch.setattr(route, "matchup_view", spy)
+    html = client().get("/matchup").text
+    (game,) = seen
+    table = html.split('class="data matchup"', 1)[1].split("</table>", 1)[0]
+    head = table.split("</thead>", 1)[0]
+    assert re.findall(r"<th[^>]*>([^<]+)</th>", head) == ["Cat", "Me", "SD", "Them", "SD", "Diff"]
+    me, them = game.me.profile, game.opponent.profile
+    for cat in me.categories:
+        row = table.split(f'<th class="first">{cat.value}', 1)[1].split("</tr>", 1)[0]
+        cells = re.findall(r'<td class="num[^"]*">([^<]*)</td>', row)
+        assert cells == [
+            number(me.mean_norm[cat]),
+            number(me.sd_norm[cat]),
+            number(them.mean_norm[cat]),
+            number(them.sd_norm[cat]),
+            signed(game.comparison.diff[cat]),
+        ]
+        labelled = '<span class="sr-only"> (behind or close)</span>' in row
+        assert labelled == (cat in game.comparison.trailing)  # the shading, for a reader
+    assert "SD: the spread within each team" in html
 
 
 def test_next_weeks_matchup() -> None:

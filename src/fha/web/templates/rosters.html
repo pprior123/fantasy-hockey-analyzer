@@ -71,5 +71,5 @@
 
 <h2>Goalies</h2>
 <p class="muted">Raw stats: goalies aren't rated.</p>
-{{ m.goalie_table(goalies) }}
+{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': params.get('view', '')} if team.is_mine else none) }}
 {% endblock %}

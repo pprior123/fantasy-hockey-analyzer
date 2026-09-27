@@ -11,6 +11,7 @@ from fha.sources.yahoo import oauth
 from fha.sources.yahoo.client import (
     API_BASE,
     REFUSAL_REPLAY_SECONDS,
+    SAVE_RETRY_SECONDS,
     YahooClient,
     YahooError,
     YahooHTTPError,
@@ -235,19 +236,44 @@ async def test_a_clock_that_steps_back_doesnt_extend_a_refusal() -> None:
     assert fake.refreshes == 2
 
 
-async def test_a_renewed_token_is_kept_when_saving_it_fails() -> None:
-    """M4R12A-2: Yahoo may retire the old refresh token, so the new one mustn't be lost."""
+class FlakySave(MemoryStore):
+    """A store whose saves fail while ``down``."""
 
-    class FailingSave(MemoryStore):
-        async def save(self, token: Token) -> None:
+    down = True
+    attempts = 0
+
+    async def save(self, token: Token) -> None:
+        self.attempts += 1
+        if self.down:
             raise OSError("store down")
+        await super().save(token)
 
+
+async def test_a_failed_token_save_doesnt_fail_the_request_and_is_retried(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """M4R12A-2, M4R13A-1/A-2: the renewed token is kept and used (Yahoo may retire the
+    old one), the request succeeds, and the save is retried until the store has it, so
+    a cold instance isn't left with the retired token."""
     fake = FakeYahoo()
-    yahoo = client(fake, FailingSave(Token("access-1", "refresh-1", NOW - 1)))
-    with pytest.raises(OSError, match="store down"):
-        await yahoo.get("x")
+    store = FlakySave(Token("access-1", "refresh-1", NOW - 1))
+    now = [NOW]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    yahoo = YahooClient(http, CREDS, store, clock=lambda: now[0])
     assert await yahoo.get("x") == {"ok": 1}
-    assert fake.refreshes == 1  # the renewed token was used, not renewed again
+    assert "Yahoo token not saved (OSError)" in caplog.text
+    assert "store down" not in caplog.text
+    assert await yahoo.get("x") == {"ok": 1}  # within the retry wait: no second save
+    assert (fake.refreshes, store.attempts) == (1, 1)
+    store.down = False
+    now[0] += SAVE_RETRY_SECONDS
+    assert await yahoo.get("x") == {"ok": 1}
+    assert store.attempts == 2
+    assert store.saved == [Token("access-2", "refresh-1", NOW + 3600)]  # the renewed one
+    now[0] += SAVE_RETRY_SECONDS
+    await yahoo.get("x")
+    assert store.attempts == 2  # saved: no more retries
+    assert fake.refreshes == 1
 
 
 async def test_401_after_a_refresh_is_an_auth_error() -> None:

@@ -1758,3 +1758,50 @@ test: the no-data page's wording, below.
   a wrong number.
 
 Round 10 found one medium, fixed with a test, so round 11 runs.
+
+## 2026-09-26 — M4 review round 11: what changed
+Reviewed at `cf445e1`.
+- **Reviewer A:** 1 medium, in the Yahoo client (M2 code), plus 2 lows.
+- **Reviewer B:** approve with 3 lows.
+
+The first reviewer B returned a report on code that doesn't exist: files,
+symbols and tests that were never in the repo. It later retracted: it had
+handed back before running anything. That report was discarded, and a
+fresh reviewer B ran under an evidence rule: the commit hash, and quoted
+output for every claim. Both reviewers who reported reverted every round-10
+change in their scope, and each revert failed a test.
+
+**Fixed:**
+- **One refused token renewal wedged a warm instance (M4R11A-1, medium).**
+  `YahooClient._renew` cached a refusal and replayed it to any later
+  request with the same `Token` object. `_current_token` kept that expired
+  token in memory and never reloaded the store. So one non-200 from the
+  token endpoint, even a one-off 503 at the hourly renewal, was replayed
+  until the instance was recycled: Yahoo was never asked again, and a
+  re-run consent was never loaded. The pages meanwhile said Yahoo would be
+  asked again in a minute. Now:
+  - a refusal is replayed only for the same refresh token and within
+    `REFUSAL_REPLAY_SECONDS` (30 s), which is enough to share it across one
+    fetch's concurrent requests. Later fetches, at least a minute apart
+    under the refresh service's backoff, ask Yahoo again;
+  - on a refusal the in-memory token is dropped, so the next request loads
+    the store and picks up a new consent.
+
+  This is M2 code, fixed on the M4 branch, since M2 (PR #4) is unmerged.
+- **A snapshot that can't be rated (M4R11A-2)** is titled "Yahoo data can't
+  be rated", not "No Yahoo data", which contradicted its own reason.
+- **The retry note (M4R11A-3)** is on every stale note. The backoff applies
+  from the failure itself, so an immediate second Refresh won't ask Yahoo
+  either.
+- **Replace (M4R11B-1, B-2):**
+  - the label also covers two rows sharing one player ("…or share one");
+  - a drop whose counted row has no cap hit (`???`) says that's why the room
+    after is unknown.
+- **Rosters (M4R11B-3):** the unavailable-payroll note drops "yet" and names
+  a missing sheet as one cause.
+
+**Recorded, not changed:** the token endpoint's 5xx is a `YahooAuthError`,
+so a Yahoo outage during a renewal shows the "sign-in may need renewing"
+hint. It says "may", and the next fetch asks again.
+
+Round 11 found one medium, fixed with a test, so round 12 runs.

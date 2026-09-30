@@ -2102,9 +2102,13 @@ depend on Yahoo, and doing it now shortens the path once access arrives).
   more than the 8 s refresh target (SPEC §2) while capping a runaway
   refresh.
 - **Static files stay in the function** (`[tool.vercel.fastapi.static]
-  cdn = false`). Vercel would otherwise promote `StaticFiles` mounts to its
-  CDN, where the app's middleware and headers don't run. The files are
-  small, and `StaticFiles` answers repeat requests with ETags (304).
+  cdn = false`). Vercel promotes `StaticFiles` mounts to its CDN, where the
+  app's middleware and headers don't run. Today it would promote nothing:
+  the app has top-level middleware, and the exported app is the unbuilt
+  `LazyApp`, with no mounts to find at build time. The setting pins that,
+  so a later change can't move files past the middleware (review round 1).
+  The files are small, and `StaticFiles` answers repeat requests with
+  ETags (304).
 - **`.vercelignore` is an allowlist**: `app.py`, `src/`, `pyproject.toml`,
   `uv.lock`, `.python-version`, `vercel.json`, and `README.md` (the
   pyproject's readme, which `uv_build` reads). A CLI deploy from the
@@ -2117,12 +2121,16 @@ depend on Yahoo, and doing it now shortens the path once access arrives).
 saves the token through `RepositoryTokenStore` to the key's project
 (`--project` overrides it), document `secrets/yahoo_token`. The owner runs
 it, from their machine. It:
-- reads the store first, so a bad key or missing access fails before
-  consent;
+- reads the store first, so a bad key or missing read access fails
+  before consent (saving also needs write access: the service account
+  has the Cloud Datastore User role; a read-only role fails at the save,
+  after consent, and the owner re-runs it once the role is fixed);
 - says whether it saved a new token or replaced one;
 - reads the token back after saving;
-- then runs the same league check as dev (on a 403, it says the token is
-  saved in Firestore).
+- then runs the same league check as dev. On a 403 it says the token is
+  saved in Firestore, and that `scripts.yahoo_diagnose` on the dev token
+  answers for production too: Yahoo approves the app, not each token
+  (review round 1).
 
 Only the key and the project reach `repository_from_env`, so a dev
 `FHA_LOCAL_REPOSITORY` in `.env` can't pick the store.

@@ -72,6 +72,9 @@ def test_building_the_production_app_loads_nothing_heavy_but_matching() -> None:
         "from fha.web.app import create_app\n"
         "context = AppContext.from_env(os.environ)\n"
         "create_app(context)\n"
-        "context.factory(httpx.AsyncClient())\n"  # builds clients; sends nothing
+        # Building sends nothing; a request would fail here (the subprocess has no
+        # network guard, so this transport is it).
+        "def refuse(request): raise AssertionError(f'sent {request.url} while building')\n"
+        "context.factory(httpx.AsyncClient(transport=httpx.MockTransport(refuse)))\n"
     )
     assert [m for m in loaded(code, env) if m in HEAVY_AFTER_BUILD] == []

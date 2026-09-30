@@ -39,10 +39,10 @@ dev = [
 ]
 
 # ---------------------------------------------------------------- vercel
-# Every request goes to the function, static files too. Vercel would otherwise
-# promote StaticFiles mounts to its CDN, where the app's middleware and headers
-# don't run; and the exported app is the lazy wrapper (fha.web.main.LazyApp),
-# not a FastAPI instance its build step can inspect.
+# Every request goes to the function, static files too. Today nothing would be
+# promoted anyway (the app has top-level middleware, and the exported app is the
+# lazy wrapper, fha.web.main.LazyApp, with no mounts to find at build time); this
+# pins it, so a later change can't move files to the CDN, past the middleware.
 [tool.vercel.fastapi.static]
 cdn = false
 

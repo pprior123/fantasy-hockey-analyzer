@@ -6,7 +6,8 @@
 The first saves the token for dev; the second for production, in Firestore.
 
 1. Checks the token store can be read (for Firestore: the key works and the
-   service account has access), so a problem shows before consent.
+   service account can read the database), so most problems show before
+   consent. Saving also needs write access: the Cloud Datastore User role.
 2. Prints the Yahoo authorization URL.
 3. You open it, sign in, click Allow. The browser goes to
    https://localhost:8000/?code=... and the page fails to load: that's fine.
@@ -50,9 +51,9 @@ from scripts.yahoo_common import JsonFileTokenStore, SetupError, credentials_fro
 FORBIDDEN_HINT = (
     "The token works but Yahoo won't serve fantasy data with it: the app's API\n"
     "access isn't approved yet (docs/DECISIONS.md, \"Yahoo API access: pending\n"
-    'approval"). The token is {saved}; check again later with\n'
-    "uv run --env-file .env python -m scripts.yahoo_diagnose"
+    'approval"). The token is {saved}. {later}'
 )
+DIAGNOSE = "uv run --env-file .env python -m scripts.yahoo_diagnose"
 
 
 @dataclass(frozen=True)
@@ -63,12 +64,17 @@ class Target:
     where: str  # "private/yahoo_token.json", or the Firestore project and document
     note: str  # printed after saving
     saved: str  # completes "The token is ..." in the 403 hint
+    later: str  # how to tell when access is on
 
 
 def file_target(store: JsonFileTokenStore) -> Target:
     """Dev: the token file under ``private/``."""
     return Target(
-        store, str(store.path), "Never commit or share this file.", f"saved in {store.path}"
+        store,
+        str(store.path),
+        "Never commit or share this file.",
+        f"saved in {store.path}",
+        f"Check again later with\n{DIAGNOSE}",
     )
 
 
@@ -79,6 +85,9 @@ def repository_target(repo: Repository, project: str) -> Target:
         f"Firestore project {project}, {COLLECTION}/{YAHOO_TOKEN}",
         f"Vercel's FIRESTORE_PROJECT_ID must be {project}.",
         f"saved in Firestore project {project}, and the app will use it once access is on",
+        # diagnose reads the dev token only, but access is per app, so it answers for both
+        "Yahoo approves the app, not each token: when this passes on the dev token,\n"
+        f"the production one works too:\n{DIAGNOSE}",
     )
 
 
@@ -135,7 +144,7 @@ async def run(
     store = target.store
     try:
         creds = credentials_from_env(environ)
-        try:  # before consent: for Firestore, this proves the key and its access
+        try:  # before consent: for Firestore, this proves the key and read access
             replacing = await store.load() is not None
         except YahooAuthError:
             replacing = True  # an unreadable token, which consent replaces
@@ -160,7 +169,7 @@ async def run(
     except (SetupError, YahooAuthError, YahooError, parse.YahooParseError, RepositoryError) as e:
         print(f"\nFailed: {e}", file=sys.stderr)
         if isinstance(e, YahooHTTPError) and e.status == httpx.codes.FORBIDDEN:
-            print(FORBIDDEN_HINT.format(saved=target.saved), file=sys.stderr)
+            print(FORBIDDEN_HINT.format(saved=target.saved, later=target.later), file=sys.stderr)
         return 1
     print(
         f"Checked: league {settings.league_key}, season {settings.season}, "

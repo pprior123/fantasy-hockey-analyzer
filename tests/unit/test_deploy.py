@@ -26,9 +26,10 @@ def test_vercel_runs_one_function_the_lazy_app() -> None:
 
     functions = vercel()["functions"]
     assert isinstance(functions, dict)
-    assert list(functions) == ["app.py"]
-    assert "app.py" in VERCEL_ROOT_ENTRIES
-    assert (REPO / "app.py").is_file()
+    [entry] = functions
+    assert entry in VERCEL_ROOT_ENTRIES  # a file Vercel detects, so the key applies
+    assert entry == "app.py"
+    assert (REPO / entry).is_file()
     assert app.app is main.app
 
 

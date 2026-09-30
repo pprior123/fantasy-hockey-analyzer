@@ -13,7 +13,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from fha.sources.yahoo.oauth import DEFAULT_REDIRECT_URI, Credentials, Token
+from fha.sources.yahoo.oauth import DEFAULT_REDIRECT_URI, Credentials, Token, YahooAuthError
 
 REPO = Path(__file__).resolve().parent.parent
 TOKEN_PATH = REPO / "private" / "yahoo_token.json"
@@ -44,7 +44,11 @@ class JsonFileTokenStore:
     async def load(self) -> Token | None:
         if not self.path.exists():
             return None
-        return Token.from_dict(json.loads(self.path.read_text()))
+        try:
+            data = json.loads(self.path.read_text())
+        except ValueError:  # the message would quote the file: say what, not what's in it
+            raise YahooAuthError(f"the stored token {self.path} is not JSON") from None
+        return Token.from_dict(data)
 
     async def save(self, token: Token) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

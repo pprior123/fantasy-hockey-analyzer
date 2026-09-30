@@ -12,12 +12,12 @@ import pytest
 
 from fha.sources.yahoo import oauth
 from fha.sources.yahoo.oauth import Token, YahooAuthError
-from fha.storage.firestore import FirestoreRepository
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import Document, RepositoryError
 from fha.storage.tokens import COLLECTION, YAHOO_TOKEN, RepositoryTokenStore
 from scripts import yahoo_auth
 from scripts.yahoo_common import TOKEN_PATH, JsonFileTokenStore, SetupError, credentials_from_env
+from tests.unit.test_google_auth import key_json
 from tests.unit.yahoo.fake_league import League
 
 ENV = {"YAHOO_CLIENT_ID": "cid-visible", "YAHOO_CLIENT_SECRET": "csecret-hidden"}
@@ -85,6 +85,14 @@ async def test_token_store_rejects_a_corrupt_file(tmp_path: Path) -> None:
     path.write_text('{"access_token": "a"}')
     with pytest.raises(YahooAuthError, match="missing"):
         await JsonFileTokenStore(path).load()
+
+
+async def test_token_store_names_a_non_json_file_without_echoing_it(tmp_path: Path) -> None:
+    path = tmp_path / "t.json"
+    path.write_text('{"access_token": "acc-old-hidden", "refr')
+    with pytest.raises(YahooAuthError, match="not JSON") as excinfo:
+        await JsonFileTokenStore(path).load()
+    assert "acc-old-hidden" not in str(excinfo.value)
 
 
 # ---------------------------------------------------------------- consent
@@ -243,10 +251,15 @@ async def test_consent_replacing_a_file_token_says_so(
     assert (await store.load()) == Token("acc-hidden", "ref-hidden", NOW + 3600)
 
 
+@pytest.mark.parametrize(
+    "stored",
+    ['{"access_token": "a"}', '{"access_token": "acc-old-hidden", "refr'],
+    ids=["missing-fields", "truncated-json"],
+)
 async def test_an_unreadable_file_token_is_replaced(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stored: str
 ) -> None:
-    (tmp_path / "yahoo_token.json").write_text('{"access_token": "a"}')
+    (tmp_path / "yahoo_token.json").write_text(stored)
     code, out, _, store = await run(tmp_path, capsys, Yahoo())
     assert code == 0
     assert "Replaced the token" in out
@@ -344,6 +357,8 @@ async def test_a_production_403_says_the_token_is_in_firestore(
     assert "isn't approved yet" in err
     assert "saved in Firestore project fha-prod" in err
     assert "private/yahoo_token.json" not in err
+    # diagnose reads the dev token: the hint says why that answers for this one too
+    assert "Yahoo approves the app, not each token" in err
     assert await RepositoryTokenStore(repo).load() is not None
 
 
@@ -428,12 +443,24 @@ async def test_the_command_line_picks_the_target(tmp_path: Path) -> None:
             yahoo_auth.target_from_args(["--project", "p2"], http)  # --project needs --firestore
 
 
-def test_the_production_target_is_real_firestore(tmp_path: Path) -> None:
+async def test_the_production_target_is_real_firestore(tmp_path: Path) -> None:
     """Not the emulator, not the dev file: the key's project on firestore.googleapis.com."""
-    http = httpx.AsyncClient()
-    target = yahoo_auth.firestore_target(write_key(tmp_path, project_id="fha-prod"), http)
-    assert isinstance(target.store, RepositoryTokenStore)
-    assert isinstance(target.store._repo, FirestoreRepository)
+    firestore: list[httpx.URL] = []
+
+    def google(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.example.test":  # the key's token_uri
+            return httpx.Response(200, json={"access_token": "ya29.t", "expires_in": 3599})
+        firestore.append(request.url)
+        return httpx.Response(200, json=[{"missing": "x", "readTime": "2026-09-30T00:00:00Z"}])
+
+    path = tmp_path / "key.json"
+    path.write_text(key_json(project_id="fha-prod"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as http:
+        target = yahoo_auth.firestore_target(path, http)
+        assert await target.store.load() is None
+    [url] = firestore
+    assert (url.scheme, url.host) == ("https", "firestore.googleapis.com")
+    assert url.path == "/v1/projects/fha-prod/databases/(default)/documents:batchGet"
 
 
 async def test_an_unusable_key_fails_the_command_before_consent(

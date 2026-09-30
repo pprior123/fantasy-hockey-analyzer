@@ -72,8 +72,9 @@ def test_building_the_production_app_loads_nothing_heavy_but_matching() -> None:
         "from fha.web.app import create_app\n"
         "context = AppContext.from_env(os.environ)\n"
         "create_app(context)\n"
-        # Building sends nothing; a request would fail here (the subprocess has no
-        # network guard, so this transport is it).
+        # The factory is synchronous, so it can't send; the refusing transport
+        # shows it builds without a working client (the subprocess has no network
+        # guard, and nothing here needs one).
         "def refuse(request): raise AssertionError(f'sent {request.url} while building')\n"
         "context.factory(httpx.AsyncClient(transport=httpx.MockTransport(refuse)))\n"
     )

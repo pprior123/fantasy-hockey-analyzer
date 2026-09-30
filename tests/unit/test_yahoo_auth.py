@@ -292,6 +292,8 @@ async def test_production_consent_saves_the_token_in_the_repository(
     assert stored == Token("acc-hidden", "ref-hidden", NOW + 3600)
     assert f"Saved the token to Firestore project fha-prod, {COLLECTION}/{YAHOO_TOKEN}" in out
     assert "FIRESTORE_PROJECT_ID must be fha-prod" in out
+    # production refreshes with Vercel's Yahoo credentials: they must be these
+    assert "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET" in out
     assert "Checked: league 465.l.8076" in out
     for secret in ("csecret-hidden", "acc-hidden", "ref-hidden"):
         assert secret not in out + err

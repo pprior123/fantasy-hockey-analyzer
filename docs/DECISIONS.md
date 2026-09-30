@@ -2142,8 +2142,11 @@ Why:
   consent route. SPEC §10 M5 drops "production redirect URI added to the
   Yahoo app".
 - Yahoo's token refresh also sends the redirect URI. Production now uses
-  `YAHOO_REDIRECT_URI` when set, else the same default as the scripts, so
-  the two can't drift.
+  `YAHOO_REDIRECT_URI` when set, else the same default as the scripts.
+  Set it the same in both, or in neither. Nothing checks that Vercel's
+  Yahoo credentials match the `.env` ones consent used, so the script's
+  closing note names them: a mismatch would show only at the first
+  refresh, an hour later (review round 2).
 - **A fresh grant, not the dev token.** Production gets its own consent, so
   dev and production never share one refresh token. If Yahoo ever rotates
   or revokes one, the other isn't affected. (If a second grant ends the

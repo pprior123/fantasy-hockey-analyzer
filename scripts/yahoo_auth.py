@@ -83,7 +83,9 @@ def repository_target(repo: Repository, project: str) -> Target:
     return Target(
         RepositoryTokenStore(repo),
         f"Firestore project {project}, {COLLECTION}/{YAHOO_TOKEN}",
-        f"Vercel's FIRESTORE_PROJECT_ID must be {project}.",
+        f"Vercel's FIRESTORE_PROJECT_ID must be {project},\n"
+        "and its YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET (and YAHOO_REDIRECT_URI, if set)\n"
+        "the ones used here: the app refreshes this token with them.",
         f"saved in Firestore project {project}, and the app will use it once access is on",
         # diagnose reads the dev token only, but access is per app, so it answers for both
         "Yahoo approves the app, not each token: when this passes on the dev token,\n"
@@ -117,7 +119,11 @@ def firestore_target(key_path: Path, http: httpx.AsyncClient, project: str | Non
 
 
 def target_from_args(argv: Sequence[str], http: httpx.AsyncClient) -> Target:
-    parser = argparse.ArgumentParser(prog="python -m scripts.yahoo_auth", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="python -m scripts.yahoo_auth",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,  # keep the numbered steps
+    )
     parser.add_argument(
         "--firestore",
         type=Path,

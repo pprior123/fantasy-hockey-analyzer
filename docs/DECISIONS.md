@@ -2104,7 +2104,7 @@ depend on Yahoo, and doing it now shortens the path once access arrives).
 - **Static files stay in the function** (`[tool.vercel.fastapi.static]
   cdn = false`). Vercel would otherwise promote `StaticFiles` mounts to its
   CDN, where the app's middleware and headers don't run. The files are
-  small, and the browser caches them.
+  small, and `StaticFiles` answers repeat requests with ETags (304).
 - **`.vercelignore` is an allowlist**: `app.py`, `src/`, `pyproject.toml`,
   `uv.lock`, `.python-version`, `vercel.json`, and `README.md` (the
   pyproject's readme, which `uv_build` reads). A CLI deploy from the

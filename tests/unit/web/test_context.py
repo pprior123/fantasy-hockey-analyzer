@@ -197,3 +197,38 @@ def test_the_lazy_app_builds_once_from_the_environment(monkeypatch: pytest.Monke
         assert login.status_code == 303
         assert client.get("/players").status_code == 200
     assert built == [1]
+
+
+@pytest.mark.parametrize(
+    ("extra", "redirect"),
+    [
+        ({}, "https://localhost:8000"),
+        ({"YAHOO_REDIRECT_URI": ""}, "https://localhost:8000"),
+        ({"YAHOO_REDIRECT_URI": "https://example.test:9"}, "https://example.test:9"),
+    ],
+)
+def test_production_refreshes_with_the_consent_redirect_uri(
+    monkeypatch: pytest.MonkeyPatch, extra: dict[str, str], redirect: str
+) -> None:
+    """Yahoo's token refresh sends the redirect URI, so production must send the one
+    consent used: the scripts' ``YAHOO_REDIRECT_URI``, else the same default."""
+    from fha.sources.yahoo import client
+
+    seen: list[Any] = []
+    real = client.YahooClient
+
+    def spy(http: httpx.AsyncClient, creds: Any, *args: Any, **kw: Any) -> Any:
+        seen.append(creds)
+        return real(http, creds, *args, **kw)
+
+    monkeypatch.setattr(client, "YahooClient", spy)
+    env = {
+        **BASE,
+        "YAHOO_CLIENT_ID": "id",
+        "YAHOO_CLIENT_SECRET": "sec",
+        "FIRESTORE_PROJECT_ID": "fha-prod",
+        "FIRESTORE_SERVICE_ACCOUNT_JSON": KEY,
+        **extra,
+    }
+    production_services(env, HTTP, Settings.from_env(env))
+    assert [c.redirect_uri for c in seen] == [redirect]

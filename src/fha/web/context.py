@@ -159,7 +159,7 @@ def production_services(
     environ: Mapping[str, str], http: httpx.AsyncClient, settings: Settings
 ) -> Services:
     from fha.sources.yahoo.client import YahooClient
-    from fha.sources.yahoo.oauth import Credentials
+    from fha.sources.yahoo.oauth import DEFAULT_REDIRECT_URI, Credentials
     from fha.sources.yahoo.source import HttpYahooSource
     from fha.storage.factory import repository_from_env
     from fha.storage.repository import RepositoryError
@@ -170,7 +170,9 @@ def production_services(
     except RepositoryError as e:
         raise ConfigError(str(e)) from None
     clock = SystemClock()
-    creds = Credentials(environ["YAHOO_CLIENT_ID"], environ["YAHOO_CLIENT_SECRET"])
+    # Yahoo's refresh sends the redirect URI too: the one consent used (scripts.yahoo_auth).
+    redirect = environ.get("YAHOO_REDIRECT_URI") or DEFAULT_REDIRECT_URI
+    creds = Credentials(environ["YAHOO_CLIENT_ID"], environ["YAHOO_CLIENT_SECRET"], redirect)
     client = YahooClient(http, creds, RepositoryTokenStore(repo), clock=clock.now)
     refresh = RefreshService(HttpYahooSource(client), repo, clock, ttl_seconds=settings.ttl_seconds)
     return Services(repo, refresh, clock, league_sheet_from_env(environ, http))

@@ -1,0 +1,12 @@
+# An allowlist: upload only what the build needs. A CLI deploy from this
+# checkout must never upload .env, private/ (tokens, keys, the league sheet,
+# salary CSVs) or anything else that isn't the app. A Git deploy has none of
+# those (they're gitignored), but it also skips tests, docs and scripts this way.
+/*
+!/app.py
+!/src
+!/pyproject.toml
+!/uv.lock
+!/.python-version
+!/vercel.json
+!/README.md

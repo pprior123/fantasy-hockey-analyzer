@@ -38,6 +38,14 @@ dev = [
     "uvicorn>=0.54.0",
 ]
 
+# ---------------------------------------------------------------- vercel
+# Every request goes to the function, static files too. Vercel would otherwise
+# promote StaticFiles mounts to its CDN, where the app's middleware and headers
+# don't run; and the exported app is the lazy wrapper (fha.web.main.LazyApp),
+# not a FastAPI instance its build step can inspect.
+[tool.vercel.fastapi.static]
+cdn = false
+
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
 line-length = 100

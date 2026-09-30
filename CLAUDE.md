@@ -36,6 +36,8 @@ FHA_DEMO=1 FHA_INSECURE_COOKIES=1 APP_PASSWORD=dev \
   uv run uvicorn fha.web.main:app --reload
                                 # the app on http://127.0.0.1:8000 with the demo league
 uv run python -m scripts.make_icons   # redraw the PWA icons
+uv run --env-file .env python -m scripts.yahoo_auth --firestore private/<key>.json
+                                # OWNER ONLY: Yahoo consent, token saved to production Firestore
 ```
 
 ## How to work
@@ -118,4 +120,5 @@ independent workstreams (Yahoo source, storage/salaries, web) that
 parallelize well.
 
 M2–M4 are merged. M4.5 (Yahoo verification) waits on Yahoo API access; see
-SPEC §10.
+SPEC §10. M5 (deploy) setup started before it, by the owner's decision
+(2026-09-30): the Vercel entry is `app.py` (`vercel.json`, `.vercelignore`).

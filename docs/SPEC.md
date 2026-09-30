@@ -210,6 +210,12 @@ Yahoo requires an HTTPS redirect URI; the app registers
    `Repository` (Firestore in prod; in dev, a file under the gitignored
    `private/` directory).
 
+Production uses the same flow and redirect URI, run from the owner's machine:
+`scripts.yahoo_auth --firestore private/<key>.json` saves the token to the
+Firestore project of that service-account key, where the app reads it. The
+Yahoo app needs no production redirect URI, and the app has no consent
+route (DECISIONS, "M5: Vercel config and production token seeding").
+
 Agents must not attempt this step. It requires the owner.
 
 ## 5. Metric engine (must match the spreadsheet)
@@ -655,9 +661,12 @@ access (DECISIONS, "Yahoo API access: pending approval").
 
 ### M5 — Deploy
 - Vercel project, env vars, Firestore project with deny-all rules, service
-  account, production redirect URI added to the Yahoo app. Owner shares the
-  league sheet view-only with the service account; `LEAGUE_SHEET_ID` set.
-- Run consent in production; first real refresh.
+  account. Owner shares the league sheet view-only with the service
+  account; `LEAGUE_SHEET_ID` set.
+- The owner runs consent into production Firestore
+  (`scripts.yahoo_auth --firestore`, §4); first real refresh.
+- The setup can start before M4.5 is done; the first real refresh and
+  acceptance wait on it (DECISIONS, "M5 starts before Yahoo access").
 - **Accept:** owner opens the app on their phone, logs in, sees their roster
   with TTLTST and AAV and next week's matchup; refresh completes within the
   time limit. **This is the Phase 1 target: a running app.**

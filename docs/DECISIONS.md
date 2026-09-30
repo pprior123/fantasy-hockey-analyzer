@@ -2056,3 +2056,97 @@ players:
   events build the services on the first request, synchronously, so a
   lifespan-only seed could be skipped. `page_data` is on every rated
   screen and Admin.
+
+## 2026-09-30 — M5 starts before Yahoo access (owner's decision)
+**What.** The M5 cloud setup (issue #12) starts now, before M4.5 (#9) is
+done. The owner had agreed on 2026-09-27 to hold M5 until Yahoo access
+worked. On 2026-09-30 they chose to start anyway. Yahoo still answers 403
+"This application is not authorized" on all eight diagnose endpoints
+(checked 2026-09-27 to 09-30), pending its approval of the Client ID.
+
+**What can be done now.** Everything but the first real refresh:
+- the owner's console steps: the Vercel project and its env vars, the
+  Firestore project with deny-all rules, the service account, and the
+  league sheet shared with it;
+- the dev work: the Vercel config and a way to seed the production token
+  (next entry);
+- production consent itself, since consent and token refresh already work
+  (only fantasy data is refused).
+
+Until Yahoo access is on, production shows the "no Yahoo data" page, and
+Admin still works, so the live sheet read (`LEAGUE_SHEET_ID` and the
+service-account share) can be checked in production early. The free-agent
+CSV import matches against the Yahoo pool, so it waits.
+
+**What doesn't change.** M4.5 still comes before M5's acceptance: the
+first real refresh, the refresh time against the limit, and the owner's
+phone check all need real Yahoo data.
+
+**Alternatives.** Keep waiting (rejected by the owner: the setup doesn't
+depend on Yahoo, and doing it now shortens the path once access arrives).
+
+## 2026-09-30 — M5: Vercel config and production token seeding
+**Vercel config.**
+- **Entry: a root `app.py`** that re-exports `fha.web.main.app`. It's one
+  of Vercel's zero-config Python entrypoints. `[tool.vercel] entrypoint`
+  resolves a module path from the project root (`fha/web/main.py`), which
+  the `src/` layout doesn't have. Vercel's runtime (`vercel_runtime`)
+  treats an object with an async `__call__` as ASGI, so the lazy app works
+  as is, and it runs the lifespan ("auto"). Importing `app.py` reads no
+  environment; the tests check it loads no heavy module (SPEC §2).
+- Vercel installs with `uv sync --no-dev --no-editable` from `uv.lock`, so
+  the dev group (uvicorn, pytest, mutmut, ...) never reaches the function.
+  Python comes from `.python-version` (3.12).
+- **`vercel.json`**: one region (`iad1`), and `maxDuration` 60 s for the one
+  function. Hobby with Fluid compute allows up to 300 s. 60 s leaves far
+  more than the 8 s refresh target (SPEC §2) while capping a runaway
+  refresh.
+- **Static files stay in the function** (`[tool.vercel.fastapi.static]
+  cdn = false`). Vercel would otherwise promote `StaticFiles` mounts to its
+  CDN, where the app's middleware and headers don't run. The files are
+  small, and the browser caches them.
+- **`.vercelignore` is an allowlist**: `app.py`, `src/`, `pyproject.toml`,
+  `uv.lock`, `.python-version`, `vercel.json`, and `README.md` (the
+  pyproject's readme, which `uv_build` reads). A CLI deploy from the
+  checkout therefore can't upload `.env`, `private/` (tokens, keys, the
+  league sheet, salary CSVs), tests or scripts. A Git deploy has none of
+  the private files anyway (they're gitignored). A test checks the list.
+
+**Production token: consent straight into Firestore.** `scripts.yahoo_auth
+--firestore private/<key>.json` runs the same paste-back consent as dev and
+saves the token through `RepositoryTokenStore` to the key's project
+(`--project` overrides it), document `secrets/yahoo_token`. The owner runs
+it, from their machine. It:
+- reads the store first, so a bad key or missing access fails before
+  consent;
+- says whether it saved a new token or replaced one;
+- reads the token back after saving;
+- then runs the same league check as dev (on a 403, it says the token is
+  saved in Firestore).
+
+Only the key and the project reach `repository_from_env`, so a dev
+`FHA_LOCAL_REPOSITORY` in `.env` can't pick the store.
+
+Why:
+- **No production redirect URI.** The redirect only carries the code back
+  to the paste-back prompt, so `https://localhost:8000` serves production
+  too. The Yahoo app keeps its one redirect URI, and the app has no public
+  consent route. SPEC §10 M5 drops "production redirect URI added to the
+  Yahoo app".
+- Yahoo's token refresh also sends the redirect URI. Production now uses
+  `YAHOO_REDIRECT_URI` when set, else the same default as the scripts, so
+  the two can't drift.
+- **A fresh grant, not the dev token.** Production gets its own consent, so
+  dev and production never share one refresh token. If Yahoo ever rotates
+  or revokes one, the other isn't affected. (If a second grant ends the
+  dev one, the owner re-runs dev consent.)
+- It can be done now: consent and token refresh work despite the 403.
+
+**Alternatives.**
+- **A web consent route** (`/auth/callback` on the deployed app).
+  Rejected: a new public route, a production redirect URI in the Yahoo app,
+  and `state` kept across requests, all for a step the owner does once.
+- **Copy `private/yahoo_token.json` into Firestore.** Rejected: dev and
+  production would share one grant.
+- **A separate `scripts/seed_yahoo_token.py`.** Rejected: it would repeat
+  the consent flow; one script with a `--firestore` switch keeps one path.

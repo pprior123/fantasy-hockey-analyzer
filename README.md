@@ -18,8 +18,10 @@ hand.
 
 ## Status
 
-The metric engine (M1) is built and matches the spreadsheet it replaces.
-The Yahoo source (M2) is next.
+The metric engine (M1), the Yahoo source (M2), storage and salaries (M3) and
+the web UI (M4) are built; M2–M4 are accepted on synthetic data. Verification
+against real Yahoo data (M4.5) waits on Yahoo API access. Deployment to Vercel
+and Firestore (M5) is being set up.
 
 ## Development
 

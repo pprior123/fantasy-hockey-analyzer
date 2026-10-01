@@ -343,6 +343,8 @@ async def test_a_batch_get_error_is_a_one_item_list_and_its_reason_is_read() -> 
         "PERMISSION_DENIED projects/secret-project",  # a code word, then more
         "Permission_denied",
         "A" * 41,
+        "PERMISSION DENIED",
+        "PERMISSION_DENIED2",
     ],
 )
 async def test_a_status_that_is_not_a_code_word_never_reaches_the_detail(status: str) -> None:

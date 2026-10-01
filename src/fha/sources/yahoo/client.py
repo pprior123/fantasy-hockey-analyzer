@@ -151,9 +151,10 @@ class YahooClient:
         return renewed
 
     async def _save(self, token: Token) -> None:
-        """Save a renewed token. A failure is logged by type and retried on a later
-        request (``SAVE_RETRY_SECONDS``), never raised: the token in memory works, and
-        failing the fetch would only cost a stale page (M4R13A-1/A-2)."""
+        """Save a renewed token. A failure is logged (its type, or a RepositoryError's
+        ``summary``) and retried on a later request (``SAVE_RETRY_SECONDS``), never
+        raised: the token in memory works, and failing the fetch would only cost a
+        stale page (M4R13A-1/A-2)."""
         try:
             await self._store.save(token)
         except Exception as error:  # the store's errors (RepositoryError, OSError)

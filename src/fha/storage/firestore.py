@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote
@@ -158,8 +159,8 @@ class FirestoreRepository:
     ) -> httpx.Response:
         try:
             token = await self._token()
-        except GoogleAuthError as e:  # its messages carry no key or token
-            raise RepositoryError(f"Firestore {action}: {e}") from None
+        except GoogleAuthError as e:  # its messages carry no key, token or project
+            raise RepositoryError(f"Firestore {action}: {e}", detail=str(e)) from None
         headers = {"Authorization": f"Bearer {token}"}
         query = {**(params or {}), "prettyPrint": "false"}  # compact JSON: less egress
         try:
@@ -167,23 +168,43 @@ class FirestoreRepository:
                 method, url, params=query, json=json_body, headers=headers
             )
         except httpx.HTTPError as e:
-            raise RepositoryError(f"Firestore {action} failed: {type(e).__name__}") from None
+            kind = type(e).__name__
+            raise RepositoryError(f"Firestore {action} failed: {kind}", detail=kind) from None
         if response.status_code != httpx.codes.OK:
+            status, message = _error(response)
+            parts = [p for p in (status, message) if p]
+            reason = f" ({': '.join(parts)})" if parts else ""
+            code = f"HTTP {response.status_code}"
             raise RepositoryError(
-                f"Firestore {action} {what}: HTTP {response.status_code}{_reason(response)}"
+                f"Firestore {action} {what}: {code}{reason}",
+                detail=f"{code} {status}" if status else code,
             )
         return response
 
 
-def _reason(response: httpx.Response) -> str:
+def _error(response: httpx.Response) -> tuple[str, str]:
+    """Google's error ``status`` (e.g. PERMISSION_DENIED) and ``message``, or "".
+
+    The body is ``{"error": {...}}``, or for ``:batchGet`` (a streaming
+    method) a one-item list of that. The status is a fixed code word, safe to
+    log; the message can name the project."""
     try:
-        error = response.json().get("error")
-    except (ValueError, AttributeError):
-        return ""
+        body: Any = response.json()
+    except ValueError:
+        return "", ""
+    if isinstance(body, list) and len(body) == 1:
+        body = body[0]
+    error = body.get("error") if isinstance(body, dict) else None
     if not isinstance(error, dict):
-        return ""
-    parts = [str(error[k]) for k in ("status", "message") if isinstance(error.get(k), str)]
-    return f" ({': '.join(parts)})" if parts else ""
+        return "", ""
+    status, message = error.get("status"), error.get("message")
+    return (
+        status if isinstance(status, str) and _CODE.fullmatch(status) else "",
+        message if isinstance(message, str) else "",
+    )
+
+
+_CODE = re.compile(r"[A-Z_]{1,40}")  # google.rpc.Code names: PERMISSION_DENIED, NOT_FOUND
 
 
 def _json(response: httpx.Response) -> dict[str, Any]:

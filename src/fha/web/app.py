@@ -357,7 +357,8 @@ def create_app(context: AppContext) -> FastAPI:
         )
 
     async def store_down(request: Request, exc: Exception) -> HTMLResponse:
-        log.error("storage failed (%s) on %s", type(exc).__name__, request.url.path)
+        summary = exc.summary if isinstance(exc, RepositoryError) else type(exc).__name__
+        log.error("storage failed (%s) on %s", summary, request.url.path)
         return render(
             request,
             "error.html",

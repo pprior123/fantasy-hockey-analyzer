@@ -34,7 +34,21 @@ RESERVED_FIELD = re.compile(r"__.*")
 
 
 class RepositoryError(Exception):
-    """A backend failed, or refused a document or ID."""
+    """A backend failed, or refused a document or ID.
+
+    The message can name the Firestore project or a document, so logs get
+    ``summary`` instead: the type, plus ``detail`` when the backend gave one (an
+    HTTP status, Google's status code, a transport error's type), which never
+    names the project, a document, a key or a token."""
+
+    def __init__(self, message: str, *, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
+
+    @property
+    def summary(self) -> str:
+        name = type(self).__name__
+        return f"{name}: {self.detail}" if self.detail else name
 
 
 class Repository(Protocol):

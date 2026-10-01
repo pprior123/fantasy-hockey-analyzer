@@ -906,7 +906,7 @@ class Refusing(InMemoryRepository):
 
     async def put(self, collection: str, doc_id: str, doc: Any) -> None:
         if self.refuse:
-            raise RepositoryError("Firestore answered HTTP 503")
+            raise RepositoryError("Firestore answered HTTP 503", detail="HTTP 503 UNAVAILABLE")
         await super().put(collection, doc_id, doc)
 
     async def replace_all(self, collection: str, docs: Any) -> None:
@@ -985,7 +985,8 @@ def test_a_store_error_never_puts_its_text_in_the_redirect(
     )
     assert "Firestore" not in flash_of(response)["text"]
     assert "Firestore" not in caplog.text
-    assert "storage refused an Admin change (RepositoryError)" in caplog.text
+    expected = "storage refused an Admin change (RepositoryError: HTTP 503 UNAVAILABLE)"
+    assert expected in caplog.text
 
 
 def test_no_alias_is_saved_when_the_names_already_match() -> None:

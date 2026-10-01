@@ -314,6 +314,34 @@ async def test_an_http_error_names_the_status_and_reason_but_never_the_token() -
     message = str(caught.value)
     assert message == "Firestore get things/a: HTTP 403 (PERMISSION_DENIED: Missing perms.)"
     assert TOKEN not in message
+    assert caught.value.detail == "HTTP 403 PERMISSION_DENIED"  # for logs: no message
+
+
+async def test_a_batch_get_error_is_a_one_item_list_and_its_reason_is_read() -> None:
+    """Live 2026-10-01: a 403 on :batchGet came back as [{"error": ...}], and the
+    reason was lost, leaving a bare "HTTP 403"."""
+    error = {
+        "code": 403,
+        "status": "PERMISSION_DENIED",
+        "message": "Missing or insufficient permissions on projects/secret-project.",
+    }
+    server = Server(httpx.Response(403, json=[{"error": error}]))
+    with pytest.raises(RepositoryError) as caught:
+        await repo(server).get("things", "a")
+    assert str(caught.value) == (
+        "Firestore get things/a: HTTP 403 (PERMISSION_DENIED: "
+        "Missing or insufficient permissions on projects/secret-project.)"
+    )
+    assert caught.value.detail == "HTTP 403 PERMISSION_DENIED"
+    assert caught.value.summary == "RepositoryError: HTTP 403 PERMISSION_DENIED"
+
+
+async def test_a_status_that_is_not_a_code_word_never_reaches_the_detail() -> None:
+    error = {"error": {"status": "denied for projects/secret-project", "message": "No."}}
+    with pytest.raises(RepositoryError) as caught:
+        await repo(Server(httpx.Response(403, json=error))).get("things", "a")
+    assert str(caught.value) == "Firestore get things/a: HTTP 403 (No.)"
+    assert caught.value.detail == "HTTP 403"
 
 
 @pytest.mark.parametrize(
@@ -321,21 +349,25 @@ async def test_an_http_error_names_the_status_and_reason_but_never_the_token() -
     [
         httpx.Response(500, text="<html>oops</html>"),
         httpx.Response(500, json=["x"]),
+        httpx.Response(500, json=[{"error": {"code": 500}}, {"error": {"code": 500}}]),
         httpx.Response(500, json={"error": "flat"}),
         httpx.Response(500, json={"error": {"code": 500}}),
+        httpx.Response(500, json={"error": {"status": 7, "message": None}}),
     ],
 )
 async def test_an_http_error_without_a_readable_reason(response: httpx.Response) -> None:
-    with pytest.raises(RepositoryError, match=r"HTTP 500$"):
+    with pytest.raises(RepositoryError, match=r"HTTP 500$") as caught:
         await repo(Server(response)).put("things", "a", {})
+    assert caught.value.detail == "HTTP 500"
 
 
 async def test_a_transport_failure_is_a_repository_error() -> None:
     def offline(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no route to firestore.googleapis.com")
 
-    with pytest.raises(RepositoryError, match=r"^Firestore get failed: ConnectError$"):
+    with pytest.raises(RepositoryError, match=r"^Firestore get failed: ConnectError$") as caught:
         await repo(Server(offline)).get("things", "a")
+    assert caught.value.detail == "ConnectError"
 
 
 @pytest.mark.parametrize(
@@ -461,6 +493,9 @@ async def test_a_token_failure_is_a_repository_error() -> None:
         raise GoogleAuthError("token request refused: HTTP 400")
 
     server = Server()
-    with pytest.raises(RepositoryError, match=r"^Firestore get: token request refused: HTTP 400$"):
+    with pytest.raises(
+        RepositoryError, match=r"^Firestore get: token request refused: HTTP 400$"
+    ) as caught:
         await FirestoreRepository(mock_http(server), "p", broken).get("things", "a")
     assert server.requests == []
+    assert caught.value.detail == "token request refused: HTTP 400"  # it names no project

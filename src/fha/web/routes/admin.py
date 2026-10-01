@@ -147,9 +147,9 @@ STORE_REFUSED = "the app's storage refused the change (try again in a minute)"
 def _why(error: Exception) -> str:
     """An error for the flash, which travels in the redirect URL (so browser history
     and request logs). A store error's own text can name the Firestore project, so
-    it is replaced, and only its type is logged."""
+    it is replaced, and only its ``summary`` is logged."""
     if isinstance(error, RepositoryError):
-        log.warning("storage refused an Admin change (%s)", type(error).__name__)
+        log.warning("storage refused an Admin change (%s)", error.summary)
         return STORE_REFUSED
     return str(error)
 

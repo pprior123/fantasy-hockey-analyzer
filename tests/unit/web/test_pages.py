@@ -331,6 +331,31 @@ def test_a_storage_outage_is_a_503_page_without_details(caplog: pytest.LogCaptur
     assert "secret-project" not in caplog.text
 
 
+def test_a_storage_outage_logs_its_safe_detail(caplog: pytest.LogCaptureFixture) -> None:
+    """Live 2026-10-01: production logged only "RepositoryError", hiding a 403."""
+
+    class Denied(InMemoryRepository):
+        async def get(self, collection: str, doc_id: str) -> Any:
+            raise RepositoryError(
+                "Firestore get x: HTTP 403 (PERMISSION_DENIED: on projects/secret-project)",
+                detail="HTTP 403 PERMISSION_DENIED",
+            )
+
+    services = make_services()
+    repo = Denied()
+    services = replace(
+        services,
+        repo=repo,
+        refresh=RefreshService(FakeYahooSource(demo_snapshot()), repo, services.clock),
+    )
+    response = logged_in(make_app(services)).get("/players")
+    assert response.status_code == 503
+    assert "PERMISSION_DENIED" not in response.text  # the page stays generic
+    expected = "storage failed (RepositoryError: HTTP 403 PERMISSION_DENIED) on /players"
+    assert expected in caplog.text
+    assert "secret-project" not in caplog.text
+
+
 def test_damaged_rating_settings_point_every_rated_screen_at_admin() -> None:
     """M4R2A-1: every rated screen was a bare 500."""
     import asyncio

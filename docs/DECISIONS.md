@@ -2187,3 +2187,27 @@ flash stay generic.
 - **Log the whole message.** Rejected: it can name the project (M4 decision).
 - **A diagnostics route in Admin.** Rejected: a new surface, for what one
   log line now shows.
+
+## 2026-10-01 — The demo installs as "FHA Demo"
+
+The owner installed both Vercel projects, production and `fha-demo`, on an
+Android phone, and both icons were named "FHA". Android's Chrome takes the
+installed name from the manifest, and the owner can't edit it.
+
+**What:** with `FHA_DEMO=1`, these say **FHA Demo**:
+- the manifest's `name` and `short_name`;
+- `apple-mobile-web-app-title`;
+- the `<title>` suffix.
+
+Production keeps "Fantasy Hockey Analyzer" and "FHA". So does the
+not-configured error app, which has no context. `APP_NAME` in `web/app.py`
+holds both pairs.
+
+A phone keeps the name from install time, so an existing demo icon must be
+reinstalled to pick up the new name.
+
+**Alternatives.**
+- **An `APP_NAME` env var.** Rejected: one more variable to set, for a choice
+  that `FHA_DEMO` already makes.
+- **A separate demo icon.** Not now. The name is enough to tell the two
+  apps apart.

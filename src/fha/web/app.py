@@ -46,9 +46,7 @@ THEME = "#0b3d91"
 # The name a phone gives the installed app; the demo's differs, so the two
 # home-screen icons can be told apart (each is its own Vercel project).
 APP_NAME = {False: ("Fantasy Hockey Analyzer", "FHA"), True: ("FHA Demo", "FHA Demo")}
-MANIFEST = {
-    "name": APP_NAME[False][0],
-    "short_name": APP_NAME[False][1],
+MANIFEST = {  # create_app adds name and short_name
     "start_url": "/players",
     "scope": "/",
     "display": "standalone",

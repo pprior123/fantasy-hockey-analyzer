@@ -160,6 +160,9 @@ async def test_a_bad_private_key_is_refused_without_echoing_it() -> None:
     ("status", "body", "message"),
     [
         (400, {"error": "invalid_grant", "error_description": "x"}, r"HTTP 400 \(invalid_grant\)$"),
+        (400, {"error": "invalid_grant for fha@p.iam"}, r"refused the token request: HTTP 400$"),
+        (400, {"error": "Invalid_grant"}, r"refused the token request: HTTP 400$"),
+        (400, {"error": "x" * 41}, r"refused the token request: HTTP 400$"),
         (500, "<html>down</html>", "HTTP 500$"),
         (200, {"expires_in": 3600}, "no access_token"),
         (200, {"access_token": "", "expires_in": 3600}, "no access_token"),

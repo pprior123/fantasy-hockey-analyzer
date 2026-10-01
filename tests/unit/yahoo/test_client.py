@@ -19,6 +19,7 @@ from fha.sources.yahoo.client import (
     make_http_client,
 )
 from fha.sources.yahoo.oauth import Credentials, Token, YahooAuthError
+from fha.storage.repository import RepositoryError
 
 CREDS = Credentials("cid", "csecret")
 NOW = 1_000_000.0
@@ -274,6 +275,25 @@ async def test_a_failed_token_save_doesnt_fail_the_request_and_is_retried(
     await yahoo.get("x")
     assert store.attempts == 2  # saved: no more retries
     assert fake.refreshes == 1
+
+
+async def test_a_failed_token_save_logs_the_store_error_s_safe_detail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PR #17 review: a Firestore 403 here was logged as a bare RepositoryError."""
+
+    class Denied(MemoryStore):
+        async def save(self, token: Token) -> None:
+            raise RepositoryError(
+                "Firestore put secrets/yahoo_token: HTTP 403 (on projects/secret-project)",
+                detail="HTTP 403 PERMISSION_DENIED",
+            )
+
+    store = Denied(Token("access-1", "refresh-1", NOW - 1))
+    http = httpx.AsyncClient(transport=httpx.MockTransport(FakeYahoo()))
+    assert await YahooClient(http, CREDS, store, clock=lambda: NOW).get("x") == {"ok": 1}
+    assert "Yahoo token not saved (RepositoryError: HTTP 403 PERMISSION_DENIED)" in caplog.text
+    assert "secret-project" not in caplog.text
 
 
 async def test_401_after_a_refresh_is_an_auth_error() -> None:

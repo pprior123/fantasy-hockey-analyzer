@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -25,6 +26,7 @@ DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 - a URL
 JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 LIFETIME = 3600  # seconds, Google's maximum for a self-signed assertion
 LEEWAY = 60  # refresh this long before expiry
+OAUTH_CODE = re.compile(r"[a-z_]{1,40}")  # RFC 6749 §5.2 error codes: invalid_grant
 EMULATOR_TOKEN = "owner"  # noqa: S105 - the emulators' documented fake credential
 
 
@@ -108,7 +110,9 @@ class ServiceAccountTokens:
             body = None
         if response.status_code != httpx.codes.OK:
             detail = body.get("error") if isinstance(body, dict) else None
-            reason = f" ({detail})" if isinstance(detail, str) else ""
+            # an OAuth error code (invalid_grant) only: storage logs this message
+            ok = isinstance(detail, str) and OAUTH_CODE.fullmatch(detail)
+            reason = f" ({detail})" if ok else ""
             raise GoogleAuthError(
                 f"Google refused the token request: HTTP {response.status_code}{reason}"
             )

@@ -157,7 +157,10 @@ class YahooClient:
         try:
             await self._store.save(token)
         except Exception as error:  # the store's errors (RepositoryError, OSError)
-            log.warning("Yahoo token not saved (%s); retrying later", type(error).__name__)
+            # A RepositoryError's ``summary`` adds a log-safe detail (HTTP 403 PERMISSION_DENIED)
+            summary = getattr(error, "summary", None)
+            why = summary if isinstance(summary, str) else type(error).__name__
+            log.warning("Yahoo token not saved (%s); retrying later", why)
             self._unsaved_at = self._clock()
         else:
             self._unsaved_at = None

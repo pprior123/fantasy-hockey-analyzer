@@ -2161,3 +2161,29 @@ Why:
   production would share one grant.
 - **A separate `scripts/seed_yahoo_token.py`.** Rejected: it would repeat
   the consent flow; one script with a `--firestore` switch keeps one path.
+
+## 2026-10-01 — Storage errors log a safe detail
+
+During the M5 deploy, production answered "Storage unavailable" and logged only
+`storage failed (RepositoryError) on /admin`. The cause was a Firestore 403:
+the project IAM role was on a different service account from the key's. The
+logs couldn't show the cause, because only the type was logged, on purpose:
+Firestore's message can name the project (M4 review).
+
+**What:** `RepositoryError` carries an optional `detail` for logs. It holds the
+HTTP status and Google's status code word (`HTTP 403 PERMISSION_DENIED`), a
+transport error's type (`ConnectError`), or a `GoogleAuthError` message (those
+never carry a key, a token or the project). `summary` is the type plus the
+detail. The 503 handler and Admin's flash log the summary. The page and the
+flash stay generic.
+
+- Only a status matching `[A-Z_]{1,40}` reaches the detail. Firestore's
+  `message` never does.
+- A `:batchGet` error is a one-item list, `[{"error": {...}}]`. Its reason was
+  being dropped, which left the token script with a bare "HTTP 403". Both
+  shapes are read now.
+
+**Alternatives.**
+- **Log the whole message.** Rejected: it can name the project (M4 decision).
+- **A diagnostics route in Admin.** Rejected: a new surface, for what one
+  log line now shows.

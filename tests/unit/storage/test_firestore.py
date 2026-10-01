@@ -336,8 +336,17 @@ async def test_a_batch_get_error_is_a_one_item_list_and_its_reason_is_read() -> 
     assert caught.value.summary == "RepositoryError: HTTP 403 PERMISSION_DENIED"
 
 
-async def test_a_status_that_is_not_a_code_word_never_reaches_the_detail() -> None:
-    error = {"error": {"status": "denied for projects/secret-project", "message": "No."}}
+@pytest.mark.parametrize(
+    "status",
+    [
+        "denied for projects/secret-project",
+        "PERMISSION_DENIED projects/secret-project",  # a code word, then more
+        "Permission_denied",
+        "A" * 41,
+    ],
+)
+async def test_a_status_that_is_not_a_code_word_never_reaches_the_detail(status: str) -> None:
+    error = {"error": {"status": status, "message": "No."}}
     with pytest.raises(RepositoryError) as caught:
         await repo(Server(httpx.Response(403, json=error))).get("things", "a")
     assert str(caught.value) == "Firestore get things/a: HTTP 403 (No.)"
@@ -349,7 +358,7 @@ async def test_a_status_that_is_not_a_code_word_never_reaches_the_detail() -> No
     [
         httpx.Response(500, text="<html>oops</html>"),
         httpx.Response(500, json=["x"]),
-        httpx.Response(500, json=[{"error": {"code": 500}}, {"error": {"code": 500}}]),
+        httpx.Response(500, json=[{"error": {"status": "INTERNAL"}}, {"error": {}}]),  # not one
         httpx.Response(500, json={"error": "flat"}),
         httpx.Response(500, json={"error": {"code": 500}}),
         httpx.Response(500, json={"error": {"status": 7, "message": None}}),

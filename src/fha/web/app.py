@@ -43,9 +43,12 @@ NAV = (
 )
 PUBLIC = ("/login", "/manifest.webmanifest")
 THEME = "#0b3d91"
+# The name a phone gives the installed app; the demo's differs, so the two
+# home-screen icons can be told apart (each is its own Vercel project).
+APP_NAME = {False: ("Fantasy Hockey Analyzer", "FHA"), True: ("FHA Demo", "FHA Demo")}
 MANIFEST = {
-    "name": "Fantasy Hockey Analyzer",
-    "short_name": "FHA",
+    "name": APP_NAME[False][0],
+    "short_name": APP_NAME[False][1],
     "start_url": "/players",
     "scope": "/",
     "display": "standalone",
@@ -83,8 +86,10 @@ def render(
 ) -> HTMLResponse:
     """A page in the base layout. ``values`` may set ``active`` (a nav key),
     ``title``, ``season_label`` and ``refreshed_at`` (text for the header)."""
+    context: AppContext | None = getattr(request.app.state, "context", None)  # none: error app
+    app_name = APP_NAME[context is not None and context.settings.demo][1]
     return templates.TemplateResponse(
-        request, template, {"nav": NAV, **values}, status_code=status_code
+        request, template, {"nav": NAV, "app_name": app_name, **values}, status_code=status_code
     )
 
 
@@ -261,9 +266,12 @@ def create_app(context: AppContext) -> FastAPI:
     async def home() -> RedirectResponse:
         return RedirectResponse("/players", status_code=303)
 
+    name, short_name = APP_NAME[context.settings.demo]
+    app_manifest = {**MANIFEST, "name": name, "short_name": short_name}
+
     @app.get("/manifest.webmanifest")
     async def manifest() -> Response:
-        return Response(json.dumps(MANIFEST), media_type="application/manifest+json")
+        return Response(json.dumps(app_manifest), media_type="application/manifest+json")
 
     from fastapi.exceptions import RequestValidationError
     from starlette.exceptions import HTTPException

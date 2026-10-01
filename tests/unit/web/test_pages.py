@@ -63,6 +63,28 @@ def test_the_manifest_is_public_json() -> None:
 
 
 @pytest.mark.parametrize(
+    ("demo", "name", "short_name"),
+    [(False, "Fantasy Hockey Analyzer", "FHA"), (True, "FHA Demo", "FHA Demo")],
+)
+def test_the_demo_installs_under_its_own_name(demo: bool, name: str, short_name: str) -> None:
+    """Owner, 2026-10-01: the production app and fha-demo both installed as "FHA"."""
+    client = logged_in(make_app(demo=demo))
+    manifest = json.loads(client.get("/manifest.webmanifest").text)
+    assert (manifest["name"], manifest["short_name"]) == (name, short_name)
+    html = client.get("/players").text
+    assert f'<meta name="apple-mobile-web-app-title" content="{short_name}">' in html
+    assert f" · {short_name}</title>" in html
+    login = TestClient(make_app(demo=demo)).get("/login").text
+    assert f" · {short_name}</title>" in login
+
+
+def test_the_not_configured_page_keeps_the_production_name() -> None:
+    response = TestClient(create_error_app("APP_PASSWORD is not set")).get("/players")
+    assert response.status_code == 500
+    assert "Not configured · FHA</title>" in response.text
+
+
+@pytest.mark.parametrize(
     ("path", "size"),
     [
         ("/static/icons/icon-192.png", 192),

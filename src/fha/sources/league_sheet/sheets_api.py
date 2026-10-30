@@ -23,7 +23,7 @@ from fha.sources.league_sheet.models import LeagueSheetError
 
 API = "https://sheets.googleapis.com/v4/spreadsheets/"
 FIELDS = (
-    "sheets(properties(title),"
+    "sheets(properties(title,sheetId),"
     "data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))"
 )
 SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -61,6 +61,9 @@ def grid_from_response(body: Any) -> Grid:
         title = _get(_get(sheet, "properties", f"sheet {i}"), "title", f"sheet {i}")
         if not isinstance(title, str):
             raise LeagueSheetError(f"sheet {i}: title is not text")
+        sheet_id = sheet["properties"].get("sheetId")
+        if sheet_id is not None:
+            sheet_id = _int(sheet_id, f"{title}: sheetId")
         cells: dict[tuple[int, int], Cell] = {}
         for block in _list(sheet.get("data"), f"{title}: data"):
             if not isinstance(block, dict):
@@ -77,7 +80,7 @@ def grid_from_response(body: Any) -> Grid:
                     cell = _cell(raw, f"{title}!{a1(r, c)}")
                     if cell.value is not None or cell.formula:
                         cells[(r, c)] = cell
-        tabs.append(Tab(title, cells))
+        tabs.append(Tab(title, cells, sheet_id))
     return Grid(tuple(tabs))
 
 

@@ -177,6 +177,10 @@ def test_a_formula_with_an_error_value_keeps_its_formula() -> None:
         ({"sheets": [{"properties": {}}]}, "sheet 0: missing 'title'"),
         ({"sheets": [{"properties": {"title": 5}}]}, "sheet 0: title is not text"),
         (
+            {"sheets": [{"properties": {"title": "T", "sheetId": "7"}}]},
+            "T: sheetId: expected a non-negative integer",
+        ),
+        (
             {"sheets": [{"properties": {"title": "T"}, "data": [{"startRow": -1}]}]},
             "T: startRow: expected a non-negative integer",
         ),
@@ -272,3 +276,14 @@ async def test_a_non_json_answer_is_an_error() -> None:
 def test_the_source_never_shows_the_sheet_id() -> None:
     sheet = SheetsApiLeagueSheet(http(Google()), SHEET_ID, token)
     assert SHEET_ID not in repr(sheet)
+
+
+def test_the_sheet_id_is_read_when_google_sends_one() -> None:
+    body = {
+        "sheets": [
+            {"properties": {"title": "A", "sheetId": 0}},
+            {"properties": {"title": "B", "sheetId": 1234567}},
+            {"properties": {"title": "C"}},
+        ]
+    }
+    assert [t.sheet_id for t in grid_from_response(body)] == [0, 1234567, None]

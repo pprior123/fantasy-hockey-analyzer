@@ -354,3 +354,34 @@ def test_a_stored_negative_amount_reads_back_as_unknown() -> None:
     assert back.tabs[0].rows[0].salary is None
     assert back.tabs[0].rows[1].salary == sheet().tabs[0].rows[1].salary  # others untouched
     assert decode_sheet(encode_sheet(sheet())) == sheet()
+
+
+def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> None:
+    tab = sheet().tabs[0]
+    full = replace(
+        tab,
+        sheet_id=7,
+        header_row=6,
+        name_column="C",
+        position_column="D",
+        team_column=None,
+        blank_rows=(9, 10),
+        empty_ir_rows=((12, "IR+"),),
+        rows=(replace(tab.rows[0], has_formula=True, negative_salary=True), *tab.rows[1:]),
+    )
+    stored = replace(sheet(), tabs=(full, *sheet().tabs[1:]))
+    assert decode_sheet(encode_sheet(stored)) == stored
+    old = encode_sheet(sheet())
+    for key in ("sheet_id", "header_row", "name_column", "position_column", "team_column"):
+        del old["tabs"][0][key]
+    del old["tabs"][0]["blank_rows"], old["tabs"][0]["empty_ir_rows"]
+    for row in old["tabs"][0]["rows"]:
+        del row["has_formula"], row["negative_salary"]
+    back = decode_sheet(old).tabs[0]
+    assert (back.sheet_id, back.name_column, back.blank_rows, back.empty_ir_rows) == (
+        None,
+        None,
+        (),
+        (),
+    )
+    assert not back.rows[0].has_formula

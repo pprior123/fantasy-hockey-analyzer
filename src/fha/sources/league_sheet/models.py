@@ -2,7 +2,9 @@
 
 Only cells from each tab's resolved payroll range, its header row, its IR
 rows and its CAP / PAYROLL cells reach these objects. Contact details and
-every other cell stay in the grid, which is discarded.
+every other cell stay in the grid, which is discarded. The fields a writer
+needs (SPEC §4a "Writing") are column letters, row numbers and flags, never
+another cell's contents.
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ class SheetRow:
     salary: int | None  # None: no numeric salary in the cell (e.g. "???")
     counted: bool
     ir: IRLabel | None = None
+    has_formula: bool = False  # the name, position, team or salary cell holds one
+    negative_salary: bool = False  # SUM adds a number that ``salary`` reads as None
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,14 @@ class ParsedTab:
     rows: tuple[SheetRow, ...] = ()
     payroll_formula: str | None = None  # the PAYROLL cell's formula, as written
     payroll_range: str | None = None  # the resolved range, e.g. "F7:F33"
+    # For the writer (SPEC §4a "Writing"); None / () in a sheet stored before them.
+    sheet_id: int | None = None  # Google's numeric tab ID (None from an .xlsx)
+    header_row: int | None = None
+    name_column: str | None = None
+    position_column: str | None = None  # None: the tab has no position header
+    team_column: str | None = None  # None: the tab has no NHL team header
+    blank_rows: tuple[int, ...] = ()  # in the range, all four cells blank, no formula
+    empty_ir_rows: tuple[tuple[int, IRLabel], ...] = ()  # IR rows likewise blank
 
     @property
     def counted(self) -> tuple[SheetRow, ...]:

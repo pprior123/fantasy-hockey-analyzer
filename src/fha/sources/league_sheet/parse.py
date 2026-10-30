@@ -13,7 +13,9 @@ For each tab with a ``PAYROLL`` label in its first rows:
 3. Rows below the range whose column A is exactly ``IR`` or ``IR+`` and that
    have a name are IR rows. Column A is the only cell read in any other row
    below the range: contact details sit there and must never be read into a
-   result (SPEC §4a).
+   result (SPEC §4a). An IR-labelled row with no name has its name, position,
+   team and salary cells checked for blankness only: if all are blank it is a
+   free IR row for the writer (SPEC §4a "Writing"), and nothing else is kept.
 4. The cap is the summary-tab cell that the team tabs' ``CAP`` formulas
    reference.
 
@@ -30,6 +32,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from itertools import islice
 
 from fha.sources.league_sheet.grid import Cell, Grid, Tab, a1, column_letters, parse_a1
 from fha.sources.league_sheet.models import IRLabel, ParsedSheet, ParsedTab, SheetRow
@@ -38,6 +41,7 @@ LABEL_ROWS = 10  # the PAYROLL and CAP labels sit in a tab's first rows
 LABEL_REACH = 3  # the formula is at most this many columns right of its label
 MAX_REFERENCES = 2  # PAYROLL may point at another cell, which may point at one more
 HEADER_ROWS_ABOVE = 3
+MAX_BLANK_ROWS = 40  # free rows kept for the writer; a range can be huge (A1:A999999)
 
 REF = r"\$?[A-Za-z]{1,3}\$?\d{1,12}"  # never int() of a huge string
 SUM_OF_RANGE = re.compile(rf"=\s*SUM\(\s*({REF})\s*:\s*({REF})\s*\)\s*", re.IGNORECASE)
@@ -107,8 +111,16 @@ def _parse_tab(tab: Tab, payroll_label: tuple[int, int], cap: int | None) -> Par
         rows = [*_counted_rows(tab, columns, c1, first, r2), *_ir_rows(tab, columns, c1, r2)]
     except UnrecognizedTabError as e:
         return ParsedTab(
-            tab.title, "unrecognized", str(e), None, cap, None, payroll_formula=formula
+            tab.title,
+            "unrecognized",
+            str(e),
+            None,
+            cap,
+            None,
+            payroll_formula=formula,
+            sheet_id=tab.sheet_id,
         )
+    targets = _targets(columns, c1)
     return ParsedTab(
         name=tab.title,
         status="ok",
@@ -119,6 +131,19 @@ def _parse_tab(tab: Tab, payroll_label: tuple[int, int], cap: int | None) -> Par
         rows=tuple(rows),
         payroll_formula=formula,
         payroll_range=f"{a1(r1, c1)}:{a1(r2, c2)}",
+        sheet_id=tab.sheet_id,
+        header_row=columns.header_row,
+        name_column=column_letters(columns.name),
+        position_column=column_letters(columns.position) if columns.position else None,
+        team_column=column_letters(columns.team) if columns.team else None,
+        blank_rows=tuple(
+            islice((r for r in range(first, r2 + 1) if _free(tab, r, targets)), MAX_BLANK_ROWS)
+        ),
+        empty_ir_rows=tuple(
+            (r, label)
+            for r in range(r2 + 1, tab.max_row + 1)
+            if (label := IR_LABELS.get(tab.cell(r, 1).text)) is not None and _free(tab, r, targets)
+        ),
     )
 
 
@@ -172,7 +197,7 @@ def _counted_rows(
         salary = tab.cell(r, salary_col)
         if not name and salary.is_blank:
             continue  # a blank row inside the range
-        rows.append(_row(tab, cols, r, name, salary, counted=True, ir=None))
+        rows.append(_row(tab, cols, salary_col, r, name, counted=True, ir=None))
     return rows
 
 
@@ -185,13 +210,22 @@ def _ir_rows(tab: Tab, cols: _Columns, salary_col: int, last: int) -> list[Sheet
         name = _text(tab.cell(r, cols.name))
         if not name:
             continue  # an empty IR slot
-        rows.append(_row(tab, cols, r, name, tab.cell(r, salary_col), counted=False, ir=label))
+        rows.append(_row(tab, cols, salary_col, r, name, counted=False, ir=label))
     return rows
 
 
 def _row(
-    tab: Tab, cols: _Columns, r: int, name: str, salary: Cell, *, counted: bool, ir: IRLabel | None
+    tab: Tab,
+    cols: _Columns,
+    salary_col: int,
+    r: int,
+    name: str,
+    *,
+    counted: bool,
+    ir: IRLabel | None,
 ) -> SheetRow:
+    salary = tab.cell(r, salary_col)
+    amount = _whole(salary)
     return SheetRow(
         row=r,
         name=name,
@@ -200,7 +234,20 @@ def _row(
         salary=_dollars(salary),
         counted=counted,
         ir=ir,
+        has_formula=any(tab.cell(r, c).formula for c in _targets(cols, salary_col)),
+        negative_salary=amount is not None and amount < 0,
     )
+
+
+def _targets(cols: _Columns, salary_col: int) -> tuple[int, ...]:
+    """The columns a writer may change: name, position, team and salary."""
+    return tuple(c for c in (cols.name, cols.position, cols.team, salary_col) if c is not None)
+
+
+def _free(tab: Tab, r: int, targets: tuple[int, ...]) -> bool:
+    """Row ``r``'s target cells are all blank and hold no formula. Only blankness
+    is looked at: nothing from these cells is kept (SPEC §4a)."""
+    return all(tab.cell(r, c).is_blank and not tab.cell(r, c).formula for c in targets)
 
 
 def _summary_cap(grid: Grid, refs: Counter[tuple[str, str]]) -> tuple[int | None, str | None]:

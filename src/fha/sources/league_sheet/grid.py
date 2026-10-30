@@ -85,6 +85,7 @@ class Tab:
 
     title: str
     cells: Mapping[tuple[int, int], Cell] = field(default_factory=dict, repr=False)
+    sheet_id: int | None = None  # Google's numeric tab ID; None from an .xlsx
 
     def cell(self, row: int, col: int) -> Cell:
         return self.cells.get((row, col), EMPTY)

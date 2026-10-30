@@ -2413,3 +2413,26 @@ copy-paste list only: kept as the behaviour while writing is off, but on its
 own it leaves the chore. A writer that re-reads the raw grid: rejected, it
 puts the managers' contact details in the write path; the parser hands over
 the few facts the writer needs instead.
+
+**Implementation notes (2026-10-30, same PR).**
+- The plan's digest covers the tab's parsed rows, the edits, the refusals and
+  the ticks; only its hash rides in the form (itsdangerous signs, it doesn't
+  encrypt). A double tap re-reads, finds nothing to change, and says so.
+- Google leaves zero and false out of its JSON, so a missing `sheetId` is
+  sheet 0 and a missing `requestingUserCanEdit` is false. Checked against
+  Google's reference pages (batchUpdate atomicity, `updateCells` clearing,
+  GridRange indexes from 0 with an exclusive end, `ProtectedRange`); the
+  rehearsal on a private copy confirms them against the live API.
+- Deviation from the plan: a row moved into or out of IR must have a salary
+  number (and no formula); the parser keeps only the number, so `???` can't be
+  copied verbatim. Rare, refused with the reason, fixed by hand.
+- The demo league refuses `FHA_SHEET_WRITE=1`: its roster is made up.
+- Phase 1 first stored the empty IR rows as pairs, which Firestore refuses (a
+  list in a list); caught by the in-memory store's Firestore rules before
+  merge, and the round-trip test now goes through a store.
+- mutmut had failed to start since M5 (`app.py` and the files
+  `test_deploy.py` checks weren't in `also_copy`); fixed. One surviving
+  mutant in `domain/sheet_update.py` is equivalent and justified: in the slot
+  count, reading names from every edited column instead of the name column
+  changes nothing, because each edit to a row either clears all four cells or
+  writes its name.

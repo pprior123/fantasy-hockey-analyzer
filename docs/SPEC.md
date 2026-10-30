@@ -171,7 +171,8 @@ Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
 
 Reading: production uses the Google Sheets API (values and formulas, one
 batched request per refresh) with the Firestore service account; the owner
-shares the sheet view-only with that account's email. The sheet ID comes
+shares the sheet with that account's email (view-only; Editor once
+writing is on, see "Writing" below). The sheet ID comes
 from env `LEAGUE_SHEET_ID`. Dev reads a downloaded `.xlsx` at
 `LEAGUE_SHEET_XLSX` (under `private/`). Admin also accepts an uploaded
 `.xlsx` in any environment, as a fallback when the live read is unavailable
@@ -190,26 +191,33 @@ missing from the tab, tab players not on the Yahoo roster, and a tab payroll
 that differs from the sum of its matched rows. (The league penalizes
 out-of-date sheets; this makes staleness visible.)
 
-Writing (owner's tab only; off unless `FHA_SHEET_WRITE=1`): the app
-compares the Yahoo roster of the owner's team (`is_owned_by_current_login`)
-with its bound tab and plans value-only edits to the name, position, team and
-salary cells. A dropped player's row is cleared; an added player fills a
-cleared row first, then a blank row inside the PAYROLL range, written as
-"Last, First" with Yahoo's position and team codes and the cap hit; a player
+Writing (owner's tab only; off unless `FHA_SHEET_WRITE=1`, never in the demo):
+Admin → **Update my tab** reads the sheet afresh, compares the Yahoo roster of
+the owner's team (`is_owned_by_current_login`) with its bound tab, and plans
+value-only edits to the name, position, team and salary cells
+(`domain/sheet_update.py`). A dropped player's row is cleared; an added player
+fills a cleared row first, then a blank row inside the PAYROLL range, written
+as "Last, First" with Yahoo's position and team codes and the cap hit; a player
 moving into or out of an IR slot has his four cells copied verbatim between
 the counted range and an empty IR row. Column A, the header row and every
 other cell are never written, and rows are never inserted or deleted, so the
-PAYROLL range and anything below it stay put. The plan refuses (with the
+PAYROLL range and anything below it stay put. The plan refuses (with every
 reason) when the result would be over the cap, the tab disagrees with itself
-(PAYROLL is not the SUM of its counted rows, or its CAP differs), a target
-cell holds a formula, a row awaits match review (unless the owner ticks it as
-dropped), no free row is left, or an incoming cap hit is unknown. Before
-writing, the app re-reads the sheet and recomputes the plan; it writes only if
-the plan is the one the owner saw, and only if every other tab is protected
-against the service account. The write is one atomic `spreadsheets.batchUpdate`
-with a separate `spreadsheets`-scope token (reads keep `readonly`). Afterwards
-it reads the tab back and checks the PAYROLL. The owner shares the sheet with
-the service account as Editor and protects every other tab.
+(PAYROLL is not the SUM of its counted rows within rounding, its CAP differs,
+or a row holds a negative salary), a cell to change holds a formula, a row to
+move has no salary number, a row awaits match review (unless the owner ticks
+it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
+counts (from the league settings) are checked as invariants. Before writing,
+the app re-reads the sheet and recomputes the plan; it writes only if the
+plan's digest is the one the owner saw (signed, 10 minutes), and only if every
+other tab is protected against the service account as a whole tab
+(`protectedRanges`: no bounds, no unprotected ranges, `requestingUserCanEdit`
+false). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
+per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
+`spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
+added to their players, then reads the tab back and checks each written cell,
+the PAYROLL and that nothing is left to change. The owner shares the sheet
+with the service account as Editor and protects every other tab.
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —

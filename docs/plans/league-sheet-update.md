@@ -1,6 +1,8 @@
 # Plan: update the owner's tab in the league sheet
 
-Status: **open questions answered by the owner (2026-10-30); waiting for the go-ahead.** Nothing is implemented yet.
+Status: **implemented** on `feature/league-sheet-update` (2026-10-30), phases 0-5; the
+rehearsal (Phase 6) waits for the merge. Deviations are in DECISIONS, "League sheet:
+updating the owner's tab", implementation notes.
 Base: `main` at `a626288`. One independent review has been triaged (§5).
 
 ## 0. The feature, and what the owner decided

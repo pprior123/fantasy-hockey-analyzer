@@ -462,7 +462,9 @@ All must be usable at 390 px width.
 
 Common to the tables: a **Categories** toggle swaps the salary columns
 (AAV · $/TTLTST) for the 7 category norms, since all of them will not fit at
-390 px. A season label and toggle per §5.
+390 px. Players and Rosters also have **Totals**: the 7 raw season totals,
+which show when a high rating rests on few games (DECISIONS, "Totals view").
+A season label and toggle per §5.
 
 1. **Players** — table: Name · Pos · Team · Owner · GP · TTLTST · Pctl · AAV ·
    $/TTLTST. Tap a header to sort. Filter chips: All / My Team / Free Agents /

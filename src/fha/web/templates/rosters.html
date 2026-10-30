@@ -29,7 +29,7 @@
 </section>
 
 <h2>Skaters</h2>
-{{ m.view_toggle("/rosters", params, mode) }}
+{{ m.view_toggle("/rosters", params, mode, totals=True) }}
 <div class="table-wrap">
 <table class="data roster">
   <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th><th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th>
@@ -47,6 +47,8 @@
     {% if mode == 'money' %}
     <td class="num">{{ r.aav|money }}</td>
     <td class="num">{{ r.value|number(2) }}</td>
+    {% elif mode == 'totals' %}
+    {% for cat in categories %}<td class="num">{{ r.totals.get(cat)|number(0) }}</td>{% endfor %}
     {% else %}
     {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
     {% endif %}

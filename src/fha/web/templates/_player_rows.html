@@ -18,6 +18,8 @@
   {% if mode == 'money' %}
   <td class="num">{{ r.aav|money }}</td>
   <td class="num">{{ r.value|number(2) }}</td>
+  {% elif mode == 'totals' %}
+  {% for cat in categories %}<td class="num">{{ r.totals.get(cat)|number(0) }}</td>{% endfor %}
   {% else %}
   {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
   {% endif %}

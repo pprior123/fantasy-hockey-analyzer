@@ -21,7 +21,7 @@ def _here(request: Request) -> str:
 @router.get("/rosters", response_class=HTMLResponse)
 async def rosters(request: Request) -> HTMLResponse:
     params = dict(request.query_params)
-    mode = view_param(params.get("view"))
+    mode = view_param(params.get("view"), totals=True)
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     wanted = params.get("team") or None

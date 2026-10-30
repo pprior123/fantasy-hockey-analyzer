@@ -184,3 +184,19 @@ def test_row_shortcuts_read_the_rating_and_are_empty_for_goalies(snap: LeagueSna
     assert (skater.percentile, skater.norms) == (skater.rating.percentile, skater.rating.norms)
     goalie = view.by_id["3"]
     assert (goalie.ttltst, goalie.percentile, goalie.value, goalie.norms) == (None, None, None, {})
+    assert goalie.totals == {}
+
+
+def test_a_skaters_totals_are_his_raw_season_stats(snap: LeagueSnapshot) -> None:
+    """The Totals view (owner, 2026-10-30): Yahoo's line for player 1 is G 1 (stat 1),
+    A 3 (2), PPP 2 (8), PIM 4 (5), and nothing for HIT, SOG or BLK."""
+    totals = build_view(snap, DEFAULT_CONFIG, Salaries()).by_id["1"].totals
+    assert {c.value: v for c, v in totals.items()} == {
+        "G": 1,
+        "A": 3,
+        "PPP": 2,
+        "PIM": 4,
+        "HIT": 0,
+        "SOG": 0,
+        "BLK": 0,
+    }

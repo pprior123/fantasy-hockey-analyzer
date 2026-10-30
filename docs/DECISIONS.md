@@ -2322,3 +2322,27 @@ rows the owner never wants.
 - **Default `min_gp` to 1** instead of a separate toggle. Rejected: the
   owner's Min GP box would show a 1 they never typed, and the single-team
   exemption would be a special case of a number.
+
+## 2026-10-30 — Totals view on Players and Rosters; the IR-slot label
+
+**Totals view.** Beside Salary and Categories, Players and Rosters have a
+third column view, **Totals**: each skater's 7 raw season totals (G, A, PPP,
+PIM, HIT, SOG, BLK) for the season shown, as whole numbers, next to GP. On
+Players a category header in this view sorts by the total, not the norm.
+Goalies have no totals (they aren't rated) and sort last.
+
+**Why.** The owner's request, 2026-10-30: a player with 2 GP can rate near the
+top on rate stats, and seeing "2 GP, 1 G" beside the rating makes that
+obvious. The totals were already computed (the engine's input), so this is a
+display of data the app has.
+
+**Alternatives.** Totals on every rated screen: rejected for now. League shows
+teams, not players, and Replace and the Matchup filter compare norms, which
+is what their columns mean. Raising the GP floor instead: still available
+(Admin, Rating settings), but it hides players rather than explaining them.
+
+**IR-slot label.** In Admin's discrepancy report, a player who's on the Yahoo
+roster but missing from the tab is labelled "(IR slot)" when he sits in IR or
+IR+. League rule (owner, 2026-10-30): GMs must still list IR players on their
+tab, but IR-slot players don't count against the cap, and a missed one is
+minor. The flag stays; the label says why it matters less.

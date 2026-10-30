@@ -168,6 +168,15 @@ def test_sort_by_a_category_uses_its_norm(view: LeagueView) -> None:
     assert norms == sorted(norms, reverse=True)
 
 
+def test_the_totals_view_sorts_a_category_by_its_total_not_its_norm() -> None:
+    by_total = select(DEMO_VIEW, PlayersQuery(sort=Category.HIT), totals=True)
+    hits = [r.totals[Category.HIT] for r in by_total if r.totals]
+    assert hits == sorted(hits, reverse=True)
+    assert all(not r.totals for r in by_total[len(hits) :])  # goalies, who have none, last
+    by_norm = ids(select(DEMO_VIEW, PlayersQuery(sort=Category.HIT)))
+    assert ids(by_total) != by_norm  # GP differs, so the orders do too
+
+
 def test_sort_by_owner_uses_team_names(view: LeagueView) -> None:
     rows = select(view, replace(ALL, sort=SortKey.OWNER, descending=False))
     assert ids(rows)[:3] == sorted(ids(rows)[:3], key=lambda pid: (view.by_id[pid].name, pid))

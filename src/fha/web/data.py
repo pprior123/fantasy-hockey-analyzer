@@ -96,13 +96,17 @@ def season_param(raw: str | None) -> Season | None:
 
 
 VIEWS = ("money", "cats")  # the Categories toggle (SPEC §7): salary columns, or the 7 norms
+TOTALS = "totals"  # Players and Rosters also show the 7 raw season totals (owner, 2026-10-30)
 
 
-def view_param(raw: str | None) -> str:
-    """The Categories toggle from the URL: "cats", or blank for the salary columns."""
+def view_param(raw: str | None, *, totals: bool = False) -> str:
+    """The Categories toggle from the URL: "cats", "totals" where ``totals`` allows it,
+    or blank for the salary columns."""
     mode = raw or "money"
-    if mode not in VIEWS:
-        raise BadQueryError(f"view must be cats or left out, got {_shown(raw)!r}")
+    allowed = (*VIEWS, TOTALS) if totals else VIEWS
+    if mode not in allowed:
+        names = "cats, totals" if totals else "cats"
+        raise BadQueryError(f"view must be {names} or left out, got {_shown(raw)!r}")
     return mode
 
 

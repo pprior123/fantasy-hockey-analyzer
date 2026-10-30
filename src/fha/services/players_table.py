@@ -114,12 +114,13 @@ def _whole(text: str | None, name: str, max_digits: int) -> int:
     return int(text)
 
 
-def select(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
-    """The rows the query shows, sorted; players with no value in the sort column last."""
+def select(view: LeagueView, query: PlayersQuery, *, totals: bool = False) -> list[PlayerRow]:
+    """The rows the query shows, sorted; players with no value in the sort column last.
+    ``totals``: a category sorts by its season total (the Totals view), not its norm."""
     hide_zero = not (query.zero_gp or query.single_team)
     rows = [r for r in _filtered(view, query) if not (hide_zero and r.gp == 0)]
     names = {t.team_key: t.name for t in view.teams}
-    key = _sort_value(query.sort, names)
+    key = _sort_value(query.sort, names, totals=totals)
     present = [r for r in rows if key(r) is not None]
     missing = [r for r in rows if key(r) is None]
     present.sort(key=lambda r: (r.name, r.player_id))  # stable tie order: name, then id
@@ -170,8 +171,10 @@ def _comparable(value: object) -> tuple[int, float | str]:
 
 
 def _sort_value(
-    sort: SortKey | Category, team_names: Mapping[str, str]
+    sort: SortKey | Category, team_names: Mapping[str, str], *, totals: bool = False
 ) -> Callable[[PlayerRow], object | None]:
+    if isinstance(sort, Category) and totals:
+        return lambda r: r.totals.get(sort)
     if isinstance(sort, Category):
         return lambda r: r.norms.get(sort) if r.rating and r.rating.rated else None
     by: dict[SortKey, Callable[[PlayerRow], object | None]] = {

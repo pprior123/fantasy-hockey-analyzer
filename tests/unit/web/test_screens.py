@@ -9,9 +9,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from fha.domain.engine import DEFAULT_CONFIG
 from fha.domain.matcher import NO_ALIASES
 from fha.services.free_agents import import_free_agent_salaries
 from fha.services.league_sheet import bind_tab, read_league_sheet
+from fha.services.league_view import LeagueView, Salaries, Season, build_view
 from fha.services.refresh import RefreshService
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
@@ -473,6 +475,29 @@ def test_bad_season_or_view_values_are_a_400_everywhere(path: str) -> None:
     assert response.status_code == 400
     assert 'class="error"' in response.text
     assert FOOTER in response.text
+
+
+def build_view_for_test() -> LeagueView:
+    """The demo's last season, as the screens build it (no salaries)."""
+    return build_view(SNAP, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+
+
+@pytest.mark.parametrize("path", ["/players", "/rosters"])
+def test_the_totals_view_shows_raw_season_totals(path: str) -> None:
+    """Players and Rosters (owner, 2026-10-30): beside Salary and Categories, a Totals
+    chip shows each skater's 7 raw season totals as whole numbers."""
+    html = client().get(f"{path}?view=totals&season=last").text
+    assert f'class="chip on" href="{path}?view=totals&amp;season=last">Totals</a>' in html
+    assert "$/TTLTST" not in html
+    row = next(r for r in build_view_for_test().rows if r.owner_key == MINE.team_key and r.totals)
+    cells = "".join(f'<td class="num">{int(row.totals[c])}</td>' for c in row.totals)
+    assert cells in re.sub(r"\s*\n\s*", "", html)
+
+
+def test_league_has_no_totals_view() -> None:
+    assert client().get("/league").status_code == 200
+    assert ">Totals</a>" not in client().get("/league").text
+    assert client().get("/league?view=totals").status_code == 400
 
 
 def test_the_refresh_form_is_not_inside_the_team_picker() -> None:

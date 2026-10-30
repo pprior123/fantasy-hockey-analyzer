@@ -13,7 +13,6 @@ from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import pytest
 
@@ -313,18 +312,19 @@ def test_the_league_carries_only_the_placeholder_name() -> None:
 
 
 # Any URL in any string: http(s) in any case, or scheme-relative, alone or in text.
-URL = re.compile(r"(?i)(?:https?:)?//[^\s\"'<>]+")
+# The authority runs to the first "/", "?", "#" or whitespace, so no character
+# can end it early (Codex rounds 2-3: ":@", "'@", '"@' and "<@" each hid the host).
+AUTHORITY = re.compile(r"(?i)(?:https?:)?//([^/?#\s]*)")
+HOST = re.compile(r"([a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::\d+)?", re.IGNORECASE)
 
 
 def url_hosts(text: str) -> list[str | None]:
-    """Each URL's host as a browser reads it (urlsplit, as HTTPX does). A URL with
-    credentials (``user@``) gives None: none belongs in a fixture (Codex round 2:
-    ``https://s.yimg.com:@external.example`` is external.example)."""
+    """Each URL's host; None when the authority is anything but a plain host and
+    optional port (credentials, quotes, brackets...): none belongs in a fixture."""
     hosts: list[str | None] = []
-    for match in URL.finditer(text):
-        url = match.group(0)
-        parts = urlsplit("https:" + url if url.startswith("//") else url)
-        hosts.append(None if "@" in parts.netloc else parts.hostname)
+    for match in AUTHORITY.finditer(text):
+        host = HOST.fullmatch(match.group(1))
+        hosts.append(host.group(1).lower() if host else None)
     return hosts
 
 
@@ -344,6 +344,11 @@ def test_urls_point_only_at_yahoo_s_public_hosts_or_the_placeholder() -> None:
         ("http://host.example:8080/x", "host.example"),
         ("https://s.yimg.com:@external.example/a.png", None),  # credentials: refused
         ("https://s.yimg.com@external.example/a.png", None),
+        ("https://s.yimg.com'@external.example/a.png", None),  # Codex round 3
+        ('https://s.yimg.com"@external.example/a.png', None),
+        ("https://s.yimg.com<@external.example/a.png", None),
+        ("https://s.yimg.com?x=1", "s.yimg.com"),
+        ("https://[::1]/x", None),  # not a plain host name
     ],
 )
 def test_the_url_check_finds_every_form(text: str, host: str | None) -> None:

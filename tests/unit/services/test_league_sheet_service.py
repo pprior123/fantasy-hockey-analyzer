@@ -184,6 +184,16 @@ def test_two_rows_on_one_player_trust_neither() -> None:
     assert [p.name for p in report.missing_from_tab] == ["Dee Hill", "Eve Moss"]
 
 
+def test_missing_players_in_an_ir_slot_are_marked() -> None:
+    """League rule (owner, 2026-10-30): IR players must still be listed on the tab, but
+    they don't count against the cap, so a missing one is flagged and labelled."""
+    report = match_tab(sheet().tab("Maple"), replace(ONE, roster=ONE.roster[3:4]), NO_ALIASES, {})
+    assert [p.name for p in report.missing_from_tab] == ["Bo Stone"]
+    assert report.in_ir_slot == frozenset({"4"})
+    healthy = match_tab(sheet().tab("Maple"), replace(ONE, roster=ONE.roster[4:]), NO_ALIASES, {})
+    assert healthy.in_ir_slot == frozenset()
+
+
 def test_aliases_apply_in_roster_scope() -> None:
     odd = s.TeamTab("Odd", [s.Player("Evie Mossberg", "D")])
     aliases = Aliases().with_alias("Eve Moss", "Evie Mossberg")

@@ -346,6 +346,13 @@ def test_the_discrepancy_report_and_row_review() -> None:
     assert "<strong>Zed Nobody</strong>" in html
     assert "not on the Yahoo roster" in html
     assert "missing from the tab" in html
+    ir = [e.player.name for e in TEAM1.roster if e.in_ir_slot]
+    assert ir  # the demo fills IR and IR+, and sheet_tab leaves them off the tab
+    for name in ir:
+        assert f'{name} <span class="muted">(IR slot)</span>' in html
+    healthy = TEAM1.roster[-1].player.name  # past the tab's 8 rows, not in an IR slot
+    assert not TEAM1.roster[-1].in_ir_slot
+    assert f'{healthy} <span class="muted">(IR slot)' not in html
     assert "(differs)" in html
     row_key = "zed nobody|F"
     assert f'name="key" value="{row_key}"' in html

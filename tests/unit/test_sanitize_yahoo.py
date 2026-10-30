@@ -111,6 +111,13 @@ def test_player_fragment_names_are_not_mistaken_for_team_names() -> None:
         ({"x": ["contact me: a.b+c@mail.example.org"]}, ["$.x[0]: email address"]),
         ({"x": "https://sports.yahoo.com/nhl/players/1"}, []),
         ({"x": "@handle"}, []),
+        # Yahoo's default headshot: a high-resolution image name, not an address
+        ({"url": "https://s.yimg.com/dh/ap/default/140828/silhouette@2x.png"}, []),
+        ({"url": "https://example.invalid/p/5700@3X.JPG"}, []),
+        ({"x": "https://x.example/a?u=bob@mail.example.org"}, ["$.x: email address"]),
+        ({"x": "bob@2x.com"}, ["$.x: email address"]),
+        ({"x": "bob@2x.png.example.org"}, ["$.x: email address"]),
+        ({"x": "a@2x.png and bob@mail.example.org"}, ["$.x: email address"]),
         ({"n": 5, "b": None}, []),
     ],
 )

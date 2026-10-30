@@ -36,7 +36,11 @@ DROP_KEYS = frozenset(
 # Keys that must never survive, whatever block they turn up in.
 FORBIDDEN_KEYS = frozenset({"managers", "manager", "guid", "email", "nickname"})
 FORBIDDEN_KEYS |= {"access_token", "refresh_token", "id_token", "short_invitation_url"}
-EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
+EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
+# A high-resolution image's file name, e.g. Yahoo's default headshot
+# ".../silhouette@2x.png": it matches EMAIL, but its "domain" is a scale and an
+# image extension. Live 2026-10-30: 1,704 such false alarms blocked the recording.
+RETINA_IMAGE = re.compile(r"\d+x\.(?:png|jpe?g|gif|webp|svg)", re.IGNORECASE)
 TEAM_LOGO = [{"team_logo": {"size": "large", "url": "https://example.invalid/team-logo.png"}}]
 LEAGUE_NAME = "League"
 PLACEHOLDER = re.compile(r"Team \d+|League")
@@ -131,7 +135,7 @@ def problems(
         for i, item in enumerate(node):
             found.extend(problems(item, names, f"{path}[{i}]", key))
     elif isinstance(node, str):
-        if EMAIL.search(node):
+        if any(not RETINA_IMAGE.fullmatch(m.group(1)) for m in EMAIL.finditer(node)):
             found.append(f"{path}: email address")
         if key not in PUBLIC_KEYS and _holds_name(node, names):
             found.append(f"{path}: a team or league name")

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 CellValue = str | int | None
+SLACK = 3  # rows over the slot counts a stale tab may list before the shape is doubted
 RowStatus = Literal["matched", "unmatched", "review"]  # review: REVIEW or AMBIGUOUS
 
 
@@ -61,6 +62,7 @@ class TabLayout:
     header_row: int
     blank_rows: tuple[int, ...]
     empty_ir_rows: tuple[int, ...]
+    ir_block: tuple[int, int] | None = None  # (first, last) IR rows right below the range
 
     @property
     def columns(self) -> tuple[str, ...]:
@@ -243,7 +245,8 @@ def plan_update(
 def allowed_rows(rows: Iterable[TabRow], layout: TabLayout) -> frozenset[int]:
     """The rows the app may write: the PAYROLL range's player rows and the IR rows."""
     in_range = range(layout.first_row, layout.last_row + 1)
-    ir = {r.row for r in rows if not r.counted} | set(layout.empty_ir_rows)
+    ir = {r.row for r in rows if not r.counted and _in_block(r.row, layout)}
+    ir |= set(layout.empty_ir_rows)
     return frozenset({*in_range, *ir} - {layout.header_row})
 
 
@@ -282,11 +285,25 @@ def _check_shape(
         )
     counted = sum(1 for r in rows if r.name and r.counted)
     ir = sum(1 for r in rows if r.name and not r.counted)
-    if counted > active_slots or ir > ir_slots:
+    # A tab a few moves out of date may list a few too many; far more is the range
+    # reaching past the player rows.
+    if counted > active_slots + SLACK or ir > ir_slots + SLACK:
         refusals.append(
-            f"the tab lists {counted} players and {ir} IR players, more than the league's "
-            f"{active_slots} and {ir_slots}: check what the PAYROLL range and the IR rows cover"
+            f"the tab lists {counted} players and {ir} IR players, far more than the "
+            f"league's {active_slots} and {ir_slots}: check what the PAYROLL range and the "
+            "IR rows cover"
         )
+    for r in rows:
+        if not r.counted and r.name and not _in_block(r.row, layout):
+            refusals.append(
+                f"row {r.row} ({r.name}) is labelled IR outside the IR rows right below "
+                "the PAYROLL range: fix the tab by hand first"
+            )
+
+
+def _in_block(row: int, layout: TabLayout) -> bool:
+    block = layout.ir_block
+    return block is not None and block[0] <= row <= block[1]
 
 
 def _check_tab(

@@ -2453,3 +2453,15 @@ URL and the preview's GET reads and stores the sheet, as Admin's screens do.
 Open for the owner: whether their tab ever holds named non-player lines
 (buyouts, retained salary) inside the PAYROLL range; such a line would be shown
 as a drop in the preview.
+
+**Review round 2 (PR #22, one Claude reviewer).** Fixed: a *named* IR-labelled
+row outside the IR block (the run of IR rows right below the range) could be
+dropped and cleared, since only free IR rows had been confined; the parser now
+records the block (`ir_block`), the guard admits IR rows only inside it, and
+the plan refuses while such a row exists. The tab-as-read slot check allows a
+slack of 3 rows, so a tab a few moves out of date can still be fixed; the
+range-length bound and the IR block cover the contact-detail risk. Accepted: a
+gap inside the IR block ends it (the safe direction: fewer free IR rows); the
+owner's tab is to have 3 contiguous IR+ rows (rehearsal step). Owner
+(2026-10-30): the tab has no named non-player lines in the PAYROLL range, so
+an unmatched named row stays a drop.

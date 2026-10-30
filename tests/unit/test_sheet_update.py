@@ -34,6 +34,7 @@ LAYOUT = TabLayout(
     header_row=6,
     blank_rows=(11, 12),
     empty_ir_rows=(15, 16),
+    ir_block=(13, 16),
 )
 
 
@@ -432,6 +433,7 @@ def scenarios(
         first - 1,
         tuple(r for r in blank if r <= last),
         tuple(empty_ir),
+        (ir_rows[0], ir_rows[-1]) if ir_rows else None,
     )
     return tuple(rows), layout, tuple(roster), tuple(ticked)
 
@@ -574,12 +576,10 @@ def test_the_guard_names_the_cell_and_the_problem() -> None:
 
 def test_slot_messages_for_the_tab_as_read_and_after_the_edits() -> None:
     assert plan(active=3).refusals == (
-        "the tab lists 4 players and 1 IR players, more than the league's 3 and 3: "
-        "check what the PAYROLL range and the IR rows cover",
         "the tab would list 4 players outside IR, more than the league's 3: check the Yahoo roster",
     )
-    assert plan(ir=0).refusals[1] == (
-        "the tab would list 1 IR players, more than the league's 0: check the Yahoo roster"
+    assert plan(ir=0).refusals == (
+        "the tab would list 1 IR players, more than the league's 0: check the Yahoo roster",
     )
     # Fine as read, too many after: only the second message.
     assert plan(ROWS, (*ROSTER, member("ed")), active=4).refusals == (
@@ -609,3 +609,33 @@ def test_a_row_with_no_name_is_never_dropped() -> None:
 def test_free_rows_go_out_in_player_id_order_whatever_yahoo_lists_first() -> None:
     a, b = member("ed"), member("fay")
     assert plan(ROWS, (*ROSTER, a, b)).edits == plan(ROWS, (b, *ROSTER, a)).edits
+
+
+# ---------------------------------------------------------------- round 2 (PR #22)
+
+
+def test_a_named_ir_row_outside_the_ir_block_is_refused_and_never_written() -> None:
+    stray = row(20, "Gm Contact", status="unmatched", player_id=None)
+    p = plan((*ROWS, stray))
+    assert p.refusals == (
+        "row 20 (Gm Contact) is labelled IR outside the IR rows right below the PAYROLL "
+        "range: fix the tab by hand first",
+    )
+    assert 20 not in allowed_rows((*ROWS, stray), LAYOUT)
+    with pytest.raises(GuardError):
+        guard([CellEdit(20, "C", "Gm Contact", None)], (*ROWS, stray), LAYOUT)
+
+
+def test_a_stale_tab_may_list_a_few_rows_too_many() -> None:
+    rows = (*ROWS[:3], replace(ROWS[3], status="unmatched", player_id=None), ROWS[4])
+    p = plan(rows, (*ROSTER[:3], ROSTER[4]), active=3)  # 4 listed, 3 slots: Di goes
+    assert p.ok, p.refusals
+    # Five IR rows against one IR slot is past the slack of 3: the shape is doubted.
+    irs = tuple(row(r, f"I{r}") for r in range(13, 18))
+    layout = replace(LAYOUT, empty_ir_rows=(), ir_block=(13, 17))
+    roster = (*ROSTER[:4], *(member(f"i{r}", in_ir=True) for r in range(13, 18)))
+    assert plan((*ROWS[:4], *irs), roster, layout=layout, ir=1).refusals[0] == (
+        "the tab lists 4 players and 5 IR players, far more than the league's 25 and 1: "
+        "check what the PAYROLL range and the IR rows cover"
+    )
+    assert plan((*ROWS[:4], *irs), roster, layout=layout, ir=2).ok is False  # after-check only

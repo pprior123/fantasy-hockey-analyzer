@@ -162,6 +162,7 @@ def _layout(
         header_row=header_row,
         blank_rows=tab.blank_rows,
         empty_ir_rows=tuple(r for r, _ in tab.empty_ir_rows),
+        ir_block=tab.ir_block,
     )
 
 

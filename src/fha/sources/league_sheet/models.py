@@ -56,6 +56,9 @@ class ParsedTab:
     team_column: str | None = None  # None: the tab has no NHL team header
     blank_rows: tuple[int, ...] = ()  # in the range, all four cells blank, no formula
     empty_ir_rows: tuple[tuple[int, IRLabel], ...] = ()  # IR rows likewise blank
+    # The IR block: the run of IR-labelled rows from the first one below the range
+    # (first, last row). The writer may touch IR rows only inside it.
+    ir_block: tuple[int, int] | None = None
 
     @property
     def counted(self) -> tuple[SheetRow, ...]:

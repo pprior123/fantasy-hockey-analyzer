@@ -490,8 +490,23 @@ def test_the_totals_view_shows_raw_season_totals(path: str) -> None:
     assert f'class="chip on" href="{path}?view=totals&amp;season=last">Totals</a>' in html
     assert "$/TTLTST" not in html
     row = next(r for r in build_view_for_test().rows if r.owner_key == MINE.team_key and r.totals)
-    cells = "".join(f'<td class="num">{int(row.totals[c])}</td>' for c in row.totals)
+    cells = "".join(f'<td class="num">{int(row.totals[c])}</td>' for c in DEFAULT_CONFIG.categories)
     assert cells in re.sub(r"\s*\n\s*", "", html)
+
+
+def test_replace_links_from_the_totals_view_open_in_salary() -> None:
+    """Review, PR #21: Replace has no Totals view, so its links from one must not carry
+    view=totals (a 400); from Categories they keep it."""
+    c = client()
+    for view, carried in (("totals", ""), ("cats", "view=cats"), ("", "")):
+        html = c.get(f"/rosters?view={view}").text
+        links = re.findall(r'href="(/rosters/replace\?[^"]*)"', html)
+        assert links  # skaters' and goalies' links on my roster
+        for link in links:
+            link = link.replace("&amp;", "&")
+            assert ("view=" in link) == bool(carried), link
+            assert carried in link
+        assert c.get(links[0].replace("&amp;", "&")).status_code == 200
 
 
 def test_league_has_no_totals_view() -> None:

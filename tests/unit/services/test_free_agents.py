@@ -165,6 +165,35 @@ async def test_a_dismissed_row_leaves_the_review_until_restored() -> None:
     assert await dismissed(repo) == []
 
 
+async def test_a_dismissed_row_is_neither_to_review_nor_dismissed_once_bound() -> None:
+    """Review, PR #21: a re-import counts no dismissed row as "to review", and a row a
+    later import binds (the player joined the pool) or the owner confirms leaves the
+    dismissed list, since it now has a salary."""
+    repo = InMemoryRepository()
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    await dismiss(repo, "known nobody|F")
+    again = await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    assert again.reviews == ()
+    raised = [*ROWS[:-1], row("Nobody, Known", "R", 900_000, 7)]  # a changed file, too
+    changed = await import_free_agent_salaries(repo, raised, POOL, NO_ALIASES)
+    assert (changed.changed, changed.reviews) == (True, ())
+    assert await pending_reviews(repo, POOL, NO_ALIASES) == []
+    joined = [*POOL, player("7", "Known Nobody", "Sea", "RW")]
+    later = await import_free_agent_salaries(repo, ROWS, joined, NO_ALIASES)
+    assert later.bound == 1
+    assert await dismissed(repo) == []
+    assert (await load_free_agent_salaries(repo)).aav["7"] == 800_000
+    assert (await import_free_agent_salaries(repo, raised, joined, NO_ALIASES)).bound == 0
+
+
+async def test_a_confirmed_dismissed_row_leaves_the_dismissed_list() -> None:
+    repo = InMemoryRepository()
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    await dismiss(repo, "known nobody|F")
+    await confirm(repo, "known nobody|F", "6")
+    assert await dismissed(repo) == []
+
+
 async def test_putting_back_nothing_writes_nothing() -> None:
     repo = CountingRepository()
     await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)

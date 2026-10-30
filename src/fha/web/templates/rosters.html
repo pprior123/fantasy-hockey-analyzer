@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% block content %}
+{# Replace has Salary and Categories only, so a Totals view opens it in Salary. #}
+{% set replace_view = mode if mode == 'cats' else '' %}
 {{ m.notes(data) }}
 <div class="toolbar">
   {{ m.season_toggle(data, "/rosters", params) }}
@@ -52,7 +54,7 @@
     {% else %}
     {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
     {% endif %}
-    {% if team.is_mine %}<td><a href="{{ url('/rosters/replace', {'season': params.get('season', ''), 'view': params.get('view', '')}, drop=r.player_id) }}">Replace</a></td>{% endif %}
+    {% if team.is_mine %}<td><a href="{{ url('/rosters/replace', {'season': params.get('season', ''), 'view': replace_view}, drop=r.player_id) }}">Replace</a></td>{% endif %}
   </tr>
   {% else %}
   <tr><td colspan="{{ 6 + (2 if mode == 'money' else categories|length) + (1 if team.is_mine else 0) }}" class="muted">No skaters.</td></tr>
@@ -73,5 +75,5 @@
 
 <h2>Goalies</h2>
 <p class="muted">Raw stats: goalies aren't rated.</p>
-{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': params.get('view', '')} if team.is_mine else none) }}
+{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': replace_view} if team.is_mine else none) }}
 {% endblock %}

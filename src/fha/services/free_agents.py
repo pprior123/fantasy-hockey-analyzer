@@ -99,6 +99,7 @@ async def import_free_agent_salaries(
         await save_chunked(repo, ROWS, {}, {"rows": stored})
 
     bindings = await _load(repo, BINDINGS)
+    skipped = await _load(repo, DISMISSED)
     pool_candidates = candidates(pool)
     bound, already, reviews = 0, 0, []
     for key, row in sorted(by_key.items()):
@@ -109,7 +110,7 @@ async def import_free_agent_salaries(
         if result.status is Status.MATCHED and result.player is not None:
             bindings[key] = {"player_id": result.player.player_id, "how": auto_how(result)}
             bound += 1
-        else:
+        elif key not in skipped:  # a dismissed row isn't "to review"
             reviews.append(Review(key, row, result))
     if bound:
         await repo.put(STATE, BINDINGS, {"entries": bindings})
@@ -165,9 +166,12 @@ async def dismiss(repo: Repository, key: str) -> SalaryRow:
 
 
 async def dismissed(repo: Repository) -> list[SalaryRow]:
-    """The dismissed rows still in the imported file, in stored (key) order."""
+    """The dismissed rows still in the imported file and not since bound (by a later
+    import or a confirm), in stored (key) order."""
     skipped = await _load(repo, DISMISSED)
-    return [row for key, row in (await _rows(repo)).items() if key in skipped]
+    bindings = await _load(repo, BINDINGS)
+    rows = await _rows(repo)
+    return [row for key, row in rows.items() if key in skipped and key not in bindings]
 
 
 async def restore_dismissed(repo: Repository) -> None:

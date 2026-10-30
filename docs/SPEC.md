@@ -205,9 +205,10 @@ dropped. Column A, the header row and every other cell are never written, and ro
 PAYROLL range and anything below it stay put. The plan refuses (with every
 reason) when the result would be over the cap, the tab disagrees with itself
 (PAYROLL is not the SUM of its counted rows within rounding, its CAP differs,
-or a row holds a negative salary), the tab as read lists more players than the
+or a row holds a negative salary), the tab as read lists more than 3 players over the
 league's slots or its PAYROLL range spans more than twice the roster spots
-(it may reach into the contact details), a cell to change holds a formula, a row to
+(it may reach into the contact details), a named IR row lies outside the IR
+block right below the range, a cell to change holds a formula, a row to
 move has no salary number, a row awaits match review (unless the owner ticks
 it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
 counts (from the league settings) are checked as invariants. Before writing,

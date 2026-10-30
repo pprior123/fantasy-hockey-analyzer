@@ -218,7 +218,9 @@ the parsed tab, for the preview and for the guard.
 - Counted rows ≤ the non-IR slots (25) and IR rows ≤ the IR slots (3), both
   from `roster_slots`. These are **invariants**, not rules the owner sees.
   After the plan, the tab mirrors a roster Yahoo has already limited, so a
-  failure here is a bug and is reported as one.
+  failure here is a bug and is reported as one. (Built: the tab *as read* is
+  checked separately with a slack of 3 rows over each count; see DECISIONS,
+  review round 2.)
 
 Tests: example tests for each edit and each refusal, plus a hypothesis
 property test. For any generated tab and roster, every edit lies in the

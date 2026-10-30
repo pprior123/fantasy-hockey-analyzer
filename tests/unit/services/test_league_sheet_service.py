@@ -378,7 +378,7 @@ async def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> 
     old = encode_sheet(sheet())
     for key in ("sheet_id", "header_row", "name_column", "position_column", "team_column"):
         del old["tabs"][0][key]
-    del old["tabs"][0]["blank_rows"], old["tabs"][0]["empty_ir_rows"]
+    del old["tabs"][0]["blank_rows"], old["tabs"][0]["empty_ir_rows"], old["tabs"][0]["ir_block"]
     for row in old["tabs"][0]["rows"]:
         del row["has_formula"], row["negative_salary"]
     back = decode_sheet(old).tabs[0]
@@ -388,6 +388,7 @@ async def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> 
         (),
         (),
     )
+    assert back.ir_block is None
     assert not back.rows[0].has_formula
 
 

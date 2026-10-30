@@ -2465,3 +2465,17 @@ gap inside the IR block ends it (the safe direction: fewer free IR rows); the
 owner's tab is to have 3 contiguous IR+ rows (rehearsal step). Owner
 (2026-10-30): the tab has no named non-player lines in the PAYROLL range, so
 an unmatched named row stays a drop.
+
+**Review round 3 (PR #22, one Claude reviewer; mutmut re-run).** Fixed: the
+refusal for a named IR row outside the IR block gives the row number only, not
+the name, which may be a contact detail; mutmut found the slack bound untested
+at exactly 3 over each count (`_check_shape` mutants 19 and 21), now killed by a
+boundary test, leaving only the justified `_check_result` survivor; the stored
+sheet's old-document test drops `ir_block` too; SPEC and the plan state the
+slack and the out-of-block refusal. Accepted: the IR block is not anchored to
+the range, so a tab with no IR rows and an `IR` label lower down would take that
+row as its block; the owner's tab is to have 3 IR+ rows right below the range,
+the rehearsal checks the parse, and the preview shows every drop before the
+confirm. A sheet stored by a pre-round-2 branch build decodes with no IR block
+and its IR rows are refused; only local builds ever stored one, and the confirm
+reads the sheet fresh.

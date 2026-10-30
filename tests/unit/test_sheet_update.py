@@ -618,8 +618,8 @@ def test_a_named_ir_row_outside_the_ir_block_is_refused_and_never_written() -> N
     stray = row(20, "Gm Contact", status="unmatched", player_id=None)
     p = plan((*ROWS, stray))
     assert p.refusals == (
-        "row 20 (Gm Contact) is labelled IR outside the IR rows right below the PAYROLL "
-        "range: fix the tab by hand first",
+        "row 20 is labelled IR outside the IR rows right below the PAYROLL range: "
+        "fix the tab by hand first",
     )
     assert 20 not in allowed_rows((*ROWS, stray), LAYOUT)
     with pytest.raises(GuardError):
@@ -639,3 +639,16 @@ def test_a_stale_tab_may_list_a_few_rows_too_many() -> None:
         "check what the PAYROLL range and the IR rows cover"
     )
     assert plan((*ROWS[:4], *irs), roster, layout=layout, ir=2).ok is False  # after-check only
+
+
+def test_exactly_the_slack_over_the_slot_counts_is_not_doubted() -> None:
+    def doubted(p) -> bool:  # type: ignore[no-untyped-def]
+        return any("far more than the league's" in r for r in p.refusals)
+
+    assert not doubted(plan(active=1))  # 4 listed = 1 slot + SLACK
+    assert doubted(plan(active=0))
+    irs = tuple(row(r, f"I{r}") for r in range(13, 17))
+    layout = replace(LAYOUT, empty_ir_rows=())
+    roster = (*ROSTER[:4], *(member(f"i{r}", in_ir=True) for r in range(13, 17)))
+    assert not doubted(plan((*ROWS[:4], *irs), roster, layout=layout, ir=1))  # 4 = 1 + SLACK
+    assert doubted(plan((*ROWS[:4], *irs), roster, layout=layout, ir=0))

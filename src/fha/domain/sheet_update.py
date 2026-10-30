@@ -296,7 +296,7 @@ def _check_shape(
     for r in rows:
         if not r.counted and r.name and not _in_block(r.row, layout):
             refusals.append(
-                f"row {r.row} ({r.name}) is labelled IR outside the IR rows right below "
+                f"row {r.row} is labelled IR outside the IR rows right below "
                 "the PAYROLL range: fix the tab by hand first"
             )
 

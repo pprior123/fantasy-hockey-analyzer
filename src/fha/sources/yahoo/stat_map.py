@@ -64,7 +64,7 @@ def _gp(position_type: str, sources: Sequence[Sequence[StatCategory]]) -> str | 
     try:
         return _find("GP", position_type, sources)
     except StatMapError:
-        only = frozenset(position_type)
+        only = frozenset({position_type})
         ids = {
             c.stat_id
             for cs in sources

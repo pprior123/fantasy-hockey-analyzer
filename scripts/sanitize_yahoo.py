@@ -32,6 +32,7 @@ DROP_KEYS = frozenset(
         "password",
         "iris_group_chat_id",
         "sendbird_channel_url",  # the league chat's channel (live 2026-10-30)
+        "renew",  # last season's league key: links the league's history (PR #19 review)
     }
 )
 # Keys that must never survive, whatever block they turn up in.

@@ -65,12 +65,13 @@ def test_league_name_and_invites_are_replaced_or_dropped() -> None:
         short_invitation_url="https://y.ahoo.it/join",
         iris_group_chat_id="chat-1",
         sendbird_channel_url="0123456789abcdef",  # live 2026-10-30: the league chat
+        renew="465_8437",  # last season's league key
         password="hunter2",  # noqa: S106 - a league join password, dropped
     )
     clean = sanitize({"league": [meta]})
     assert clean["league"][0]["name"] == "League"
     dropped = ("logo_url", "short_invitation_url", "iris_group_chat_id", "sendbird_channel_url")
-    for key in (*dropped, "password"):
+    for key in (*dropped, "renew", "password"):
         assert key not in clean["league"][0]
     assert clean["league"][0]["league_key"] == b.LEAGUE_KEY
 
@@ -119,6 +120,7 @@ def test_player_fragment_names_are_not_mistaken_for_team_names() -> None:
         ({"url": "https://example.invalid/p/5700@3X.JPG"}, []),
         ({"x": "https://x.example/a?u=bob@mail.example.org"}, ["$.x: email address"]),
         ({"x": "bob@2x.com"}, ["$.x: email address"]),
+        ({"x": "pic@x.png"}, ["$.x: email address"]),  # no scale: not an image name
         ({"x": "bob@2x.png.example.org"}, ["$.x: email address"]),
         ({"x": "a@2x.png and bob@mail.example.org"}, ["$.x: email address"]),
         ({"n": 5, "b": None}, []),

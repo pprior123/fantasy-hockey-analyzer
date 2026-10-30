@@ -9,14 +9,16 @@ gets reviewed before it can be committed.
 
 import json
 import re
+from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
 from scripts.record_yahoo import MANIFEST
-from scripts.sanitize_yahoo import FORBIDDEN_KEYS, problems
+from scripts.sanitize_yahoo import FORBIDDEN_KEYS, LEAGUE_NAME, TEAM_LOGO, problems, team_name
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "yahoo"
 INDEX = re.compile(r"\d+")  # Yahoo's list-like objects: {"0": ..., "1": ..., "count": 2}
@@ -152,7 +154,6 @@ ALLOWED_KEYS = frozenset(
         "recordbook_url",
         "refresh_rate",
         "remaining_games",
-        "renew",
         "renewed",
         "roster",
         "roster_adds",
@@ -223,7 +224,9 @@ ALLOWED_KEYS = frozenset(
 @cache
 def fixtures() -> dict[str, Any]:
     return {
-        path.name: json.loads(path.read_text()) for path in sorted(FIXTURES.glob("[0-9]*.json"))
+        path.name: json.loads(path.read_text())
+        for path in sorted(FIXTURES.glob("*.json"))
+        if path.name != MANIFEST
     }
 
 
@@ -257,3 +260,62 @@ def test_every_key_in_the_recording_was_reviewed() -> None:
 
 def test_no_forbidden_key_is_allowed() -> None:
     assert ALLOWED_KEYS.isdisjoint(FORBIDDEN_KEYS)
+
+
+# ---------------------------------------------------------------- values, not just keys
+# The sanitizer's name check needs the original names, which CI never has, so
+# these pin what the sanitizer leaves in place of them (PR #19 review).
+
+URL_HOSTS = frozenset(
+    {"s.yimg.com", "sports.yahoo.com", "hockey.fantasysports.yahoo.com", "example.invalid"}
+)
+
+
+def merged(node: Any) -> Iterator[dict[str, Any]]:
+    """Every object, with Yahoo's fragment lists ([{"team_key": ...}, {"name": ...}])
+    merged into one."""
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from merged(value)
+    elif isinstance(node, list):
+        fragments = [item for item in node if isinstance(item, dict)]
+        if fragments:
+            yield {k: v for item in fragments for k, v in item.items()}
+        for item in node:
+            yield from merged(item)
+
+
+def strings(node: Any) -> Iterator[str]:
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from strings(item)
+    elif isinstance(node, str):
+        yield node
+
+
+def test_teams_carry_only_placeholder_names_and_logos() -> None:
+    teams = [o for o in merged(list(fixtures().values())) if "team_key" in o and "name" in o]
+    assert teams
+    for team in teams:
+        assert team["name"] == team_name(team["team_key"])
+        if "team_logos" in team:
+            assert team["team_logos"] == TEAM_LOGO
+
+
+def test_the_league_carries_only_the_placeholder_name() -> None:
+    leagues = [o for o in merged(list(fixtures().values())) if "league_key" in o and "name" in o]
+    assert leagues
+    assert {o["name"] for o in leagues} == {LEAGUE_NAME}
+
+
+def test_urls_point_only_at_yahoo_s_public_hosts_or_the_placeholder() -> None:
+    hosts = {
+        urlsplit(text).hostname
+        for text in strings(list(fixtures().values()))
+        if text.startswith(("http://", "https://"))
+    }
+    assert hosts <= URL_HOSTS, sorted(hosts - URL_HOSTS)

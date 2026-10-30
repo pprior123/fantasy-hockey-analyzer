@@ -161,16 +161,43 @@ def test_production_services_wire_firestore_and_the_live_sheet() -> None:
 @pytest.mark.parametrize(
     ("env", "message"),
     [
-        ({"LEAGUE_SHEET_ID": "s"}, "^LEAGUE_SHEET_ID needs FIRESTORE_SERVICE_ACCOUNT_JSON$"),
+        (
+            {"LEAGUE_SHEET_ID": "s"},
+            "^LEAGUE_SHEET_ID needs LEAGUE_SHEET_SERVICE_ACCOUNT_JSON or "
+            "FIRESTORE_SERVICE_ACCOUNT_JSON$",
+        ),
         (
             {"LEAGUE_SHEET_ID": "s", "FIRESTORE_SERVICE_ACCOUNT_JSON": "not json"},
             "^FIRESTORE_SERVICE_ACCOUNT_JSON: the service-account key is not valid JSON$",
+        ),
+        (
+            {
+                "LEAGUE_SHEET_ID": "s",
+                "LEAGUE_SHEET_SERVICE_ACCOUNT_JSON": "not json",
+                "FIRESTORE_SERVICE_ACCOUNT_JSON": KEY,
+            },
+            "^LEAGUE_SHEET_SERVICE_ACCOUNT_JSON: the service-account key is not valid JSON$",
         ),
     ],
 )
 def test_the_live_sheet_needs_a_usable_key(env: dict[str, str], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
         league_sheet_from_env(env, HTTP)
+
+
+def test_a_sheet_key_lets_a_live_sheet_run_with_local_storage() -> None:
+    """The rehearsal (plan Phase 6): a live sheet, its own key, and the dev file."""
+    env = {
+        **BASE,
+        "YAHOO_CLIENT_ID": "id",
+        "YAHOO_CLIENT_SECRET": "sec",
+        "FHA_LOCAL_REPOSITORY": str(PRIVATE_DIR / "rehearsal-test-never-created.json"),
+        "LEAGUE_SHEET_ID": "copy-id",
+        "LEAGUE_SHEET_SERVICE_ACCOUNT_JSON": KEY,
+    }
+    services = production_services(env, HTTP, Settings.from_env(env))
+    assert isinstance(services.repo, LocalJsonRepository)
+    assert isinstance(services.sheet, SheetsApiLeagueSheet)
 
 
 def test_no_sheet_configured_is_none() -> None:

@@ -14,6 +14,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -21,6 +22,9 @@ from fha.services.clock import Clock, SystemClock
 from fha.services.refresh import DEFAULT_TTL_SECONDS, RefreshService
 from fha.sources.league_sheet.source import LeagueSheetSource
 from fha.storage.repository import Repository
+
+if TYPE_CHECKING:
+    from fha.sources.google_auth import TokenProvider
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
@@ -132,6 +136,24 @@ def _require_yahoo(environ: Mapping[str, str]) -> None:
         raise ConfigError(f"{' and '.join(missing)} not set (or set FHA_DEMO=1 for demo data)")
 
 
+SHEET_KEYS = ("LEAGUE_SHEET_SERVICE_ACCOUNT_JSON", "FIRESTORE_SERVICE_ACCOUNT_JSON")
+
+
+def sheet_tokens(environ: Mapping[str, str], scope: str, http: httpx.AsyncClient) -> TokenProvider:
+    """Tokens for the league sheet: its own key if set, else the Firestore key. A key
+    for the sheet alone lets a local run read a live sheet with local storage
+    (the storage factory refuses the Firestore key beside a dev file)."""
+    from fha.sources.google_auth import GoogleAuthError, ServiceAccountTokens
+
+    name = next((n for n in SHEET_KEYS if environ.get(n)), None)
+    if name is None:
+        raise ConfigError(f"LEAGUE_SHEET_ID needs {' or '.join(SHEET_KEYS)}")
+    try:
+        return ServiceAccountTokens(environ[name], [scope], http)
+    except GoogleAuthError as e:
+        raise ConfigError(f"{name}: {e}") from None
+
+
 def league_sheet_from_env(
     environ: Mapping[str, str], http: httpx.AsyncClient
 ) -> LeagueSheetSource | None:
@@ -139,17 +161,11 @@ def league_sheet_from_env(
     from fha.sources.league_sheet.source import SheetsApiLeagueSheet, XlsxLeagueSheet
 
     if environ.get("LEAGUE_SHEET_ID"):
-        from fha.sources.google_auth import GoogleAuthError, ServiceAccountTokens
         from fha.sources.league_sheet.sheets_api import SCOPE
 
-        key = environ.get("FIRESTORE_SERVICE_ACCOUNT_JSON")
-        if not key:
-            raise ConfigError("LEAGUE_SHEET_ID needs FIRESTORE_SERVICE_ACCOUNT_JSON")
-        try:
-            tokens = ServiceAccountTokens(key, [SCOPE], http)
-        except GoogleAuthError as e:
-            raise ConfigError(f"FIRESTORE_SERVICE_ACCOUNT_JSON: {e}") from None
-        return SheetsApiLeagueSheet(http, environ["LEAGUE_SHEET_ID"], tokens)
+        return SheetsApiLeagueSheet(
+            http, environ["LEAGUE_SHEET_ID"], sheet_tokens(environ, SCOPE, http)
+        )
     if environ.get("LEAGUE_SHEET_XLSX"):
         return XlsxLeagueSheet(Path(environ["LEAGUE_SHEET_XLSX"]))
     return None

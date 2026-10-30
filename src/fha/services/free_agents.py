@@ -2,7 +2,9 @@
 
 Each imported row is bound to a Yahoo player **once** and the binding is
 persisted: a row is never re-matched by name on later requests. Rows the
-cascade can't bind wait for the owner (``pending_reviews`` / ``confirm``).
+cascade can't bind wait for the owner (``pending_reviews`` / ``confirm``), who
+may instead dismiss one (``dismiss``): a player Yahoo's pool doesn't have, or
+one priced by an override.
 
 Re-importing is idempotent: rows are keyed by normalized name and position
 group, stored in a canonical order, and nothing is written when neither the
@@ -27,9 +29,10 @@ from fha.storage.chunks import load_chunked, save_chunked
 from fha.storage.repository import Repository
 
 ROWS = "fa_salaries"  # chunked record: the imported rows
-STATE = "fa_state"  # documents: BINDINGS, OVERRIDES
+STATE = "fa_state"  # documents: BINDINGS, OVERRIDES, DISMISSED
 BINDINGS = "bindings"
 OVERRIDES = "aav_overrides"
+DISMISSED = "dismissed"  # row keys the owner took off the review list
 
 
 class FreeAgentError(ValueError):
@@ -126,12 +129,14 @@ async def import_free_agent_salaries(
 async def pending_reviews(
     repo: Repository, pool: Sequence[Player], aliases: Aliases
 ) -> list[Review]:
-    """Imported rows with no binding yet, each with its best candidates (Admin)."""
+    """Imported rows with no binding yet and not dismissed, each with its best
+    candidates (Admin)."""
     bindings = await _load(repo, BINDINGS)
+    skipped = await _load(repo, DISMISSED)
     pool_candidates = candidates(pool)
     out = []
     for key, row in (await _rows(repo)).items():
-        if key not in bindings:
+        if key not in bindings and key not in skipped:
             query = Query(row.name, row.team, row.position)
             out.append(Review(key, row, match(query, pool_candidates, aliases=aliases)))
     return out
@@ -146,6 +151,29 @@ async def confirm(repo: Repository, key: str, player_id: str) -> SalaryRow:
     bindings[key] = {"player_id": player_id, "how": "confirmed"}
     await repo.put(STATE, BINDINGS, {"entries": bindings})
     return row
+
+
+async def dismiss(repo: Repository, key: str) -> SalaryRow:
+    """Take a row off the review list without binding it; the row, back."""
+    row = (await _rows(repo)).get(key)
+    if row is None:
+        raise FreeAgentError(f"no imported row {key!r}")
+    skipped = await _load(repo, DISMISSED)
+    skipped[key] = True
+    await repo.put(STATE, DISMISSED, {"entries": skipped})
+    return row
+
+
+async def dismissed(repo: Repository) -> list[SalaryRow]:
+    """The dismissed rows still in the imported file, in stored (key) order."""
+    skipped = await _load(repo, DISMISSED)
+    return [row for key, row in (await _rows(repo)).items() if key in skipped]
+
+
+async def restore_dismissed(repo: Repository) -> None:
+    """Put every dismissed row back on the review list."""
+    if await _load(repo, DISMISSED):
+        await repo.put(STATE, DISMISSED, {"entries": {}})
 
 
 async def unbind(repo: Repository, key: str) -> None:

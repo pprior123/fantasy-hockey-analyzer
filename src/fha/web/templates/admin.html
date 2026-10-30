@@ -163,8 +163,18 @@
     {% else %}
     <p class="muted">No close name in the pool.</p>
     {% endif %}
+    <form method="post" action="/admin/fa/dismiss" class="admin-inline">
+      <input type="hidden" name="key" value="{{ rv.key }}">
+      <button class="linkish" type="submit">Dismiss: none of these</button>
+    </form>
   </div>
   {% endfor %}
+  {% endif %}
+  {% if dismissed %}
+  <form method="post" action="/admin/fa/restore" class="admin-inline">
+    <p class="muted">Dismissed: {{ dismissed|map(attribute="name")|join(", ") }}.
+    <button class="linkish" type="submit">Put them back</button></p>
+  </form>
   {% endif %}
 </section>
 

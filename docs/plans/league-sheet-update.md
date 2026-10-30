@@ -157,7 +157,8 @@ it is outside an IR slot, and in an IR row if it is in one.
    someone still on the roster would stay in review forever.
 2. **Move to IR.** A matched counted row whose player now sits in an IR slot.
    Its four target cells are **copied verbatim**, `???` included, into a free
-   IR row, and the row is cleared. A verbatim copy keeps the row key
+   IR row, and the row is cleared. *(As built: copied as parsed, and a row with
+   no salary number is refused; see DECISIONS, implementation notes.)* A verbatim copy keeps the row key
    `(name, position)`, so the owner's confirmed binding survives, and no AAV
    lookup is needed.
 3. **Back from IR.** The reverse, verbatim, into a free counted row.

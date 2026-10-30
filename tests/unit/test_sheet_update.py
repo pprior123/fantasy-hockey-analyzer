@@ -249,8 +249,10 @@ def test_an_unknown_cap_hit_for_an_incoming_player_is_refused() -> None:
 def test_an_unknown_cap_hit_makes_the_payroll_after_unknown() -> None:
     p = plan(ROWS, (*ROSTER, member("ed", aav=None)))
     assert (p.payroll_after, p.room_after) == (None, None)
-    # In an IR slot his cap hit doesn't count, so the payroll is still known.
-    assert plan(ROWS, (*ROSTER, member("ed", in_ir=True, aav=None))).payroll_after == 4_000_000
+    # His full cap hit must fit when he's acquired, even into an IR slot (cap.py).
+    p = plan(ROWS, (*ROSTER, member("ed", in_ir=True, aav=None)))
+    assert p.payroll_after is None
+    assert "Ed Last's cap hit is unknown" in refused(p)
 
 
 def test_no_room_after_without_a_cap() -> None:
@@ -494,15 +496,6 @@ def test_a_stale_player_id_on_an_unmatched_row_is_not_a_match() -> None:
             {"layout": replace(LAYOUT, name_column="A")},
             "the tab's player columns include column A, which holds the IR labels",
         ),
-        (
-            {"active": 3},
-            "the tab would list 4 players outside IR, more than the league's 3: "
-            "check the Yahoo roster",
-        ),
-        (
-            {"ir": 0},
-            "the tab would list 1 IR players, more than the league's 0: check the Yahoo roster",
-        ),
     ],
 )
 def test_refusal_messages(kwargs: dict[str, object], reason: str) -> None:
@@ -574,3 +567,45 @@ def test_the_guard_names_the_cell_and_the_problem() -> None:
         guard([CellEdit(13, "C", None, "x")], ROWS, LAYOUT)
     with pytest.raises(GuardError, match="edit with an unwritable value at C7"):
         guard([CellEdit(7, "C", None, 1.5)], ROWS, LAYOUT)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------- round 1 (PR #22)
+
+
+def test_slot_messages_for_the_tab_as_read_and_after_the_edits() -> None:
+    assert plan(active=3).refusals == (
+        "the tab lists 4 players and 1 IR players, more than the league's 3 and 3: "
+        "check what the PAYROLL range and the IR rows cover",
+        "the tab would list 4 players outside IR, more than the league's 3: check the Yahoo roster",
+    )
+    assert plan(ir=0).refusals[1] == (
+        "the tab would list 1 IR players, more than the league's 0: check the Yahoo roster"
+    )
+    # Fine as read, too many after: only the second message.
+    assert plan(ROWS, (*ROSTER, member("ed")), active=4).refusals == (
+        "the tab would list 5 players outside IR, more than the league's 4: check the Yahoo roster",
+    )
+
+
+def test_a_payroll_range_far_longer_than_a_roster_is_refused() -> None:
+    long = replace(LAYOUT, last_row=7 + 2 * 25)  # 51 rows: twice 25, plus one
+    assert plan(layout=long).refusals == (
+        "the PAYROLL range covers 51 rows, more than twice the league's 25 roster spots: "
+        "check that it covers only your player rows",
+    )
+    assert plan(layout=replace(LAYOUT, last_row=6 + 2 * 25)).ok  # exactly twice
+
+
+def test_a_row_with_no_name_is_never_dropped() -> None:
+    salary_line = row(11, "", salary=500_000, status="unmatched", player_id=None)
+    rows = (*ROWS[:4], salary_line, ROWS[4])
+    layout = replace(LAYOUT, blank_rows=(12,))
+    p = plan(rows, ROSTER, layout=layout)
+    assert p.up_to_date
+    p = plan(rows, (*ROSTER, member("ed")), layout=layout)
+    assert p.changes == (Change("add", "Last, Ed", None, 12),)  # not row 11
+
+
+def test_free_rows_go_out_in_player_id_order_whatever_yahoo_lists_first() -> None:
+    a, b = member("ed"), member("fay")
+    assert plan(ROWS, (*ROSTER, a, b)).edits == plan(ROWS, (b, *ROSTER, a)).edits

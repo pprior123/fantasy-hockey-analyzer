@@ -198,21 +198,24 @@ value-only edits to the name, position, team and salary cells
 (`domain/sheet_update.py`). A dropped player's row is cleared; an added player
 fills a cleared row first, then a blank row inside the PAYROLL range, written
 as "Last, First" with Yahoo's position and team codes and the cap hit; a player
-moving into or out of an IR slot has his four cells copied verbatim between
-the counted range and an empty IR row. Column A, the header row and every
-other cell are never written, and rows are never inserted or deleted, so the
+moving into or out of an IR slot has his four cells copied as parsed (whole
+dollars, trimmed text) between the counted range and an empty IR row in the
+IR block right below the range. A row with no name (a salary line) is never
+dropped. Column A, the header row and every other cell are never written, and rows are never inserted or deleted, so the
 PAYROLL range and anything below it stay put. The plan refuses (with every
 reason) when the result would be over the cap, the tab disagrees with itself
 (PAYROLL is not the SUM of its counted rows within rounding, its CAP differs,
-or a row holds a negative salary), a cell to change holds a formula, a row to
+or a row holds a negative salary), the tab as read lists more players than the
+league's slots or its PAYROLL range spans more than twice the roster spots
+(it may reach into the contact details), a cell to change holds a formula, a row to
 move has no salary number, a row awaits match review (unless the owner ticks
 it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
 counts (from the league settings) are checked as invariants. Before writing,
 the app re-reads the sheet and recomputes the plan; it writes only if the
 plan's digest is the one the owner saw (signed, 10 minutes), and only if every
 other tab is protected against the service account as a whole tab
-(`protectedRanges`: no bounds, no unprotected ranges, `requestingUserCanEdit`
-false). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
+(`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
+`requestingUserCanEdit` false). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
 per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
 `spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,

@@ -329,3 +329,36 @@ async def test_a_new_row_that_keeps_some_cells_is_bound_by_what_the_row_holds() 
     )
     assert {e.column for e in plan.edits} == {"E", "F"}  # same name and position
     assert _added_keys(plan, rows, layout) == {row_key("Able, Ann", "C"): "9"}
+
+
+async def test_a_guard_refusal_writes_nothing(monkeypatch: Any) -> None:
+    from fha.domain.sheet_update import GuardError
+    from fha.services import sheet_update
+
+    def refuse(*args: Any) -> None:
+        raise GuardError("edit outside the allowed cells: C40")
+
+    monkeypatch.setattr(sheet_update, "guard", refuse)
+    result, writer, _ = await confirm(BEFORE)
+    assert result.message == "Nothing was written: edit outside the allowed cells: C40."
+    assert writer.writes == []
+
+
+async def test_a_storage_failure_after_the_write_still_says_it_was_written(
+    monkeypatch: Any,
+) -> None:
+    from fha.services import sheet_update
+    from fha.storage.repository import RepositoryError
+
+    async def down(*args: Any) -> None:
+        raise RepositoryError("project fha-prod refused", detail="HTTP 503")
+
+    monkeypatch.setattr(sheet_update, "bind_written_rows", down)
+    result, writer, _ = await confirm(BEFORE, AFTER)
+    assert len(writer.writes) == 1
+    assert (result.ok, result.written) == (False, 7)
+    assert result.message == (
+        "Written (7 cells), but the app's storage failed afterwards. "
+        "Check the tab, then read the sheet again (Admin)."
+    )
+    assert "fha-prod" not in result.message

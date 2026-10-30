@@ -319,6 +319,8 @@ def protected(*ranges: Any) -> Any:
         ([{"range": {"sheetId": 9}}], False),  # another tab's range
         ([{"namedRangeId": "x"}], False),  # no range given
         ([{"range": {"sheetId": 6, "startRowIndex": 2}}, {"range": {"sheetId": 6}}], True),
+        ([{"range": {"sheetId": 6}, "warningOnly": True}], False),  # a warning stops no one
+        ([{"range": {"sheetId": 6}, "warningOnly": False}], True),
     ],
 )
 def test_a_tab_is_locked_only_by_a_whole_tab_protection_against_the_reader(
@@ -338,3 +340,10 @@ def test_editable_tabs_are_unknown_without_protection_data() -> None:
     assert parse_sheet(Grid(())).editable_tabs is None
     sheet = parse_sheet(protected({"range": {"sheetId": 6}}))
     assert sheet.editable_tabs == ("Mine",)
+
+
+def test_a_whole_tab_protection_on_sheet_zero_has_an_empty_range() -> None:
+    # Google leaves sheetId 0 out of both the properties and the range.
+    sheets = [{"properties": {"title": "First"}, "protectedRanges": [{"range": {}}]}]
+    [tab] = grid_from_response({"sheets": sheets}).tabs
+    assert (tab.sheet_id, tab.locked) == (0, True)

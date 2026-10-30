@@ -158,10 +158,15 @@ def plan_update(
     """
     refusals: list[str] = []
     _check_tab(rows, payroll, tab_cap, cap, refusals)
+    _check_shape(rows, layout, active_slots, ir_slots, refusals)
     by_player = {r.player_id: r for r in rows if r.status == "matched" and r.player_id}
 
+    # A row with no name (a salary line, a buyout amount) is never a dropped player:
+    # it is left as it is, like every cell the plan doesn't name.
     drops = [
-        r for r in rows if r.status == "unmatched" or (r.status == "review" and r.row in ticked)
+        r
+        for r in rows
+        if r.name and (r.status == "unmatched" or (r.status == "review" and r.row in ticked))
     ]
     for r in rows:
         if r.status == "review" and r.row not in ticked:
@@ -170,6 +175,9 @@ def plan_update(
                 "or tick “drop this row”"
             )
     # A matched player moves when his row's kind disagrees with his slot.
+    # Player-ID order, not Yahoo's roster order: a lineup shuffle between the preview and
+    # the confirm mustn't hand out the free rows differently.
+    roster = sorted(roster, key=lambda m: m.player_id)
     moving = [(m, by_player[m.player_id]) for m in roster if m.player_id in by_player]
     moving = [(m, r) for m, r in moving if r.counted == m.in_ir]
     to_ir = [(m, r) for m, r in moving if m.in_ir]
@@ -218,7 +226,7 @@ def plan_update(
         for (row, col), new in sorted(cells.items())
         if olds.get(row, {}).get(col) != new
     )
-    unknown = any(m.aav is None and not m.in_ir for m in adds)
+    unknown = any(m.aav is None for m in adds)  # refused above, IR or not
     payroll_after = None if unknown else _payroll_after(payroll, edits, layout)
     _check_result(rows, layout, edits, payroll_after, cap, active_slots, ir_slots, refusals)
     return UpdatePlan(
@@ -255,6 +263,30 @@ def guard(edits: Iterable[CellEdit], rows: Iterable[TabRow], layout: TabLayout) 
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def _check_shape(
+    rows: Sequence[TabRow],
+    layout: TabLayout,
+    active_slots: int,
+    ir_slots: int,
+    refusals: list[str],
+) -> None:
+    """The tab as read must look like one team's rows: a PAYROLL range that could
+    reach into the contact details below would make those rows "dropped players"."""
+    span = layout.last_row - layout.first_row + 1
+    if span > 2 * active_slots:
+        refusals.append(
+            f"the PAYROLL range covers {span} rows, more than twice the league's "
+            f"{active_slots} roster spots: check that it covers only your player rows"
+        )
+    counted = sum(1 for r in rows if r.name and r.counted)
+    ir = sum(1 for r in rows if r.name and not r.counted)
+    if counted > active_slots or ir > ir_slots:
+        refusals.append(
+            f"the tab lists {counted} players and {ir} IR players, more than the league's "
+            f"{active_slots} and {ir_slots}: check what the PAYROLL range and the IR rows cover"
+        )
 
 
 def _check_tab(

@@ -15,6 +15,7 @@ error never carries the spreadsheet ID or Google's response body.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any, Protocol
 
@@ -27,6 +28,7 @@ from fha.sources.league_sheet.models import LeagueSheetError, ParsedTab
 from fha.sources.league_sheet.sheets_api import API
 
 WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+COLUMN = re.compile(r"[B-Z]|[A-Z]{2,3}")  # never column A (the IR labels)
 
 
 class LeagueSheetWriter(Protocol):
@@ -40,7 +42,7 @@ def update_request(sheet_id: int, edits: Sequence[CellEdit]) -> dict[str, Any]:
     start at 0, and the end is exclusive)."""
     requests = []
     for e in edits:
-        if e.column == "A" or not e.column.isalpha() or e.row < 1:
+        if not COLUMN.fullmatch(e.column) or e.row < 1:
             raise LeagueSheetError(f"refusing to write {e.column}{e.row}")
         col = column_number(e.column)
         requests.append(

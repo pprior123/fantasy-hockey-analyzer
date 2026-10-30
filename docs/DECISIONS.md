@@ -2436,3 +2436,20 @@ the few facts the writer needs instead.
   count, reading names from every edited column instead of the name column
   changes nothing, because each edit to a row either clears all four cells or
   writes its name.
+
+**Review round 1 (PR #22, two Claude reviewers: correctness, security).**
+Fixed: a row with no name (a salary line) is never dropped (DECISIONS M3 keeps
+such rows); the plan refuses a tab that, as read, lists more players than the
+slots or whose PAYROLL range spans over twice the roster spots, since contact
+rows inside it would become "drops"; free IR rows come only from the IR block
+right below the range, at most 10; a warning-only protection doesn't lock a
+tab; free rows go out in player-ID order, so a lineup shuffle between preview
+and confirm doesn't change the plan; a guard refusal and a storage failure
+after the write are messages, not a 500; the writer accepts only column letters
+B–ZZZ; "verbatim" in SPEC now says "as parsed". An IR add needs a known cap hit
+too (his full cap hit must fit when acquired, cap.py), so the payroll after is
+unknown without one. Accepted as is: the outcome flash travels in the redirect
+URL and the preview's GET reads and stores the sheet, as Admin's screens do.
+Open for the owner: whether their tab ever holds named non-player lines
+(buyouts, retained salary) inside the PAYROLL range; such a line would be shown
+as a drop in the preview.

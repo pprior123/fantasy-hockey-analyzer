@@ -42,6 +42,7 @@ LABEL_REACH = 3  # the formula is at most this many columns right of its label
 MAX_REFERENCES = 2  # PAYROLL may point at another cell, which may point at one more
 HEADER_ROWS_ABOVE = 3
 MAX_BLANK_ROWS = 40  # free rows kept for the writer; a range can be huge (A1:A999999)
+MAX_IR_ROWS = 10  # free IR rows kept; they must sit in the IR block below the range
 
 REF = r"\$?[A-Za-z]{1,3}\$?\d{1,12}"  # never int() of a huge string
 SUM_OF_RANGE = re.compile(rf"=\s*SUM\(\s*({REF})\s*:\s*({REF})\s*\)\s*", re.IGNORECASE)
@@ -147,11 +148,7 @@ def _parse_tab(tab: Tab, payroll_label: tuple[int, int], cap: int | None) -> Par
         blank_rows=tuple(
             islice((r for r in range(first, r2 + 1) if _free(tab, r, targets)), MAX_BLANK_ROWS)
         ),
-        empty_ir_rows=tuple(
-            (r, label)
-            for r in range(r2 + 1, tab.max_row + 1)
-            if (label := IR_LABELS.get(tab.cell(r, 1).text)) is not None and _free(tab, r, targets)
-        ),
+        empty_ir_rows=_empty_ir_rows(tab, r2, targets),
     )
 
 
@@ -245,6 +242,28 @@ def _row(
         has_formula=any(tab.cell(r, c).formula for c in _targets(cols, salary_col)),
         negative_salary=amount is not None and amount < 0,
     )
+
+
+def _empty_ir_rows(
+    tab: Tab, last: int, targets: tuple[int, ...]
+) -> tuple[tuple[int, IRLabel], ...]:
+    """Free IR rows for the writer: blank IR-labelled rows in the IR block, the run of
+    IR-labelled rows that starts at the first one below the range. An IR label further
+    down (in the contact details, say) is never a place to write."""
+    rows: list[tuple[int, IRLabel]] = []
+    started = False
+    for r in range(last + 1, tab.max_row + 1):
+        label = IR_LABELS.get(tab.cell(r, 1).text)
+        if label is None:
+            if started:
+                break
+            continue
+        started = True
+        if _free(tab, r, targets):
+            rows.append((r, label))
+            if len(rows) == MAX_IR_ROWS:
+                break
+    return tuple(rows)
 
 
 def _targets(cols: _Columns, salary_col: int) -> tuple[int, ...]:

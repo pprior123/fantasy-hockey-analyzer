@@ -88,6 +88,9 @@ def test_a_name_that_looks_like_a_formula_is_still_text() -> None:
         CellEdit(7, "A", None, "IR"),
         CellEdit(0, "C", None, "x"),
         CellEdit(7, "C1", None, "x"),
+        CellEdit(7, "Ä", None, "x"),  # a letter, but not a column
+        CellEdit(7, "c", None, "x"),
+        CellEdit(7, "ABCD", None, "x"),
         CellEdit(7, "C", None, True),
         CellEdit(7, "C", None, 1.5),  # type: ignore[arg-type]
     ],

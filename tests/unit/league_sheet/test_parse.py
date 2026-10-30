@@ -524,3 +524,23 @@ def test_a_vast_range_keeps_only_the_first_blank_rows() -> None:
     # Rows 13-14 hold this synthetic tab's contact block, inside the vast range.
     assert len(tab.blank_rows) == MAX_BLANK_ROWS
     assert tab.blank_rows[:5] == (9, 10, 11, 12, 15)
+
+
+def test_free_ir_rows_come_only_from_the_ir_block_below_the_range() -> None:
+    below = [
+        Player("Not IR"),  # a row between the range and the IR block
+        IRRow("IR+", None),
+        IRRow("IR", Player("Ike Injured")),
+        IRRow("IR+", None),
+        IRRow("Notes", None),  # the block ends here
+        IRRow("IR", None),  # an IR label further down: never a place to write
+    ]
+    tab = one(TeamTab("Ibis", roster(2), below=below))
+    assert tab.empty_ir_rows == ((10, "IR+"), (12, "IR+"))
+
+
+def test_free_ir_rows_are_capped() -> None:
+    from fha.sources.league_sheet.parse import MAX_IR_ROWS
+
+    tab = one(TeamTab("Jays", roster(1), below=[IRRow("IR+", None)] * (MAX_IR_ROWS + 3)))
+    assert len(tab.empty_ir_rows) == MAX_IR_ROWS

@@ -24,7 +24,7 @@ from fha.sources.league_sheet.models import LeagueSheetError
 API = "https://sheets.googleapis.com/v4/spreadsheets/"
 FIELDS = (
     "sheets(properties(title,sheetId),"
-    "protectedRanges(range,requestingUserCanEdit,unprotectedRanges),"
+    "protectedRanges(range,requestingUserCanEdit,unprotectedRanges,warningOnly),"
     "data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))"
 )
 SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -86,7 +86,8 @@ def grid_from_response(body: Any) -> Grid:
 
 def _locked(sheet: dict[str, Any], sheet_id: int, title: str) -> bool:
     """The tab is protected as a whole against the reader: a protected range with no
-    bounds on this tab, no unprotected ranges in it, and ``requestingUserCanEdit``
+    bounds on this tab, no unprotected ranges in it, not warning-only (anyone may edit
+    through a warning, and the API never sees it), and ``requestingUserCanEdit``
     false. A partial protection doesn't count (SPEC §4a "Writing")."""
     for protection in _list(sheet.get("protectedRanges"), f"{title}: protectedRanges"):
         if not isinstance(protection, dict):
@@ -98,7 +99,13 @@ def _locked(sheet: dict[str, Any], sheet_id: int, title: str) -> bool:
         whole = not bounds and grid_range.get("sheetId", 0) == sheet_id
         # Google leaves false out of its JSON: no requestingUserCanEdit is false.
         can_edit = protection.get("requestingUserCanEdit", False)
-        if whole and not protection.get("unprotectedRanges") and can_edit is False:
+        warning_only = protection.get("warningOnly", False)
+        if (
+            whole
+            and not protection.get("unprotectedRanges")
+            and warning_only is False
+            and can_edit is False
+        ):
             return True
     return False
 

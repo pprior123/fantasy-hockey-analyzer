@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass
 
 from fha.domain.matcher import Status
 from fha.domain.sheet_update import (
+    GuardError,
     Member,
     RowStatus,
     TabLayout,
@@ -46,7 +47,7 @@ from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet, Parse
 from fha.sources.league_sheet.source import LeagueSheetSource
 from fha.sources.league_sheet.writer import LeagueSheetWriter
 from fha.sources.yahoo.models import IR_SLOTS, LeagueSnapshot, Player
-from fha.storage.repository import Repository
+from fha.storage.repository import Repository, RepositoryError
 
 log = logging.getLogger(__name__)
 
@@ -258,18 +259,32 @@ async def write_update(
             f"Nothing was written: the app can still edit {len(open_tabs)} other tab(s) "
             f"({names}). Protect them first (Data → Protect sheets and ranges).",
         )
-    guard(plan.edits, update.rows, update.layout)
+    try:
+        guard(plan.edits, update.rows, update.layout)
+    except GuardError as e:  # a bug: the plan left its own allowed cells
+        log.error("sheet update refused by the guard: %s", e)
+        return WriteResult(False, f"Nothing was written: {e}.")
     try:
         await writer.write(tab, plan.edits)
     except LeagueSheetError as e:
         return WriteResult(False, f"The write failed and nothing was changed ({e}).")
+    written = len(plan.edits)
     log.info(
         "sheet update written to %s: %s",
         tab.name,
         "; ".join(f"{c.action} {c.name}" for c in plan.changes),
     )
-    await bind_written_rows(repo, tab.name, _added_keys(plan, update.rows, update.layout))
-    return await _read_back(repo, clock, source, snapshot, plan, len(plan.edits))
+    try:  # Google has the change now: from here on, say so whatever fails
+        await bind_written_rows(repo, tab.name, _added_keys(plan, update.rows, update.layout))
+        return await _read_back(repo, clock, source, snapshot, plan, written)
+    except RepositoryError as e:
+        log.warning("after the sheet write, the app's storage failed (%s)", e.summary)
+        return WriteResult(
+            False,
+            f"Written ({written} cells), but the app's storage failed afterwards. "
+            "Check the tab, then read the sheet again (Admin).",
+            written,
+        )
 
 
 def _unprotected(sheet: ParsedSheet, mine: str) -> list[str] | None:

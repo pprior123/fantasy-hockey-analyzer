@@ -1,17 +1,22 @@
 """Update my tab (SPEC §4a "Writing", §7.5): the preview through the app."""
 
 import asyncio
+import re
 from typing import Any
 
-from fha.domain.sheet_update import sheet_name
+from itsdangerous import URLSafeTimedSerializer
+
+from fha.domain.sheet_update import CellEdit, sheet_name
 from fha.services.free_agents import set_aav_override
 from fha.services.league_sheet import bind_tab, read_league_sheet
-from fha.sources.league_sheet.models import LeagueSheetError
+from fha.sources.league_sheet.grid import Cell, Grid, Tab, column_number
+from fha.sources.league_sheet.models import LeagueSheetError, ParsedTab
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
 from fha.web.context import Services
+from fha.web.routes.sheet_update import CONFIRM_SALT
 from tests.unit.league_sheet import sheets as s
-from tests.unit.web.helpers import make_services
+from tests.unit.web.helpers import SETTINGS, make_services
 from tests.unit.web.test_screens import MINE, client, seed
 
 FIRST = MINE.roster[0].player  # the player the tab is missing
@@ -154,3 +159,136 @@ def test_without_yahoo_data_or_valid_settings_the_page_says_so(monkeypatch: Any)
 
         monkeypatch.setattr(sheet_update, "page_data", fail)
         assert text in page(seeded(mine_tab()))
+
+
+# ---------------------------------------------------------------- the confirm
+
+
+SUM = re.compile(r"=SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)")
+
+
+class LiveSheet:
+    """Google, roughly: a grid the writer changes, SUMs recomputed, every tab but
+    the owner's locked against the app."""
+
+    def __init__(self, tab: s.TeamTab) -> None:
+        self.tabs = list(s.grid(tab))
+        self.writes = 0
+
+    async def fetch(self) -> Any:
+        tabs = tuple(Tab(t.title, t.cells, i, t.title != "Mine") for i, t in enumerate(self.tabs))
+        return parse_sheet(Grid(tabs))
+
+    async def write(self, tab: ParsedTab, edits: Any) -> None:
+        self.writes += 1
+        i = next(i for i, t in enumerate(self.tabs) if t.title == tab.name)
+        cells = dict(self.tabs[i].cells)
+        for e in edits:
+            assert isinstance(e, CellEdit)
+            key = (e.row, column_number(e.column))
+            cells.pop(key, None)
+            if e.new is not None:
+                cells[key] = Cell(e.new)
+        for key, cell in list(cells.items()):
+            if cell.formula and (m := SUM.fullmatch(cell.formula)):
+                col, r1, r2 = column_number(m[1]), int(m[2]), int(m[4])
+                total = sum(
+                    c.value
+                    for (r, c_), c in cells.items()
+                    if c_ == col and r1 <= r <= r2 and isinstance(c.value, int | float)
+                )
+                cells[key] = Cell(total, cell.formula)
+        self.tabs[i] = Tab(self.tabs[i].title, cells)
+
+
+def writable(tab: s.TeamTab) -> tuple[Services, LiveSheet]:
+    svc = seeded(tab)
+    sheet = LiveSheet(tab)
+    svc.sheet = sheet
+    svc.sheet_writer = sheet
+    return svc, sheet
+
+
+def token_in(html: str) -> str:
+    return html.split('name="token" value="', 1)[1].split('"', 1)[0]
+
+
+def test_writing_from_the_preview_and_reading_back() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    html = c.get("/admin/sheet/update").text
+    assert "Write these 3 cells to Mine" in html
+    response = c.post("/admin/sheet/update", data={"token": token_in(html)}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/sheet/update?flash=")
+    after = c.get(response.headers["location"]).text
+    assert sheet.writes == 1
+    assert "Written: 3 cells on Mine. PAYROLL is now $26,000,000, as expected." in after
+    assert "as expected." in after
+    assert "Your tab matches your Yahoo roster. Nothing to change." in after
+
+
+def test_a_tab_changed_after_the_preview_is_not_written() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    sheet.tabs[-1] = s.grid(mine_tab(misspell=True)).tabs[-1]  # someone edits the tab
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert sheet.writes == 0
+    assert "changed since the preview" in response.text
+
+
+def test_ticks_travel_with_the_confirm_and_come_back_on_an_error() -> None:
+    second = MINE.roster[1].player
+    svc = seeded(mine_tab(misspell=True), priced=(FIRST.player_id, second.player_id))
+    sheet = LiveSheet(mine_tab(misspell=True))
+    svc.sheet, svc.sheet_writer = sheet, sheet
+    c = client(svc)
+    html = c.get("/admin/sheet/update").text
+    row = html.split('name="tick" value="', 1)[1].split('"', 1)[0]
+    html = c.get(f"/admin/sheet/update?tick={row}").text
+    assert f'<input type="hidden" name="tick" value="{row}">' in html
+    sheet.tabs[-1] = s.grid(mine_tab()).tabs[-1]  # changed meanwhile
+    response = c.post(
+        "/admin/sheet/update",
+        data={"token": token_in(html), "tick": [row, "x"]},
+        follow_redirects=False,
+    )
+    assert response.headers["location"].endswith(f"&tick={row}")
+
+
+def test_a_bad_or_old_token_writes_nothing() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    for token in (
+        "forged",
+        URLSafeTimedSerializer(SETTINGS.session_secret, salt=CONFIRM_SALT).dumps(7),
+    ):
+        response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+        assert "That preview is too old: check it again." in response.text
+    assert sheet.writes == 0
+
+
+def test_without_a_writer_there_is_no_button_and_no_confirm() -> None:
+    svc = seeded(mine_tab())
+    c = client(svc)
+    html = c.get("/admin/sheet/update").text
+    assert 'name="token"' not in html
+    assert c.post("/admin/sheet/update", data={"token": "x"}).status_code == 404
+
+
+def test_without_yahoo_data_the_confirm_writes_nothing(monkeypatch: Any) -> None:
+    from fha.services.refresh import RefreshError
+    from fha.web.routes import sheet_update
+
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+
+    async def fail(*args: Any) -> Any:
+        raise RefreshError("down")
+
+    monkeypatch.setattr(sheet_update, "page_data", fail)
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert "Nothing was written: no Yahoo data (RefreshError)." in response.text
+    assert sheet.writes == 0

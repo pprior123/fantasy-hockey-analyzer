@@ -84,7 +84,15 @@ def parse_sheet(grid: Grid) -> ParsedSheet:
                 cap_refs[(title, m[3].replace("$", "").upper())] += 1
         tabs.append(_parse_tab(tab, payroll_label, _dollars(cap_cell)))
     cap, source = _summary_cap(grid, cap_refs)
-    return ParsedSheet(cap=cap, cap_source=source, tabs=tuple(tabs), other_tabs=tuple(others))
+    known = all(t.locked is not None for t in grid) and bool(grid.tabs)
+    editable = tuple(t.title for t in grid if not t.locked) if known else None
+    return ParsedSheet(
+        cap=cap,
+        cap_source=source,
+        tabs=tuple(tabs),
+        other_tabs=tuple(others),
+        editable_tabs=editable,
+    )
 
 
 def _parse_tab(tab: Tab, payroll_label: tuple[int, int], cap: int | None) -> ParsedTab:

@@ -389,3 +389,14 @@ async def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> 
         (),
     )
     assert not back.rows[0].has_formula
+
+
+async def test_rows_the_app_wrote_are_bound_and_nothing_bound_writes_nothing() -> None:
+    from fha.services.league_sheet import ROW_BINDINGS, bind_written_rows
+
+    repo = InMemoryRepository()
+    await bind_written_rows(repo, "Pinecone", {})
+    assert await repo.get(COLLECTION, ROW_BINDINGS) is None
+    await bind_written_rows(repo, "Pinecone", {"knight ada|F": "1"})
+    doc = await repo.get(COLLECTION, ROW_BINDINGS)
+    assert doc == {"entries": {"Pinecone": {"knight ada|F": {"player_id": "1", "how": "written"}}}}

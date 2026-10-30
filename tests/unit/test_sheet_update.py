@@ -126,6 +126,7 @@ def test_a_drop_clears_the_row_and_an_add_reuses_it() -> None:
     assert p.changes == (Change("drop", "Bo", 8, None), Change("add", "Eagle, Ed", None, 8))
     assert cells(p.edits) == {"C8": "Eagle, Ed", "D8": "C,LW", "E8": "TB", "F8": 1_500_000}
     assert [(e.old, e.new) for e in p.edits if e.column == "C"] == [("Bo", "Eagle, Ed")]
+    assert p.added == ((8, "ed"),)
     assert p.payroll_after == 4_000_000 - 1_000_000 + 1_500_000
 
 
@@ -232,6 +233,7 @@ def refused(p) -> str:  # type: ignore[no-untyped-def]
 def test_over_the_cap_is_refused_with_the_amount() -> None:
     p = plan(ROWS, (*ROSTER, member("ed", aav=7_000_000)))
     assert "over the cap by $1,000,000" in refused(p)
+    assert p.added == ()
     assert p.room_after == -1_000_000
 
 

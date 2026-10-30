@@ -77,6 +77,9 @@ class ParsedSheet:
     cap_source: str | None  # where the cap came from, e.g. "'Summary'!B3"
     tabs: tuple[ParsedTab, ...]  # the team tabs (those with a PAYROLL label)
     other_tabs: tuple[str, ...] = ()  # tabs with no PAYROLL: summary, notes, ...
+    # Tabs (any kind) the reader may edit: none protected against it as a whole.
+    # None: unknown (an .xlsx). Not stored: the writer checks a fresh read.
+    editable_tabs: tuple[str, ...] | None = None
 
     def tab(self, name: str) -> ParsedTab | None:
         return next((t for t in self.tabs if t.name == name), None)

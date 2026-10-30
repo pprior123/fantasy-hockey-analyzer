@@ -62,7 +62,16 @@
     </tbody>
   </table>
   <p class="muted">Other columns in these rows are left as they are. Rows are never added or removed.</p>
+  {% if token %}
+  <form method="post" action="/admin/sheet/update">
+    <input type="hidden" name="token" value="{{ token }}">
+    {% for t in update.ticked %}<input type="hidden" name="tick" value="{{ t }}">{% endfor %}
+    <button type="submit" class="btn">Write these {{ plan.edits|length }} cells to {{ update.tab.name }}</button>
+  </form>
+  <p class="muted">The sheet is read again first; if it or your roster changed, nothing is written and you see the new preview.</p>
+  {% else %}
   <p class="warn">Writing to the sheet is off, so apply these edits by hand.</p>
+  {% endif %}
   {% endif %}
   {% endif %}
 </section>

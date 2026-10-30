@@ -86,6 +86,9 @@ class Tab:
     title: str
     cells: Mapping[tuple[int, int], Cell] = field(default_factory=dict, repr=False)
     sheet_id: int | None = None  # Google's numeric tab ID; None from an .xlsx
+    # Whether the reader can't edit this tab: a whole-tab protection that excludes the
+    # reader (SPEC §4a "Writing"). None: unknown (an .xlsx).
+    locked: bool | None = None
 
     def cell(self, row: int, col: int) -> Cell:
         return self.cells.get((row, col), EMPTY)

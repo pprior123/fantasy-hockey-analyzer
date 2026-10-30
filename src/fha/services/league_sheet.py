@@ -370,6 +370,18 @@ async def confirm_row(repo: Repository, tab: str, key: str, player_id: str) -> N
     await repo.put(COLLECTION, ROW_BINDINGS, {"entries": rows})
 
 
+async def bind_written_rows(repo: Repository, tab: str, rows: Mapping[str, str]) -> None:
+    """Bind the rows the app itself wrote (row key -> player ID), so its own new rows
+    are never re-matched by name (SPEC §4a "Writing")."""
+    if not rows:
+        return
+    entries = await _entries(repo, ROW_BINDINGS)
+    bound = entries.setdefault(tab, {})
+    for key, player_id in rows.items():
+        bound[key] = {"player_id": player_id, "how": "written"}
+    await repo.put(COLLECTION, ROW_BINDINGS, {"entries": entries})
+
+
 # ---------------------------------------------------------------- salaries for the app
 
 

@@ -25,6 +25,7 @@ from fha.storage.repository import Repository
 
 if TYPE_CHECKING:
     from fha.sources.google_auth import TokenProvider
+    from fha.sources.league_sheet.writer import LeagueSheetWriter
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
@@ -104,6 +105,8 @@ class Services:
     sheet: LeagueSheetSource | None = None  # None: no league sheet configured
     # Awaited before every page (``page_data``): the demo's built-in salaries.
     prepare: Callable[[], Awaitable[None]] | None = None
+    # Writes the owner's tab (SPEC §4a "Writing"); None: writing is off.
+    sheet_writer: LeagueSheetWriter | None = None
 
 
 ServicesFactory = Callable[[httpx.AsyncClient], Services]
@@ -154,6 +157,24 @@ def sheet_tokens(environ: Mapping[str, str], scope: str, http: httpx.AsyncClient
         raise ConfigError(f"{name}: {e}") from None
 
 
+def sheet_writer_from_env(
+    environ: Mapping[str, str], http: httpx.AsyncClient
+) -> LeagueSheetWriter | None:
+    """The writer for the owner's tab, only with ``FHA_SHEET_WRITE=1`` and the live
+    sheet. Its token has the write scope; the reader's stays read-only."""
+    flag = environ.get("FHA_SHEET_WRITE", "")
+    if flag not in ("", "0", "1"):
+        raise ConfigError("FHA_SHEET_WRITE must be 1 (on) or 0 / unset (off)")
+    if flag != "1":
+        return None
+    if not environ.get("LEAGUE_SHEET_ID"):
+        raise ConfigError("FHA_SHEET_WRITE needs LEAGUE_SHEET_ID (the live sheet)")
+    from fha.sources.league_sheet.writer import WRITE_SCOPE, SheetsApiLeagueSheetWriter
+
+    tokens = sheet_tokens(environ, WRITE_SCOPE, http)
+    return SheetsApiLeagueSheetWriter(http, environ["LEAGUE_SHEET_ID"], tokens)
+
+
 def league_sheet_from_env(
     environ: Mapping[str, str], http: httpx.AsyncClient
 ) -> LeagueSheetSource | None:
@@ -191,7 +212,13 @@ def production_services(
     creds = Credentials(environ["YAHOO_CLIENT_ID"], environ["YAHOO_CLIENT_SECRET"], redirect)
     client = YahooClient(http, creds, RepositoryTokenStore(repo), clock=clock.now)
     refresh = RefreshService(HttpYahooSource(client), repo, clock, ttl_seconds=settings.ttl_seconds)
-    return Services(repo, refresh, clock, league_sheet_from_env(environ, http))
+    return Services(
+        repo,
+        refresh,
+        clock,
+        league_sheet_from_env(environ, http),
+        sheet_writer=sheet_writer_from_env(environ, http),
+    )
 
 
 def demo_services(
@@ -208,6 +235,8 @@ def demo_services(
     from fha.storage.memory import InMemoryRepository
     from fha.storage.repository import RepositoryError
 
+    if environ.get("FHA_SHEET_WRITE") == "1":  # its roster is made up: never write it
+        raise ConfigError("FHA_SHEET_WRITE is not for the demo league")
     repo: Repository
     if environ.get("FHA_LOCAL_REPOSITORY"):
         from fha.storage.local_json import LocalJsonRepository

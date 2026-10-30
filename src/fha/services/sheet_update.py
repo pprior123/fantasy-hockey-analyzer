@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 
@@ -26,15 +27,28 @@ from fha.domain.sheet_update import (
     TabLayout,
     TabRow,
     UpdatePlan,
+    guard,
     plan_update,
+    row_values,
 )
 from fha.services.aliases import load_aliases
-from fha.services.free_agents import load_free_agent_salaries
-from fha.services.league_sheet import RowMatch, TabReport, tab_reports
+from fha.services.clock import Clock
+from fha.services.free_agents import load_free_agent_salaries, row_key
+from fha.services.league_sheet import (
+    RowMatch,
+    TabReport,
+    bind_written_rows,
+    read_league_sheet,
+    tab_reports,
+)
 from fha.sources.league_sheet.grid import parse_a1
-from fha.sources.league_sheet.models import ParsedSheet, ParsedTab
+from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet, ParsedTab
+from fha.sources.league_sheet.source import LeagueSheetSource
+from fha.sources.league_sheet.writer import LeagueSheetWriter
 from fha.sources.yahoo.models import IR_SLOTS, LeagueSnapshot, Player
 from fha.storage.repository import Repository
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -190,3 +204,136 @@ def _slots(snapshot: LeagueSnapshot) -> tuple[int, int]:
     slots = snapshot.settings.roster_slots
     ir = sum(s.count for s in slots if s.position in IR_SLOTS)
     return sum(s.count for s in slots) - ir, ir
+
+
+# ---------------------------------------------------------------- the write
+
+
+@dataclass(frozen=True)
+class WriteResult:
+    ok: bool
+    message: str
+    written: int = 0  # cells written (0: nothing was written)
+
+
+async def write_update(
+    repo: Repository,
+    clock: Clock,
+    source: LeagueSheetSource,
+    writer: LeagueSheetWriter,
+    snapshot: LeagueSnapshot,
+    expected: str,
+    ticked: Collection[int] = (),
+) -> WriteResult:
+    """Re-read the sheet, recompute the plan, and write it only if it is the one the
+    owner saw (``expected`` is the preview's digest) and every other tab is protected
+    against the app. Then bind the new rows and read the tab back."""
+    try:
+        sheet = await read_league_sheet(repo, source, clock)
+    except LeagueSheetError as e:
+        return WriteResult(False, f"Nothing was written: the sheet couldn't be read ({e}).")
+    update = await prepare_update(repo, snapshot, sheet, ticked)
+    plan, tab = update.plan, update.tab
+    if update.problem or plan is None or tab is None or update.layout is None:
+        return WriteResult(False, f"Nothing was written: {update.problem}")
+    if plan.up_to_date:
+        return WriteResult(True, f"Nothing to write: {tab.name} already matches your roster.")
+    if update.digest != expected:
+        return WriteResult(
+            False,
+            "Nothing was written: the tab or your roster changed since the preview. "
+            "Check the new preview.",
+        )
+    if not plan.ok:
+        return WriteResult(False, f"Nothing was written: {plan.refusals[0]}")
+    open_tabs = _unprotected(sheet, tab.name)
+    if open_tabs is None:
+        return WriteResult(
+            False, "Nothing was written: the sheet's protections couldn't be checked."
+        )
+    if open_tabs:
+        names = ", ".join(open_tabs[:4]) + (" …" if len(open_tabs) > 4 else "")
+        return WriteResult(
+            False,
+            f"Nothing was written: the app can still edit {len(open_tabs)} other tab(s) "
+            f"({names}). Protect them first (Data → Protect sheets and ranges).",
+        )
+    guard(plan.edits, update.rows, update.layout)
+    try:
+        await writer.write(tab, plan.edits)
+    except LeagueSheetError as e:
+        return WriteResult(False, f"The write failed and nothing was changed ({e}).")
+    log.info(
+        "sheet update written to %s: %s",
+        tab.name,
+        "; ".join(f"{c.action} {c.name}" for c in plan.changes),
+    )
+    await bind_written_rows(repo, tab.name, _added_keys(plan, update.rows, update.layout))
+    return await _read_back(repo, clock, source, snapshot, plan, len(plan.edits))
+
+
+def _unprotected(sheet: ParsedSheet, mine: str) -> list[str] | None:
+    """The other tabs the app could edit, or None if the sheet doesn't say."""
+    if sheet.editable_tabs is None:
+        return None
+    return [t for t in sheet.editable_tabs if t != mine]
+
+
+def _added_keys(plan: UpdatePlan, rows: Sequence[TabRow], layout: TabLayout) -> dict[str, str]:
+    """Row keys of the rows the plan adds, as the parser will read them back. A cell
+    the plan leaves alone (the new value equals the old) keeps the row's value."""
+    cells = {r.row: row_values(r, layout) for r in rows}
+    for e in plan.edits:
+        cells.setdefault(e.row, {})[e.column] = e.new
+
+    def text(row: int, column: str | None) -> str:
+        value = cells.get(row, {}).get(column) if column else None
+        return " ".join(str(value or "").split())
+
+    return {
+        row_key(text(row, layout.name_column), text(row, layout.position_column)): player_id
+        for row, player_id in plan.added
+    }
+
+
+async def _read_back(
+    repo: Repository,
+    clock: Clock,
+    source: LeagueSheetSource,
+    snapshot: LeagueSnapshot,
+    plan: UpdatePlan,
+    written: int,
+) -> WriteResult:
+    def failed(why: str) -> WriteResult:
+        return WriteResult(False, f"Written ({written} cells), but {why}. Check the tab.", written)
+
+    try:
+        sheet = await read_league_sheet(repo, source, clock)
+    except LeagueSheetError as e:
+        return failed(f"the tab couldn't be read back ({e})")
+    after = await prepare_update(repo, snapshot, sheet)
+    if after.tab is None or after.plan is None or after.layout is None:
+        return failed(f"the tab can't be planned now ({after.problem})")
+    values = {r.row: row_values(r, after.layout) for r in after.rows}
+    wrong = [
+        f"{e.column}{e.row}" for e in plan.edits if values.get(e.row, {}).get(e.column) != e.new
+    ]
+    if wrong:
+        return failed(f"these cells don't hold what was written: {', '.join(wrong[:6])}")
+    payroll = after.tab.payroll
+    summed = sum(1 for r in after.rows if r.counted and r.salary is not None)
+    expected = plan.payroll_after
+    if payroll is None or expected is None or abs(payroll - expected) > (summed + 1) / 2:
+        return failed(f"PAYROLL reads {_money(payroll)}, not the expected {_money(expected)}")
+    if after.plan.changes:
+        return failed("the tab still differs from your roster")
+    return WriteResult(
+        True,
+        f"Written: {written} cells on {after.tab.name}. PAYROLL is now {_money(payroll)}, "
+        "as expected.",
+        written,
+    )
+
+
+def _money(amount: int | None) -> str:
+    return "unknown" if amount is None else f"${amount:,}"

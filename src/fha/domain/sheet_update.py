@@ -112,6 +112,7 @@ class UpdatePlan:
     payroll: int
     payroll_after: int | None  # None when a salary it needs is unknown
     cap: int | None
+    added: tuple[tuple[int, str], ...] = ()  # (row, player_id) of each new row
 
     @property
     def ok(self) -> bool:
@@ -182,12 +183,13 @@ def plan_update(
 
     if "A" in layout.columns:
         refusals.append("the tab's player columns include column A, which holds the IR labels")
-    olds = {r.row: _values(r, layout) for r in rows}
+    olds = {r.row: row_values(r, layout) for r in rows}
     cells: dict[tuple[int, str], CellValue] = {}  # (row, column) -> new value
     # Every freed row is cleared first, so a fill into a freed row always wins.
     for r in [*drops, *(r for _, r in to_ir), *(r for _, r in back)]:
         cells.update(dict.fromkeys((r.row, c) for c in layout.columns))  # None: clear
     changes = [Change("drop", r.name, r.row, None) for r in drops]
+    added: list[tuple[int, str]] = []
     for into_ir, moves, pool in ((True, to_ir, ir_pool), (False, back, counted_pool)):
         for m, r in moves:
             if r.salary is None or r.has_formula:
@@ -204,6 +206,7 @@ def plan_update(
             refusals.append(f"{m.full_name}'s cap hit is unknown: set it with Cap hit edit (Admin)")
         if target is not None:
             cells.update({(target, c): v for c, v in _new_row(m, layout).items()})
+            added.append((target, m.player_id))
         changes.append(Change("add", sheet_name(m), None, target))
 
     for r in drops:
@@ -225,6 +228,7 @@ def plan_update(
         payroll=payroll,
         payroll_after=payroll_after,
         cap=cap,
+        added=() if refusals else tuple(added),
     )
 
 
@@ -288,7 +292,8 @@ def _unmovable(r: TabRow) -> str:
     return f"row {r.row} ({r.name}) has no salary number: fix it by hand first"
 
 
-def _values(r: TabRow, layout: TabLayout) -> dict[str, CellValue]:
+def row_values(r: TabRow, layout: TabLayout) -> dict[str, CellValue]:
+    """The row's four cells as the plan writes them (blank text is None)."""
     values: dict[str, CellValue] = {layout.name_column: r.name or None}
     if layout.position_column is not None:
         values[layout.position_column] = r.position or None

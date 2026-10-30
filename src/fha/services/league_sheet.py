@@ -79,7 +79,8 @@ def encode_sheet(sheet: ParsedSheet) -> dict[str, Any]:
                 "position_column": t.position_column,
                 "team_column": t.team_column,
                 "blank_rows": list(t.blank_rows),
-                "empty_ir_rows": [[r, label] for r, label in t.empty_ir_rows],
+                # Objects, not pairs: Firestore can't store a list in a list.
+                "empty_ir_rows": [{"row": r, "label": label} for r, label in t.empty_ir_rows],
                 "rows": [
                     {
                         "row": r.row,
@@ -125,7 +126,7 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
                 position_column=t.get("position_column"),
                 team_column=t.get("team_column"),
                 blank_rows=tuple(t.get("blank_rows", ())),
-                empty_ir_rows=tuple((r, label) for r, label in t.get("empty_ir_rows", ())),
+                empty_ir_rows=tuple((e["row"], e["label"]) for e in t.get("empty_ir_rows", ())),
                 rows=tuple(
                     SheetRow(
                         r["row"],

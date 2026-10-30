@@ -102,6 +102,7 @@
   <details{% if r.has_discrepancies %} open{% endif %}>
     <summary><strong>{{ r.tab.name }}</strong> → {{ team_names.get(r.team_key, r.team_key) }}
       {% if r.has_discrepancies %}<span class="badge">needs a look</span>{% else %}<span class="good">matches</span>{% endif %}</summary>
+    {% if r.team_key == my_team_key %}<p><a class="btn secondary" href="/admin/sheet/update">Update my tab →</a></p>{% endif %}
     {% if r.tab.status != "ok" %}
     <p class="bad">Unrecognized tab: {{ r.tab.reason }}</p>
     {% else %}

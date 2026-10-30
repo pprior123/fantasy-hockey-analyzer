@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% macro money(v) %}{% if v is none %}—{% else %}${{ "{:,}".format(v) }}{% endif %}{% endmacro %}
+{% macro cell(v) %}{% if v is none %}<span class="muted">(blank)</span>{% elif v is number %}{{ money(v) }}{% else %}{{ v }}{% endif %}{% endmacro %}
+{% block content %}
+{% if flash %}
+<p class="admin-flash {{ 'good' if flash.kind == 'ok' else 'error' }}" role="status">{{ flash.text }}</p>
+{% endif %}
+<p><a href="/admin#discrepancies">← Admin</a></p>
+
+{% if error %}
+<p class="card warn">{{ error }}</p>
+{% else %}
+<section class="card" id="update">
+  <h2>Update my tab{% if update.tab %}: {{ update.tab.name }}{% endif %}</h2>
+  <p class="muted">Sheet read {{ read_ago or "—" }} · Yahoo data from {{ yahoo_ago }}. Tap Refresh (Admin) after a roster move for a fresh Yahoo roster.</p>
+  {% if note %}<p class="warn">{{ note }}</p>{% endif %}
+
+  {% if update.problem %}
+  <p class="bad">{{ update.problem }}</p>
+  {% elif update.plan.up_to_date %}
+  <p class="good">Your tab matches your Yahoo roster. Nothing to change.</p>
+  {% else %}
+  {% set plan = update.plan %}
+
+  {% if update.reviews %}
+  <form method="get" action="/admin/sheet/update" class="admin-review">
+    <p>Rows awaiting match review. Tick a row whose player has left your roster, or confirm its match in Admin.</p>
+    {% for r in update.reviews %}
+    <label><input type="checkbox" name="tick" value="{{ r.row }}"{% if r.row in update.ticked %} checked{% endif %}>
+      Drop row {{ r.row }}: <strong>{{ r.name }}</strong>{% if r.candidates %} <span class="muted">(might be {{ r.candidates|join(", ") }})</span>{% endif %}</label><br>
+    {% endfor %}
+    <button type="submit" class="btn secondary">Update the preview</button>
+  </form>
+  {% endif %}
+
+  {% if plan.changes %}
+  <h3>Changes</h3>
+  <ul>
+    {% for c in plan.changes %}
+    <li>{% if c.action == "drop" %}Drop <strong>{{ c.name }}</strong> (row {{ c.from_row }})
+      {% elif c.action == "to_ir" %}Move <strong>{{ c.name }}</strong> to IR (row {{ c.from_row }} → {{ c.to_row or "no free row" }})
+      {% elif c.action == "back" %}Bring <strong>{{ c.name }}</strong> back from IR (row {{ c.from_row }} → {{ c.to_row or "no free row" }})
+      {% else %}Add <strong>{{ c.name }}</strong>{% if c.to_row %} in row {{ c.to_row }}{% endif %}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <p>Payroll {{ money(plan.payroll) }} → {{ money(plan.payroll_after) }} · Cap {{ money(plan.cap) }} ·
+    Room after <span class="{{ 'over' if plan.room_after is not none and plan.room_after < 0 else 'good' }}">{{ money(plan.room_after) }}</span></p>
+
+  {% if plan.refusals %}
+  <div class="card warn">
+    <p><strong>Can't update the tab yet:</strong></p>
+    <ul>{% for r in plan.refusals %}<li>{{ r }}</li>{% endfor %}</ul>
+  </div>
+  {% else %}
+  <h3>Cells</h3>
+  <table class="table">
+    <thead><tr><th>Cell</th><th>Now</th><th>After</th></tr></thead>
+    <tbody>
+      {% for e in plan.edits %}<tr><td>{{ e.column }}{{ e.row }}</td><td>{{ cell(e.old) }}</td><td>{{ cell(e.new) }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Other columns in these rows are left as they are. Rows are never added or removed.</p>
+  <p class="warn">Writing to the sheet is off, so apply these edits by hand.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

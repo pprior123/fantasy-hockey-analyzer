@@ -356,7 +356,7 @@ def test_a_stored_negative_amount_reads_back_as_unknown() -> None:
     assert decode_sheet(encode_sheet(sheet())) == sheet()
 
 
-def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> None:
+async def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> None:
     tab = sheet().tabs[0]
     full = replace(
         tab,
@@ -371,6 +371,10 @@ def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> None:
     )
     stored = replace(sheet(), tabs=(full, *sheet().tabs[1:]))
     assert decode_sheet(encode_sheet(stored)) == stored
+    # ...and through a store with Firestore's rules (no list in a list).
+    repo = InMemoryRepository()
+    await read_league_sheet(repo, FakeLeagueSheet(stored), Clock())
+    assert await load_league_sheet(repo) == (stored, T0)
     old = encode_sheet(sheet())
     for key in ("sheet_id", "header_row", "name_column", "position_column", "team_column"):
         del old["tabs"][0][key]

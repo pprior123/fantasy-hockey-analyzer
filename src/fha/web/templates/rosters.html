@@ -21,7 +21,7 @@
 
 <section class="card cap-card">
   <h2>{{ team.name }}{% if team.is_mine %} <span class="muted">(my team)</span>{% endif %}
-    {% if summary.has_discrepancies %} <a class="badge" href="/admin">Sheet differs</a>{% endif %}</h2>
+    {% if summary.has_discrepancies %}{% if team.is_mine %} <a class="badge" href="/admin/sheet/update">Sheet out of date: review the update</a>{% else %} <a class="badge" href="/admin#discrepancies">Sheet differs</a>{% endif %}{% endif %}</h2>
   {% if summary.payroll is none %}
   <p>Payroll: <span class="muted">unavailable</span> (no stored sheet, or the team's tab isn't bound or recognized).</p>
   {% else %}

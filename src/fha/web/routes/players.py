@@ -74,12 +74,12 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         return bad_request(
             request, f"That filter isn't one the Players screen knows: {e}.", "/players", "players"
         )
-    mode = view_param(params.get("view"))
+    mode = view_param(params.get("view"), totals=True)
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     if query.team_key is not None and view.team(query.team_key) is None:
         return bad_request(request, "That team isn't in the league.", "/players", "players")
-    rows = select(view, query)
+    rows = select(view, query, totals=mode == "totals")
     end = query.start + PAGE_SIZE
     params.pop("start", None)  # every other link starts from the top again
     categories = view.config.categories

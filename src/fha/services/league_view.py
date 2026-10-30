@@ -89,6 +89,7 @@ class PlayerRow:
     aav_source: AavSource | None
     counts: bool | None  # in the tab's PAYROLL range; None unless on a sheet row
     goalie: Mapping[str, float | None] = field(default_factory=dict)  # W / GAA / SV%
+    totals: Mapping[Category, float] = field(default_factory=dict)  # skaters' season totals
 
     @property
     def ttltst(self) -> float | None:
@@ -280,6 +281,7 @@ def _row(
         aav_source=source,
         counts=sheet.counted if sheet is not None else None,
         goalie=goalie_stats(line, stat_map) if p.is_goalie else {},
+        totals={} if p.is_goalie else season.stats,
     )
 
 

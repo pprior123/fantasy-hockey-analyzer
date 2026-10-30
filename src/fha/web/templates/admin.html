@@ -108,7 +108,7 @@
     <p>Payroll {{ money(r.payroll) }}; matched rows add up to {{ money(r.matched_counted_total) }}{% if r.payroll_differs %} <span class="bad">(differs)</span>{% endif %}.</p>
     {% if r.cap_differs %}<p class="bad">This tab's CAP ({{ money(r.tab.cap) }}) differs from the summary cap ({{ money(r.sheet_cap) }}).</p>{% endif %}
     {% if r.unknown_teams %}<p class="warn">Unknown NHL teams: {{ r.unknown_teams|join(", ") }}.</p>{% endif %}
-    {% if r.missing_from_tab %}<p>On the Yahoo roster, missing from the tab: {{ r.missing_from_tab|map(attribute="name")|join(", ") }}.</p>{% endif %}
+    {% if r.missing_from_tab %}<p>On the Yahoo roster, missing from the tab: {% for p in r.missing_from_tab %}{{ p.name }}{% if p.player_id in r.in_ir_slot %} <span class="muted">(IR slot)</span>{% endif %}{{ ", " if not loop.last }}{% endfor %}.</p>{% endif %}
     {% for m in r.rows if m.player_id is none %}
     <div class="admin-review">
       <p>Row {{ m.row.row }}: <strong>{{ m.row.name or "(no name)" }}</strong> {{ m.row.position }} {{ m.row.team }} {{ money(m.row.salary) }}{% if not m.row.counted %} <span class="muted">({{ m.row.ir }})</span>{% endif %} — not on the Yahoo roster.</p>

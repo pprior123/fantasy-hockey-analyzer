@@ -213,6 +213,8 @@ class TabReport:
     summed_rows: int = 0  # how many salaries that total adds (for the rounding tolerance)
     sheet_cap: int | None = None  # the summary tab's cap
     unknown_teams: tuple[str, ...] = ()  # NHL team strings no code matches (SPEC §6)
+    # Missing players in an IR / IR+ slot: still to be listed, but not counted (owner).
+    in_ir_slot: frozenset[str] = frozenset()
 
     @property
     def payroll(self) -> int | None:
@@ -263,6 +265,7 @@ def match_tab(
             tab, None if team is None else team.team_key, idle, (), (), 0, 0, sheet_cap, unknown
         )
     roster = {e.player.player_id: e.player for e in team.roster}
+    ir = {e.player.player_id for e in team.roster if e.in_ir_slot}
     pool = candidates(roster.values())
     matches: list[RowMatch] = []
     taken: dict[str, int] = {}
@@ -289,6 +292,7 @@ def match_tab(
         for m in matches
     ]
     matched_ids = {m.player_id for m in matches if m.player_id is not None}
+    missing = tuple(p for pid, p in roster.items() if pid not in matched_ids)
     summed = [
         m.row.salary for m in matches if m.player_id and m.row.counted and m.row.salary is not None
     ]
@@ -296,12 +300,13 @@ def match_tab(
         tab=tab,
         team_key=team.team_key,
         rows=tuple(matches),
-        missing_from_tab=tuple(p for pid, p in roster.items() if pid not in matched_ids),
+        missing_from_tab=missing,
         not_on_roster=tuple(m.row for m in matches if m.player_id is None),
         matched_counted_total=sum(summed),
         summed_rows=len(summed),
         sheet_cap=sheet_cap,
         unknown_teams=unknown,
+        in_ir_slot=frozenset(p.player_id for p in missing if p.player_id in ir),
     )
 
 

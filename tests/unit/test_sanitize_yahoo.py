@@ -64,11 +64,13 @@ def test_league_name_and_invites_are_replaced_or_dropped() -> None:
         logo_url="https://example.test/logo.png",
         short_invitation_url="https://y.ahoo.it/join",
         iris_group_chat_id="chat-1",
+        sendbird_channel_url="0123456789abcdef",  # live 2026-10-30: the league chat
         password="hunter2",  # noqa: S106 - a league join password, dropped
     )
     clean = sanitize({"league": [meta]})
     assert clean["league"][0]["name"] == "League"
-    for key in ("logo_url", "short_invitation_url", "iris_group_chat_id", "password"):
+    dropped = ("logo_url", "short_invitation_url", "iris_group_chat_id", "sendbird_channel_url")
+    for key in (*dropped, "password"):
         assert key not in clean["league"][0]
     assert clean["league"][0]["league_key"] == b.LEAGUE_KEY
 
@@ -108,6 +110,7 @@ def test_player_fragment_names_are_not_mistaken_for_team_names() -> None:
         ({"managers": []}, ["$.managers: forbidden key"]),
         ({"nickname": "n"}, ["$.nickname: forbidden key"]),
         ({"refresh_token": "t"}, ["$.refresh_token: forbidden key"]),
+        ({"l": {"sendbird_channel_url": "c"}}, ["$.l.sendbird_channel_url: forbidden key"]),
         ({"x": ["contact me: a.b+c@mail.example.org"]}, ["$.x[0]: email address"]),
         ({"x": "https://sports.yahoo.com/nhl/players/1"}, []),
         ({"x": "@handle"}, []),

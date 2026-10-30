@@ -497,7 +497,8 @@ A season label and toggle per §5.
 5. **Admin** — league sheet status (last read, per-tab parse status incl.
    unrecognized tabs, tab ↔ Yahoo team binding, discrepancy report);
    PuckPedia CSV import for free agents; match review (unmatched row vs. top
-   3 candidates, tap to bind); single-player AAV edit; force refresh; config,
+   3 candidates, tap to bind, or dismiss a row no candidate fits, undoably);
+   single-player AAV edit; force refresh; config,
    including the rating settings: divisor method (workbook by default, or
    per-82), divisor count (default 20; switching method pre-fills that
    method's default unless the owner typed a count), and GP floor fraction

@@ -2346,3 +2346,24 @@ roster but missing from the tab is labelled "(IR slot)" when he sits in IR or
 IR+. League rule (owner, 2026-10-30): GMs must still list IR players on their
 tab, but IR-slot players don't count against the cap, and a missed one is
 minor. The flag stays; the label says why it matters less.
+
+## 2026-10-30 — Free-agent review: Dismiss
+
+**What.** Each row in Admin's free-agent match review has **Dismiss: none of
+these**. A dismissed row leaves the list without being bound, so it gives no
+one a salary. It stays dismissed across re-imports, and a "Dismissed: …" line
+under the list has **Put them back**, which returns every dismissed row to the
+review. A dismissed row that a later file drops is no longer listed. Stored as
+one more document in `fa_state` (`dismissed`), keyed by row key like the
+bindings.
+
+**Why.** The first production import (owner, 2026-10-30) left three rows no
+candidate could fit: Logan Couture and Torey Krug, under contract (so in
+PuckPedia's file) but not in Yahoo's pool, and JJ Peterka, priced instead by a
+cap-hit override. Without Dismiss they would sit on the list for good, and
+each yearly import would add more like them.
+
+**Alternatives.** Dismiss one row at a time with its own undo: rejected as
+more screen for a list of two or three; Put them back is all-or-nothing, and
+re-dismissing is one tap. Hiding rows with no candidate automatically:
+rejected, since "no close name" can also mean a typo the owner should see.

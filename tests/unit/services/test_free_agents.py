@@ -8,9 +8,12 @@ from fha.domain.matcher import NO_ALIASES, Aliases, Status
 from fha.services.free_agents import (
     FreeAgentError,
     confirm,
+    dismiss,
+    dismissed,
     import_free_agent_salaries,
     load_free_agent_salaries,
     pending_reviews,
+    restore_dismissed,
     row_key,
     set_aav_override,
     unbind,
@@ -142,6 +145,45 @@ async def test_review_then_confirm_binds_the_row() -> None:
     await unbind(repo, pending.key)
     assert "6" not in (await load_free_agent_salaries(repo)).aav
     await unbind(repo, pending.key)  # nothing to undo: fine
+
+
+async def test_a_dismissed_row_leaves_the_review_until_restored() -> None:
+    """For a row whose player isn't in Yahoo's pool (retired, say: Couture), or one
+    handled by a cap-hit override instead (owner, 2026-10-30). Dismissing binds
+    nothing, survives a re-import, and can be undone."""
+    repo = InMemoryRepository()
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    [pending] = await pending_reviews(repo, POOL, NO_ALIASES)
+    assert await dismiss(repo, pending.key) == pending.row
+    assert await pending_reviews(repo, POOL, NO_ALIASES) == []
+    assert await dismissed(repo) == [pending.row]
+    assert "6" not in (await load_free_agent_salaries(repo)).aav  # no salary for anyone
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    assert await pending_reviews(repo, POOL, NO_ALIASES) == []  # still dismissed
+    await restore_dismissed(repo)
+    assert [r.key for r in await pending_reviews(repo, POOL, NO_ALIASES)] == [pending.key]
+    assert await dismissed(repo) == []
+
+
+async def test_putting_back_nothing_writes_nothing() -> None:
+    repo = CountingRepository()
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    before = repo.writes
+    await restore_dismissed(repo)
+    assert repo.writes == before
+
+
+async def test_dismissing_an_unknown_row_is_refused() -> None:
+    with pytest.raises(FreeAgentError, match=r"no imported row 'x\|F'"):
+        await dismiss(InMemoryRepository(), "x|F")
+
+
+async def test_a_dismissed_row_dropped_from_the_file_is_no_longer_listed() -> None:
+    repo = InMemoryRepository()
+    await import_free_agent_salaries(repo, ROWS, POOL, NO_ALIASES)
+    await dismiss(repo, "known nobody|F")
+    await import_free_agent_salaries(repo, ROWS[:-1], POOL, NO_ALIASES)
+    assert await dismissed(repo) == []
 
 
 async def test_confirming_an_unknown_row_is_refused() -> None:

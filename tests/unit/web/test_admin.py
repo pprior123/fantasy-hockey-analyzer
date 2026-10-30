@@ -503,6 +503,37 @@ def test_review_then_confirm_with_an_alias() -> None:
     assert "Nothing to review." in c.get("/admin").text
 
 
+def test_a_review_row_can_be_dismissed_and_put_back() -> None:
+    """Couture and Krug (owner, 2026-10-30): under contract, so in PuckPedia's file, but
+    not in Yahoo's pool, so no candidate is right. Dismiss takes them off the list."""
+    c = client()
+    upload_csv(c, csv_row("Retired Player", "C", "$8,000,000"))
+    review = c.get("/admin").text.split('id="review"')[1].split("</section>")[0]
+    key = re.search(r'action="/admin/fa/dismiss".*?name="key" value="([^"]+)"', review, re.S)
+    assert key is not None
+    assert post(c, "/admin/fa/dismiss", data={"key": key[1]}) == {
+        "kind": "ok",
+        "text": "Dismissed: Player, Retired.",
+    }
+    review = c.get("/admin").text.split('id="review"')[1].split("</section>")[0]
+    assert "Nothing to review." in review
+    assert "Dismissed: Player, Retired." in review
+    assert post(c, "/admin/fa/restore") == {
+        "kind": "ok",
+        "text": "Dismissed rows are back on the review list.",
+    }
+    review = c.get("/admin").text.split('id="review"')[1].split("</section>")[0]
+    assert "<strong>Player, Retired</strong>" in review
+    assert "Dismissed:" not in review
+
+
+def test_dismissing_an_unknown_row_is_a_message() -> None:
+    assert post(client(), "/admin/fa/dismiss", data={"key": "x|F"}) == {
+        "kind": "error",
+        "text": "no imported row 'x|F'.",
+    }
+
+
 def test_an_alias_is_named_from_the_stored_row_and_the_pool_not_the_form() -> None:
     """M4R1A-8: the form's names are ignored; the alias is the imported row's name for
     the chosen pool player's name, whatever else is posted."""
@@ -966,8 +997,12 @@ def test_a_store_that_refuses_writes_is_a_message_on_the_confirm_posts() -> None
         r'action="/admin/fa/confirm".*?name="key" value="([^"]+)"', c.get("/admin").text, re.S
     )
     assert key is not None
+    post(c, "/admin/fa/dismiss", data={"key": key[1]})  # so Put back has something to write
     repo.refuse = True
     refused = STORE_REFUSED  # never Firestore's own text: the flash is in the URL
+    dismissing = post(c, "/admin/fa/dismiss", data={"key": key[1]})
+    assert dismissing == {"kind": "error", "text": f"{refused}."}
+    assert post(c, "/admin/fa/restore") == {"kind": "error", "text": f"{refused}."}
     row = {"tab": "Pinecone", "key": "zed nobody|F", "player_id": TEAM1.roster[-1].player.player_id}
     assert post(c, "/admin/sheet/confirm", data=row)["text"] == f"Pinecone: {refused}."
     fa = {"key": key[1], "player_id": target.player_id}

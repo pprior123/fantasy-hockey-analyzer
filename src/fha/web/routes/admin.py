@@ -36,10 +36,13 @@ from fha.services.aliases import add_alias, load_aliases
 from fha.services.free_agents import (
     FreeAgentError,
     confirm,
+    dismiss,
+    dismissed,
     import_free_agent_salaries,
     load_bindings,
     load_overrides,
     pending_reviews,
+    restore_dismissed,
     set_aav_override,
     unbind,
 )
@@ -254,6 +257,7 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         reports=[r for r in (data.reports if data else []) if r.team_key is not None],
         reviews=reviews[:REVIEW_LIMIT],
         reviews_total=len(reviews),
+        dismissed=await dismissed(svc.repo),
         config=config,
         settings_error=settings_error,
         methods=METHOD_LABELS,
@@ -460,6 +464,26 @@ async def fa_confirm(
     except (InputError, FreeAgentError, RepositoryError) as e:
         return _back(request, "error", f"{_why(e)}.", anchor="review")
     return _back(request, "ok", text, anchor="review")
+
+
+@router.post("/admin/fa/dismiss")
+async def fa_dismiss(request: Request, key: str = Form()) -> RedirectResponse:
+    """Take a CSV row off the review list without binding it (a player Yahoo's pool
+    doesn't have, or one priced by a cap-hit override)."""
+    try:
+        row = await dismiss(services(request).repo, key)
+    except (FreeAgentError, RepositoryError) as e:
+        return _back(request, "error", f"{_why(e)}.", anchor="review")
+    return _back(request, "ok", f"Dismissed: {_short(row.name)}.", anchor="review")
+
+
+@router.post("/admin/fa/restore")
+async def fa_restore(request: Request) -> RedirectResponse:
+    try:
+        await restore_dismissed(services(request).repo)
+    except RepositoryError as e:
+        return _back(request, "error", f"{_why(e)}.", anchor="review")
+    return _back(request, "ok", "Dismissed rows are back on the review list.", anchor="review")
 
 
 @router.post("/admin/fa/unbind")

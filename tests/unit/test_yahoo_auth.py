@@ -12,6 +12,7 @@ import pytest
 
 from fha.sources.yahoo import oauth
 from fha.sources.yahoo.oauth import Token, YahooAuthError
+from fha.storage.factory import LOCAL, repository_from_env
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import Document, RepositoryError
 from fha.storage.tokens import COLLECTION, YAHOO_TOKEN, RepositoryTokenStore
@@ -473,3 +474,46 @@ async def test_an_unusable_key_fails_the_command_before_consent(
     out, err = capsys.readouterr()
     assert "can't read the service-account key" in err
     assert oauth.AUTH_URL not in out
+
+
+# ---------------------------------------------------------------- dev, real data (--local)
+
+
+async def test_local_consent_saves_the_token_where_the_local_app_reads_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M4.5 sign-off: the app on FHA_LOCAL_REPOSITORY reads secrets/yahoo_token
+    from that file, which no other consent target fills."""
+    path = tmp_path / "dev.json"
+
+    def ask(prompt: str) -> str:
+        return redirect_to(capsys.readouterr().out)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(Yahoo())) as http:
+        target = yahoo_auth.local_target(path, http, private_dir=tmp_path)
+        code = await yahoo_auth.run(ENV, ask, http, target, clock=lambda: NOW)
+        app_repo = repository_from_env({LOCAL: str(path)}, http, private_dir=tmp_path)
+        stored = await RepositoryTokenStore(app_repo).load()
+    out, err = capsys.readouterr()
+    assert (code, err) == (0, "")
+    assert stored == Token("acc-hidden", "ref-hidden", NOW + 3600)
+    assert f"Saved the token to the dev repository {path}, {COLLECTION}/{YAHOO_TOKEN}" in out
+    assert f"FHA_LOCAL_REPOSITORY={path}" in out
+    for secret in ("csecret-hidden", "acc-hidden", "ref-hidden"):
+        assert secret not in out + err
+
+
+async def test_the_local_target_must_be_under_private(tmp_path: Path) -> None:
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(SetupError, match="inside the private/ directory"):
+            yahoo_auth.local_target(tmp_path / "elsewhere.json", http, private_dir=tmp_path / "p")
+
+
+async def test_the_command_line_picks_the_local_target() -> None:
+    async with httpx.AsyncClient() as http:
+        local = yahoo_auth.target_from_args(["--local", "private/dev.json"], http)
+        assert isinstance(local.store, RepositoryTokenStore)
+        assert "the dev repository private/dev.json" in local.where
+        for extra in (["--firestore", "k.json"], ["--project", "p2"]):
+            with pytest.raises(SystemExit):
+                yahoo_auth.target_from_args(["--local", "private/dev.json", *extra], http)

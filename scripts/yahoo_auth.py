@@ -2,8 +2,11 @@
 
     uv run --env-file .env python -m scripts.yahoo_auth
     uv run --env-file .env python -m scripts.yahoo_auth --firestore private/<key>.json
+    uv run --env-file .env python -m scripts.yahoo_auth --local private/<file>.json
 
-The first saves the token for dev; the second for production, in Firestore.
+The first saves the token for the scripts; the second for production, in
+Firestore; the third for the app run locally on real data, in its dev
+repository file (``FHA_LOCAL_REPOSITORY``).
 
 1. Checks the token store can be read (for Firestore: the key works and the
    service account can read the database), so most problems show before
@@ -19,6 +22,8 @@ The first saves the token for dev; the second for production, in Firestore.
      key (``--project`` overrides it), document secrets/yahoo_token, where
      the app on Vercel reads it. The key file is the one Vercel's
      FIRESTORE_SERVICE_ACCOUNT_JSON holds; keep it under private/.
+   - ``--local FILE``: to the dev repository file (under private/, created if
+     missing), document secrets/yahoo_token, where the local app reads it.
    It reads the token back, then checks it works by reading the league's
    settings.
 
@@ -43,7 +48,7 @@ from fha.sources.yahoo import oauth, parse
 from fha.sources.yahoo.client import YahooClient, YahooError, YahooHTTPError, make_http_client
 from fha.sources.yahoo.oauth import TokenStore, YahooAuthError
 from fha.sources.yahoo.source import DEFAULT_LEAGUE_ID
-from fha.storage.factory import KEY, PROJECT, repository_from_env
+from fha.storage.factory import KEY, LOCAL, PROJECT, repository_from_env
 from fha.storage.repository import Repository, RepositoryError
 from fha.storage.tokens import COLLECTION, YAHOO_TOKEN, RepositoryTokenStore
 from scripts.yahoo_common import JsonFileTokenStore, SetupError, credentials_from_env
@@ -93,6 +98,21 @@ def repository_target(repo: Repository, project: str) -> Target:
     )
 
 
+def local_target(path: Path, http: httpx.AsyncClient, private_dir: Path | None = None) -> Target:
+    """Dev, real data: the app's dev repository file (``FHA_LOCAL_REPOSITORY``)."""
+    try:
+        repo = repository_from_env({LOCAL: str(path)}, http, private_dir=private_dir)
+    except RepositoryError as e:
+        raise SetupError(str(e)) from None
+    return Target(
+        RepositoryTokenStore(repo),
+        f"the dev repository {path}, {COLLECTION}/{YAHOO_TOKEN}",
+        f"Run the app with FHA_LOCAL_REPOSITORY={path} to use it. Never commit or share this file.",
+        f"saved in {path}",
+        f"Check again later with\n{DIAGNOSE}",
+    )
+
+
 def firestore_target(key_path: Path, http: httpx.AsyncClient, project: str | None = None) -> Target:
     """The Firestore project of the service-account key at ``key_path`` (or ``project``).
 
@@ -131,7 +151,17 @@ def target_from_args(argv: Sequence[str], http: httpx.AsyncClient) -> Target:
         help="save to production Firestore, with this service-account key file",
     )
     parser.add_argument("--project", help="the Firestore project (default: the key's project_id)")
+    parser.add_argument(
+        "--local",
+        type=Path,
+        metavar="FILE",
+        help="save to the app's dev repository file under private/ (FHA_LOCAL_REPOSITORY)",
+    )
     args = parser.parse_args(argv)
+    if args.local is not None:
+        if args.firestore is not None or args.project is not None:
+            parser.error("--local can't be combined with --firestore or --project")
+        return local_target(args.local, http)
     if args.firestore is None:
         if args.project is not None:
             parser.error("--project needs --firestore")

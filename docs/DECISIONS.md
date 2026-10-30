@@ -2356,7 +2356,9 @@ under the list has **Put them back**, which returns every dismissed row to the
 review. A dismissed row is neither listed nor counted "to review" by an
 import. It stops being listed as dismissed once it has a salary (a later
 import binds it because the player joined the pool, or the owner confirms it),
-and while a file drops it. A row that a later file brings back is still
+and while a file drops it. Unbinding a row (Cap hit edit, "Unbind his CSV
+row") puts it back on the review list, dismissed or not, as its message says.
+A row that a later file brings back is still
 dismissed: the owner's call about that row stands. Stored as one more document
 in `fa_state` (`dismissed`), keyed by row key like the bindings (review, PR
 #21).

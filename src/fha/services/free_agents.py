@@ -181,9 +181,13 @@ async def restore_dismissed(repo: Repository) -> None:
 
 
 async def unbind(repo: Repository, key: str) -> None:
+    """Undo a row's binding; it waits for review again, even if once dismissed."""
     bindings = await _load(repo, BINDINGS)
     if bindings.pop(key, None) is not None:
         await repo.put(STATE, BINDINGS, {"entries": bindings})
+    skipped = await _load(repo, DISMISSED)
+    if skipped.pop(key, None) is not None:
+        await repo.put(STATE, DISMISSED, {"entries": skipped})
 
 
 async def set_aav_override(repo: Repository, player_id: str, aav: int | None) -> None:

@@ -192,6 +192,9 @@ async def test_a_confirmed_dismissed_row_leaves_the_dismissed_list() -> None:
     await dismiss(repo, "known nobody|F")
     await confirm(repo, "known nobody|F", "6")
     assert await dismissed(repo) == []
+    await unbind(repo, "known nobody|F")  # Codex round 2: back to review, not dismissed
+    assert [r.key for r in await pending_reviews(repo, POOL, NO_ALIASES)] == ["known nobody|F"]
+    assert await dismissed(repo) == []
 
 
 async def test_putting_back_nothing_writes_nothing() -> None:

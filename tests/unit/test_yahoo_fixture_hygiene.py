@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -312,17 +313,25 @@ def test_the_league_carries_only_the_placeholder_name() -> None:
 
 
 # Any URL in any string: http(s) in any case, or scheme-relative, alone or in text.
-URL = re.compile(r"(?i)(?:https?:)?//([^/\s\"'?#:]+)")
+URL = re.compile(r"(?i)(?:https?:)?//[^\s\"'<>]+")
+
+
+def url_hosts(text: str) -> list[str | None]:
+    """Each URL's host as a browser reads it (urlsplit, as HTTPX does). A URL with
+    credentials (``user@``) gives None: none belongs in a fixture (Codex round 2:
+    ``https://s.yimg.com:@external.example`` is external.example)."""
+    hosts: list[str | None] = []
+    for match in URL.finditer(text):
+        url = match.group(0)
+        parts = urlsplit("https:" + url if url.startswith("//") else url)
+        hosts.append(None if "@" in parts.netloc else parts.hostname)
+    return hosts
 
 
 def test_urls_point_only_at_yahoo_s_public_hosts_or_the_placeholder() -> None:
-    hosts = {
-        match.group(1).lower()
-        for text in strings(list(fixtures().values()))
-        for match in URL.finditer(text)
-    }
+    hosts = {h for text in strings(list(fixtures().values())) for h in url_hosts(text)}
     assert hosts
-    assert hosts <= URL_HOSTS, sorted(hosts - URL_HOSTS)
+    assert hosts <= URL_HOSTS, sorted(str(h) for h in hosts - URL_HOSTS)
 
 
 @pytest.mark.parametrize(
@@ -333,10 +342,12 @@ def test_urls_point_only_at_yahoo_s_public_hosts_or_the_placeholder() -> None:
         ("//cdn.other.com/x.png", "cdn.other.com"),
         ("see https://evil.example/x for more", "evil.example"),
         ("http://host.example:8080/x", "host.example"),
+        ("https://s.yimg.com:@external.example/a.png", None),  # credentials: refused
+        ("https://s.yimg.com@external.example/a.png", None),
     ],
 )
-def test_the_url_check_finds_every_form(text: str, host: str) -> None:
-    assert [m.group(1).lower() for m in URL.finditer(text)] == [host]
+def test_the_url_check_finds_every_form(text: str, host: str | None) -> None:
+    assert url_hosts(text) == [host]
 
 
 # ---------------------------------------------------------------- the manifest

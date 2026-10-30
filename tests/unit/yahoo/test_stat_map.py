@@ -94,6 +94,20 @@ def test_ambiguous_goalie_gp_prefers_the_goalie_only_stat() -> None:
     )
 
 
+def test_yahoo_s_three_gps_give_each_position_type_its_own() -> None:
+    """Live 2026-10-30: 0 "Games Played" (P, G), 29 "F/D Games" (P), 30 "Goalie
+    Games" (G) all have display name GP, and the map failed as ambiguous."""
+    game = [cat("0", "GP", "P", "G"), cat("29", "GP", "P"), cat("30", "GP", "G"), *GAME[2:]]
+    stat_map = build_stat_map(LEAGUE, game)
+    assert (stat_map.skater_gp, stat_map.goalie_gp) == ("29", "30")
+
+
+def test_skater_gp_still_ambiguous_is_an_error() -> None:
+    game = [cat("0", "GP", "P", "G"), cat("28", "GP", "P"), cat("29", "GP", "P"), *GAME[2:]]
+    with pytest.raises(StatMapError, match=r"GP \(P\) is ambiguous"):
+        build_stat_map(LEAGUE, game)
+
+
 def test_goalie_gp_still_ambiguous_is_left_out_not_an_error() -> None:
     game = [cat("0", "GP"), cat("28", "GP", "G"), cat("29", "GP", "G"), *GAME[2:]]
     assert build_stat_map(LEAGUE, game).goalie_gp is None

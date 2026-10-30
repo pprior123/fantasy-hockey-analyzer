@@ -56,20 +56,40 @@ def _find(
     return None
 
 
-def _goalie_gp(sources: Sequence[Sequence[StatCategory]]) -> str | None:
-    """Goalie GP, which never affects TTLTST: ambiguity narrows to a goalie-only
-    GP, or leaves goalie GP out, rather than failing the whole map."""
+def _gp(position_type: str, sources: Sequence[Sequence[StatCategory]]) -> str | None:
+    """GP for ``position_type``. Yahoo names several stats "GP": 0 "Games Played"
+    (skaters and goalies), 29 "F/D Games" (skaters) and 30 "Goalie Games"
+    (DECISIONS, M4.5). An ambiguous name narrows to the one GP for this position
+    type alone; any other ambiguity is still an error."""
     try:
-        return _find("GP", GOALIE, sources)
+        return _find("GP", position_type, sources)
     except StatMapError:
-        only = frozenset(GOALIE)
+        only = frozenset(position_type)
         ids = {
             c.stat_id
             for cs in sources
             for c in cs
             if c.display_name == "GP" and c.position_types == only
         }
-        return ids.pop() if len(ids) == 1 else None
+        if len(ids) == 1:
+            return ids.pop()
+        raise
+
+
+def _goalie_gp(sources: Sequence[Sequence[StatCategory]]) -> str | None:
+    """Goalie GP, which never affects TTLTST: still ambiguous leaves it out
+    rather than failing the whole map."""
+    try:
+        return _gp(GOALIE, sources)
+    except StatMapError:
+        return None
+
+
+def _need_gp(sources: Sequence[Sequence[StatCategory]]) -> str:
+    stat_id = _gp(SKATER, sources)
+    if stat_id is None:
+        raise StatMapError(f"no Yahoo stat 'GP' for position type {SKATER}")
+    return stat_id
 
 
 def build_stat_map(
@@ -97,7 +117,7 @@ def build_stat_map(
     }
     return StatMap(
         categories=categories,
-        skater_gp=need("GP"),
+        skater_gp=_need_gp(sources),
         goalie_gp=_goalie_gp(sources),
         goalie=goalie,
     )

@@ -31,11 +31,13 @@ DROP_KEYS = frozenset(
         "short_invitation_url",
         "password",
         "iris_group_chat_id",
+        "sendbird_channel_url",  # the league chat's channel (live 2026-10-30)
     }
 )
 # Keys that must never survive, whatever block they turn up in.
 FORBIDDEN_KEYS = frozenset({"managers", "manager", "guid", "email", "nickname"})
 FORBIDDEN_KEYS |= {"access_token", "refresh_token", "id_token", "short_invitation_url"}
+FORBIDDEN_KEYS |= {"iris_group_chat_id", "sendbird_channel_url"}
 EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
 # A high-resolution image's file name, e.g. Yahoo's default headshot
 # ".../silhouette@2x.png": it matches EMAIL, but its "domain" is a scale and an

@@ -26,6 +26,26 @@ def test_an_unauthenticated_htmx_request_gets_hx_redirect() -> None:
     assert response.headers["HX-Redirect"] == "/login?next=%2Frosters"
 
 
+@pytest.mark.parametrize(
+    ("current", "expected"),
+    [
+        ("http://testserver/players?owner=free", "/login?next=%2Fplayers%3Fowner%3Dfree"),
+        ("https://elsewhere.example/players", "/login?next=%2Fplayers"),  # another site's
+    ],
+)
+def test_an_htmx_fragment_logs_in_back_to_its_page(current: str, expected: str) -> None:
+    """Show more's rows are a fragment, not a page: after logging in, the owner goes back
+    to the page it was on (htmx's HX-Current-URL), not to the bare rows."""
+    with TestClient(make_app()) as client:
+        response = client.get(
+            "/players/rows?start=100",
+            headers={"HX-Request": "true", "HX-Current-URL": current},
+            follow_redirects=False,
+        )
+    assert response.status_code == 401
+    assert response.headers["HX-Redirect"] == expected
+
+
 def test_the_login_page_is_public_and_has_no_nav() -> None:
     with TestClient(make_app()) as client:
         response = client.get("/login?next=/league")

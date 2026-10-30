@@ -125,12 +125,14 @@ def _active(path: str) -> str | None:
     return first if first in dict(NAV) else None
 
 
-def _referer_target(request: Request) -> str:
-    """Where to return after logging in from a POST: the page it was sent from (same
-    site only), since the POST's own path may have no GET (e.g. /refresh)."""
+def _referer_target(request: Request, header: str = "referer") -> str:
+    """Where to return after logging in from a request that isn't a page: the page it
+    was sent from (same site only). A POST's own path may have no GET (e.g. /refresh),
+    and an htmx GET's is a fragment (e.g. /players/rows), so ``header`` is the Referer,
+    or htmx's HX-Current-URL."""
     from urllib.parse import urlsplit
 
-    referer = urlsplit(request.headers.get("referer", ""))
+    referer = urlsplit(request.headers.get(header, ""))
     if referer.netloc != request.url.netloc:
         return DEFAULT_NEXT
     return safe_next(referer.path + (f"?{referer.query}" if referer.query else ""))
@@ -169,7 +171,9 @@ def create_app(context: AppContext) -> FastAPI:
             return await call_next(request)
         if sessions.valid(request.cookies.get(COOKIE)):
             return await call_next(request)
-        if request.method in ("GET", "HEAD"):
+        if request.method in ("GET", "HEAD") and request.headers.get("HX-Current-URL"):
+            target = _referer_target(request, "HX-Current-URL")
+        elif request.method in ("GET", "HEAD"):
             target = path + (f"?{request.url.query}" if request.url.query else "")
         else:
             target = _referer_target(request)

@@ -256,10 +256,20 @@ def test_zero_gp_players_can_be_shown_and_hidden_again() -> None:
     assert '<input type="hidden" name="zero_gp" value="1">' in shown  # Apply keeps it
 
 
-def test_my_team_hides_nobody() -> None:
-    html = client().get(f"/players?owner=mine&{EVERY_ROW}").text
-    assert len(names_in(html, "players")) == len(MINE.roster)
-    assert "0 GP" not in client().get("/players?owner=mine").text  # nothing hidden, no toggle
+@pytest.mark.parametrize("season", ["current", "last"])
+def test_my_team_hides_nobody(season: str) -> None:
+    html = client().get(f"/players?owner=mine&season={season}").text
+    assert len(names_in(html, "players")) == len(MINE.roster)  # 0-GP players included
+    assert "0 GP" not in html  # nothing hidden, so no count and no toggle
+    shown = client().get(f"/players?owner=mine&season={season}&zero_gp=1").text
+    assert "hide 0 GP" not in shown  # a link that would change nothing
+
+
+def test_the_demo_has_zero_gp_players_on_my_team() -> None:
+    """So the test above shows the exemption, not an absence of 0-GP players."""
+    html = client().get("/players?owner=mine&season=current").text
+    gp = re.findall(r'<td class="num">(\d+)</td>\s*<td class="num">', html)
+    assert "0" in gp
 
 
 @pytest.mark.parametrize(("view", "columns"), [("", 9), ("&view=cats", 14)])

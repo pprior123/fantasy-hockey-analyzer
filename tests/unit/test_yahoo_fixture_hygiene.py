@@ -13,7 +13,6 @@ from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import pytest
 
@@ -312,10 +311,47 @@ def test_the_league_carries_only_the_placeholder_name() -> None:
     assert {o["name"] for o in leagues} == {LEAGUE_NAME}
 
 
+# Any URL in any string: http(s) in any case, or scheme-relative, alone or in text.
+URL = re.compile(r"(?i)(?:https?:)?//([^/\s\"'?#:]+)")
+
+
 def test_urls_point_only_at_yahoo_s_public_hosts_or_the_placeholder() -> None:
     hosts = {
-        urlsplit(text).hostname
+        match.group(1).lower()
         for text in strings(list(fixtures().values()))
-        if text.startswith(("http://", "https://"))
+        for match in URL.finditer(text)
     }
+    assert hosts
     assert hosts <= URL_HOSTS, sorted(hosts - URL_HOSTS)
+
+
+@pytest.mark.parametrize(
+    ("text", "host"),
+    [
+        ("https://s.yimg.com/a.png", "s.yimg.com"),
+        ("HTTPS://Evil.Example/x", "evil.example"),
+        ("//cdn.other.com/x.png", "cdn.other.com"),
+        ("see https://evil.example/x for more", "evil.example"),
+        ("http://host.example:8080/x", "host.example"),
+    ],
+)
+def test_the_url_check_finds_every_form(text: str, host: str) -> None:
+    assert [m.group(1).lower() for m in URL.finditer(text)] == [host]
+
+
+# ---------------------------------------------------------------- the manifest
+# The recorder writes it from the request paths, but it is committed too (Codex review).
+
+MANIFEST_KEYS = {"params", "calls"}
+PARAMS_KEYS = {"league_id", "available", "available_sort"}
+CALL_KEYS = {"path", "status", "file"}
+PATH = re.compile(r"[A-Za-z0-9_./;=,-]+")  # an API path the source builds: no free text
+
+
+def test_the_manifest_holds_only_its_schema() -> None:
+    manifest = json.loads((FIXTURES / MANIFEST).read_text())
+    assert set(manifest) == MANIFEST_KEYS
+    assert set(manifest["params"]) == PARAMS_KEYS
+    assert all(set(call) == CALL_KEYS for call in manifest["calls"])
+    assert all(PATH.fullmatch(call["path"]) for call in manifest["calls"])
+    assert problems(manifest) == []

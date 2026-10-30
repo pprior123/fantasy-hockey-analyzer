@@ -164,10 +164,40 @@ def test_both_seasons_have_stats_for_the_pool() -> None:
     snap = snapshot()
     pool = {p.player_key for p in snap.pool}
     assert snap.last_season_stats is not None
-    assert set(snap.stats) <= pool
-    assert set(snap.last_season_stats) <= pool
+    assert set(snap.stats) == pool  # every pool player, in both seasons (PR #19, Codex)
+    assert set(snap.last_season_stats) == pool
     assert {line.season for line in snap.stats.values()} == {2026}
     assert {line.season for line in snap.last_season_stats.values()} == {2025}
+
+
+def raw_stat_values(season: int) -> dict[str, dict[str, str]]:
+    """Every player's stat values for ``season``, straight from the recorded JSON."""
+    suffix = ";season=2025" if season == 2025 else ";type=season"
+    out: dict[str, dict[str, str]] = {}
+    for call in manifest()["calls"]:
+        if "/stats;" not in call["path"] or not call["path"].endswith(suffix):
+            continue
+        players = body(call["file"])["fantasy_content"]["players"]
+        for i in range(players["count"]):
+            fragments, stats = players[str(i)]["player"]
+            key = next(
+                f["player_key"] for f in fragments if isinstance(f, dict) and "player_key" in f
+            )
+            out[key] = {
+                str(s["stat"]["stat_id"]): str(s["stat"]["value"])
+                for s in stats["player_stats"]["stats"]
+            }
+    return out
+
+
+def test_parsed_stat_values_are_the_recorded_ones() -> None:
+    """Checked against the raw JSON, independent of the parser: every value of
+    every player, in both seasons."""
+    snap = snapshot()
+    for season, lines in ((2026, snap.stats), (2025, snap.last_season_stats or {})):
+        raw = raw_stat_values(season)
+        assert set(raw) == set(lines)
+        assert all(dict(lines[k].values) == raw[k] for k in raw), season
 
 
 def test_this_week_and_next_week_pair_every_team_once() -> None:

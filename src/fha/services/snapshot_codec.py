@@ -136,6 +136,8 @@ def _player(p: Player) -> dict[str, Any]:
         "eligible_positions": list(p.eligible_positions),
         "position_type": p.position_type,
         "status": p.status,
+        "first_name": p.first_name,
+        "last_name": p.last_name,
     }
 
 
@@ -225,6 +227,8 @@ def _unplayer(p: Mapping[str, Any]) -> Player:
         eligible_positions=tuple(_str(e) for e in p["eligible_positions"]),
         position_type=_str(p["position_type"]),
         status=_opt_str(p["status"]),
+        first_name=_str(p.get("first_name", "")),  # absent in a snapshot cached before
+        last_name=_str(p.get("last_name", "")),
     )
 
 

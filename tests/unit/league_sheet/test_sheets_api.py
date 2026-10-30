@@ -28,7 +28,7 @@ def api_response(g: Grid) -> dict[str, Any]:
     """A ``spreadsheets.get`` (includeGridData) body for a grid, as Google sends it:
     rows as lists of cells from column A, empty cells as {}, trailing ones left out."""
     sheets = []
-    for tab in g:
+    for i, tab in enumerate(g):
         row_data = []
         for r in range(1, tab.max_row + 1):
             width = max((c for (row, c) in tab.cells if row == r), default=0)
@@ -43,7 +43,8 @@ def api_response(g: Grid) -> dict[str, Any]:
                     raw["userEnteredValue"] = {"formulaValue": cell.formula}
                 values.append(raw)
             row_data.append({"values": values} if values else {})
-        sheets.append({"properties": {"title": tab.title}, "data": [{"rowData": row_data}]})
+        props = {"title": tab.title, **({"sheetId": i} if i else {})}  # Google omits 0
+        sheets.append({"properties": props, "data": [{"rowData": row_data}]})
     return {"sheets": sheets}
 
 
@@ -90,7 +91,11 @@ async def test_every_variant_parses_the_same_from_the_api_as_from_the_grid() -> 
     )
     sheet = SheetsApiLeagueSheet(http(Google(body=api_response(source))), SHEET_ID, token)
     parsed = await sheet.fetch()
-    assert parsed == parse_sheet(source)
+    # The API also gives each tab's ID and whether it is protected (none are here).
+    identified = Grid(tuple(Tab(t.title, t.cells, i, False) for i, t in enumerate(source)))
+    assert parsed == parse_sheet(identified)
+    assert [t.sheet_id for t in parsed.tabs] == [1, 2, 3]
+    assert parsed.editable_tabs == tuple(t.title for t in source)
     assert [t.status for t in parsed.tabs] == ["ok"] * 3
 
 
@@ -130,8 +135,13 @@ def test_cells_offsets_and_value_kinds() -> None:
     }
     g = grid_from_response(body)
     assert g.tabs == (
-        Tab("T", {(3, 2): Cell(7, "=SUM(B3:B4)"), (3, 3): Cell("x"), (3, 4): Cell(False)}),
-        Tab("Empty", {}),
+        Tab(
+            "T",
+            {(3, 2): Cell(7, "=SUM(B3:B4)"), (3, 3): Cell("x"), (3, 4): Cell(False)},
+            0,
+            False,
+        ),
+        Tab("Empty", {}, 0, False),
     )
     assert g.tabs[0].cells == {
         (3, 2): Cell(7, "=SUM(B3:B4)"),
@@ -176,6 +186,10 @@ def test_a_formula_with_an_error_value_keeps_its_formula() -> None:
         ({"sheets": [{}]}, "sheet 0: missing 'properties'"),
         ({"sheets": [{"properties": {}}]}, "sheet 0: missing 'title'"),
         ({"sheets": [{"properties": {"title": 5}}]}, "sheet 0: title is not text"),
+        (
+            {"sheets": [{"properties": {"title": "T", "sheetId": "7"}}]},
+            "T: sheetId: expected a non-negative integer",
+        ),
         (
             {"sheets": [{"properties": {"title": "T"}, "data": [{"startRow": -1}]}]},
             "T: startRow: expected a non-negative integer",
@@ -272,3 +286,64 @@ async def test_a_non_json_answer_is_an_error() -> None:
 def test_the_source_never_shows_the_sheet_id() -> None:
     sheet = SheetsApiLeagueSheet(http(Google()), SHEET_ID, token)
     assert SHEET_ID not in repr(sheet)
+
+
+def test_the_sheet_id_is_read_and_zero_when_google_leaves_it_out() -> None:
+    body = {
+        "sheets": [
+            {"properties": {"title": "A", "sheetId": 0}},
+            {"properties": {"title": "B", "sheetId": 1234567}},
+            {"properties": {"title": "C"}},
+        ]
+    }
+    assert [t.sheet_id for t in grid_from_response(body)] == [0, 1234567, 0]  # 0 omitted
+
+
+def protected(*ranges: Any) -> Any:
+    sheets = [
+        {"properties": {"title": "Mine", "sheetId": 5}},
+        {"properties": {"title": "Theirs", "sheetId": 6}, "protectedRanges": list(ranges)},
+    ]
+    return grid_from_response({"sheets": sheets})
+
+
+@pytest.mark.parametrize(
+    ("ranges", "locked"),
+    [
+        ([], False),
+        ([{"range": {"sheetId": 6}}], True),  # whole tab; can't edit (false is omitted)
+        ([{"range": {"sheetId": 6}, "requestingUserCanEdit": False}], True),
+        ([{"range": {"sheetId": 6}, "requestingUserCanEdit": True}], False),  # an editor
+        ([{"range": {"sheetId": 6, "startRowIndex": 2}}], False),  # part of the tab
+        ([{"range": {"sheetId": 6}, "unprotectedRanges": [{"sheetId": 6}]}], False),
+        ([{"range": {"sheetId": 9}}], False),  # another tab's range
+        ([{"namedRangeId": "x"}], False),  # no range given
+        ([{"range": {"sheetId": 6, "startRowIndex": 2}}, {"range": {"sheetId": 6}}], True),
+        ([{"range": {"sheetId": 6}, "warningOnly": True}], False),  # a warning stops no one
+        ([{"range": {"sheetId": 6}, "warningOnly": False}], True),
+    ],
+)
+def test_a_tab_is_locked_only_by_a_whole_tab_protection_against_the_reader(
+    ranges: list[Any], locked: bool
+) -> None:
+    mine, theirs = protected(*ranges).tabs
+    assert (mine.locked, theirs.locked) == (False, locked)
+
+
+def test_a_protected_range_must_be_an_object() -> None:
+    with pytest.raises(LeagueSheetError, match="Theirs: a protected range is not an object"):
+        protected("x")
+
+
+def test_editable_tabs_are_unknown_without_protection_data() -> None:
+    assert parse_sheet(grid(TeamTab("Aces", roster(1)))).editable_tabs is None
+    assert parse_sheet(Grid(())).editable_tabs is None
+    sheet = parse_sheet(protected({"range": {"sheetId": 6}}))
+    assert sheet.editable_tabs == ("Mine",)
+
+
+def test_a_whole_tab_protection_on_sheet_zero_has_an_empty_range() -> None:
+    # Google leaves sheetId 0 out of both the properties and the range.
+    sheets = [{"properties": {"title": "First"}, "protectedRanges": [{"range": {}}]}]
+    [tab] = grid_from_response({"sheets": sheets}).tabs
+    assert (tab.sheet_id, tab.locked) == (0, True)

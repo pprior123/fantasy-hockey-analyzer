@@ -148,6 +148,8 @@ def test_league_players_page() -> None:
         eligible_positions=("C", "LW"),
         position_type="P",
         status=None,
+        first_name="Ada",
+        last_name="Knight",
     )
     assert players[1].status == "IR"
     assert players[2].is_goalie
@@ -175,6 +177,15 @@ def test_eligible_positions_given_as_an_object_is_a_parse_error() -> None:
 def test_sub_needs_an_object() -> None:
     with pytest.raises(YahooParseError, match="t: expected an object, got list"):
         parse._sub([], "x", "t")
+
+
+def test_a_player_without_first_and_last_names_gets_empty_ones() -> None:
+    content = b.league_players([KNIGHT])
+    content["league"][1]["players"]["0"]["player"][0][2] = {
+        "name": {"full": "Ada Knight", "first": None}
+    }
+    player = parse.parse_league_players(content)[0]
+    assert (player.name, player.first_name, player.last_name) == ("Ada Knight", "", "")
 
 
 def test_player_name_must_have_a_full_name() -> None:

@@ -254,6 +254,7 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         suggestions=suggestions,
         teams=sorted(teams, key=lambda t: t.name),
         team_names=team_names,
+        my_team_key=next((t.team_key for t in teams if t.is_mine), None),
         reports=[r for r in (data.reports if data else []) if r.team_key is not None],
         reviews=reviews[:REVIEW_LIMIT],
         reviews_total=len(reviews),

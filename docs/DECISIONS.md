@@ -2373,3 +2373,109 @@ each yearly import would add more like them.
 more screen for a list of two or three; Put them back is all-or-nothing, and
 re-dismissing is one tap. Hiding rows with no candidate automatically:
 rejected, since "no close name" can also mean a typo the owner should see.
+
+## 2026-10-30 — League sheet: updating the owner's tab
+
+**What.** After a Yahoo roster change, the app proposes the edits to the
+owner's own tab in the league sheet, checks the cap, and writes only after
+the owner taps; then it reads the tab back and checks the PAYROLL (SPEC §1
+"Added after Phase 1", §4a "Writing"). The plan, its strategy critique and the
+independent review's triage are in `docs/plans/league-sheet-update.md`.
+
+Owner's answers (2026-10-30):
+- Rules: the salary cap, at most 25 rostered outside IR, up to 3 IR spots.
+  The league settings agree (C3 LW3 RW3 D6 G1 + BN9; IR+ 3). Yahoo already
+  enforces the slots, so the app checks them only as invariants; the cap is
+  the real check.
+- Placement: an add reuses a dropped player's row, else the first blank row
+  in the PAYROLL range; a drop clears its row. Values only, never rows.
+- New row: "Last, First", Yahoo position and team codes, the cap hit.
+- IR moves: both ways, counted row ↔ empty IR row below the range.
+- Over the cap: block, and say why. A tab that disagrees with itself: refuse
+  until fixed by hand. A formula in a target cell: refuse.
+- One service account (the protections keep it off the other tabs);
+  `LEAGUE_SHEET_SERVICE_ACCOUNT_JSON` allows a separate one later.
+- Writing is switched on by `FHA_SHEET_WRITE=1` in Vercel, not an Admin
+  setting, so turning it on is a deliberate step.
+- Access: the owner arranges Editor and protects every other tab, without
+  asking the commissioner first; a rehearsal on a private copy of the sheet
+  comes first.
+- Workflow: the owner checks a move in the app (Replace view) before making it
+  in Yahoo; the sheet update's block is the safety net.
+
+**Why.** The league requires each GM's tab updated within 24 h of a roster
+change and penalizes stale tabs. The app already knows the difference (the
+discrepancy report); typing it in by hand on a phone is the chore left.
+
+**Alternatives.** Structural edits (insert/delete rows): rejected, they shift
+the IR rows and contact details below and the SUM range unpredictably. A
+copy-paste list only: kept as the behaviour while writing is off, but on its
+own it leaves the chore. A writer that re-reads the raw grid: rejected, it
+puts the managers' contact details in the write path; the parser hands over
+the few facts the writer needs instead.
+
+**Implementation notes (2026-10-30, same PR).**
+- The plan's digest covers the tab's parsed rows, the edits, the refusals and
+  the ticks; only its hash rides in the form (itsdangerous signs, it doesn't
+  encrypt). A double tap re-reads, finds nothing to change, and says so.
+- Google leaves zero and false out of its JSON, so a missing `sheetId` is
+  sheet 0 and a missing `requestingUserCanEdit` is false. Checked against
+  Google's reference pages (batchUpdate atomicity, `updateCells` clearing,
+  GridRange indexes from 0 with an exclusive end, `ProtectedRange`); the
+  rehearsal on a private copy confirms them against the live API.
+- Deviation from the plan: a row moved into or out of IR must have a salary
+  number (and no formula); the parser keeps only the number, so `???` can't be
+  copied verbatim. Rare, refused with the reason, fixed by hand.
+- The demo league refuses `FHA_SHEET_WRITE=1`: its roster is made up.
+- Phase 1 first stored the empty IR rows as pairs, which Firestore refuses (a
+  list in a list); caught by the in-memory store's Firestore rules before
+  merge, and the round-trip test now goes through a store.
+- mutmut had failed to start since M5 (`app.py` and the files
+  `test_deploy.py` checks weren't in `also_copy`); fixed. One surviving
+  mutant in `domain/sheet_update.py` is equivalent and justified: in the slot
+  count, reading names from every edited column instead of the name column
+  changes nothing, because each edit to a row either clears all four cells or
+  writes its name.
+
+**Review round 1 (PR #22, two Claude reviewers: correctness, security).**
+Fixed: a row with no name (a salary line) is never dropped (DECISIONS M3 keeps
+such rows); the plan refuses a tab that, as read, lists more players than the
+slots or whose PAYROLL range spans over twice the roster spots, since contact
+rows inside it would become "drops"; free IR rows come only from the IR block
+right below the range, at most 10; a warning-only protection doesn't lock a
+tab; free rows go out in player-ID order, so a lineup shuffle between preview
+and confirm doesn't change the plan; a guard refusal and a storage failure
+after the write are messages, not a 500; the writer accepts only column letters
+B–ZZZ; "verbatim" in SPEC now says "as parsed". An IR add needs a known cap hit
+too (his full cap hit must fit when acquired, cap.py), so the payroll after is
+unknown without one. Accepted as is: the outcome flash travels in the redirect
+URL and the preview's GET reads and stores the sheet, as Admin's screens do.
+Open for the owner: whether their tab ever holds named non-player lines
+(buyouts, retained salary) inside the PAYROLL range; such a line would be shown
+as a drop in the preview.
+
+**Review round 2 (PR #22, one Claude reviewer).** Fixed: a *named* IR-labelled
+row outside the IR block (the run of IR rows right below the range) could be
+dropped and cleared, since only free IR rows had been confined; the parser now
+records the block (`ir_block`), the guard admits IR rows only inside it, and
+the plan refuses while such a row exists. The tab-as-read slot check allows a
+slack of 3 rows, so a tab a few moves out of date can still be fixed; the
+range-length bound and the IR block cover the contact-detail risk. Accepted: a
+gap inside the IR block ends it (the safe direction: fewer free IR rows); the
+owner's tab is to have 3 contiguous IR+ rows (rehearsal step). Owner
+(2026-10-30): the tab has no named non-player lines in the PAYROLL range, so
+an unmatched named row stays a drop.
+
+**Review round 3 (PR #22, one Claude reviewer; mutmut re-run).** Fixed: the
+refusal for a named IR row outside the IR block gives the row number only, not
+the name, which may be a contact detail; mutmut found the slack bound untested
+at exactly 3 over each count (`_check_shape` mutants 19 and 21), now killed by a
+boundary test, leaving only the justified `_check_result` survivor; the stored
+sheet's old-document test drops `ir_block` too; SPEC and the plan state the
+slack and the out-of-block refusal. Accepted: the IR block is not anchored to
+the range, so a tab with no IR rows and an `IR` label lower down would take that
+row as its block; the owner's tab is to have 3 IR+ rows right below the range,
+the rehearsal checks the parse, and the preview shows every drop before the
+confirm. A sheet stored by a pre-round-2 branch build decodes with no IR block
+and its IR rows are refused; only local builds ever stored one, and the confirm
+reads the sheet fresh.

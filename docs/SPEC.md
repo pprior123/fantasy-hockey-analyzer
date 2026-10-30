@@ -14,7 +14,8 @@ It replaces an Excel workbook whose core value is a custom player rating,
   weekly matchups (Mon–Sun). Daily lineups. Max 5 waiver acquisitions per
   week. Keeper league: exactly 8 keepers, each paid their full cap hit.
 - **Scoring categories (10):** G, A, PPP, PIM, HIT, SOG, BLK, W, GAA, SV%.
-- **Roster:** 16 active (3 C, 3 LW, 3 RW, 6 D, 1 G), bench, 1 IR + 1 IR+.
+- **Roster:** 16 active (3 C, 3 LW, 3 RW, 6 D, 1 G), bench (25 outside IR
+  in all), and IR slots (3 IR+ in 2026-27).
   Slot counts are read from Yahoo league settings at runtime (the league
   constitution and earlier notes disagree on bench size).
 - **Salary cap:** hard cap, same for all teams, set by the league each season
@@ -48,6 +49,15 @@ acquisition counter), trade evaluator, multi-user support. (The Matchup
 screen's free-agent shortcut and the Replace view in §7 are filters and sorts
 over existing data for a player the owner chose, not recommenders.) Do not build these. Phase 2 and 3
 are listed in §10 for context only.
+
+### Added after Phase 1
+
+- **Updating the owner's own tab** in the league sheet (owner's decision,
+  2026-10-30; DECISIONS, "League sheet: updating the owner's tab"). After a
+  Yahoo roster change, the app previews the edits to the owner's tab, checks
+  the cap, and writes cell values only after the owner taps, then reads the
+  tab back. It never writes another tab, never inserts or deletes rows, and is
+  off unless `FHA_SHEET_WRITE=1`. Yahoo stays read-only. See §4a "Writing".
 
 ## 2. Architecture
 
@@ -106,6 +116,9 @@ tests:
   team tab, the salary rows, IR rows, the tab's own payroll, and the cap.
   Two grid readers feed one pure parser: Google Sheets API (production) and
   a downloaded `.xlsx` (dev, tests).
+- `LeagueSheetWriter` — writes cell values to the owner's tab only (§4a
+  "Writing"): the Google Sheets API in production, a recording fake in tests
+  and the demo. No `.xlsx` writer.
 - `SalarySource` — yields `(name, team, aav)` rows for free agents. Phase 1
   impl: PuckPedia CSV. (PuckPedia has a paid private API; a future impl may
   slot in here.)
@@ -146,7 +159,10 @@ Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
   range. That column is the salary column and those rows are the counted
   players. Name / position / team are read from the same rows by header.
 - Rows labelled `IR` / `IR+` below the range are IR players (salary not
-  counted, per league rules).
+  counted, per league rules). Column A is the only cell read in any other row
+  below the range. In an IR-labelled row with no name, the name, position,
+  team and salary cells are checked for blankness only (a free IR row for
+  the writer); nothing from them is kept.
 - The tab's `PAYROLL` value is the team's official payroll. The cap is the
   summary tab's cap cell (each team tab's `CAP` cell references it); a team
   tab whose `CAP` value differs is flagged in the discrepancy report.
@@ -155,7 +171,8 @@ Parsing rule — **key off the tab's own PAYROLL formula, not its labels**:
 
 Reading: production uses the Google Sheets API (values and formulas, one
 batched request per refresh) with the Firestore service account; the owner
-shares the sheet view-only with that account's email. The sheet ID comes
+shares the sheet with that account's email (view-only; Editor once
+writing is on, see "Writing" below). The sheet ID comes
 from env `LEAGUE_SHEET_ID`. Dev reads a downloaded `.xlsx` at
 `LEAGUE_SHEET_XLSX` (under `private/`). Admin also accepts an uploaded
 `.xlsx` in any environment, as a fallback when the live read is unavailable
@@ -173,6 +190,38 @@ Discrepancy report (Admin, and a badge on Rosters): Yahoo roster players
 missing from the tab, tab players not on the Yahoo roster, and a tab payroll
 that differs from the sum of its matched rows. (The league penalizes
 out-of-date sheets; this makes staleness visible.)
+
+Writing (owner's tab only; off unless `FHA_SHEET_WRITE=1`, never in the demo):
+Admin → **Update my tab** reads the sheet afresh, compares the Yahoo roster of
+the owner's team (`is_owned_by_current_login`) with its bound tab, and plans
+value-only edits to the name, position, team and salary cells
+(`domain/sheet_update.py`). A dropped player's row is cleared; an added player
+fills a cleared row first, then a blank row inside the PAYROLL range, written
+as "Last, First" with Yahoo's position and team codes and the cap hit; a player
+moving into or out of an IR slot has his four cells copied as parsed (whole
+dollars, trimmed text) between the counted range and an empty IR row in the
+IR block right below the range. A row with no name (a salary line) is never
+dropped. Column A, the header row and every other cell are never written, and rows are never inserted or deleted, so the
+PAYROLL range and anything below it stay put. The plan refuses (with every
+reason) when the result would be over the cap, the tab disagrees with itself
+(PAYROLL is not the SUM of its counted rows within rounding, its CAP differs,
+or a row holds a negative salary), the tab as read lists more than 3 players over the
+league's slots or its PAYROLL range spans more than twice the roster spots
+(it may reach into the contact details), a named IR row lies outside the IR
+block right below the range, a cell to change holds a formula, a row to
+move has no salary number, a row awaits match review (unless the owner ticks
+it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
+counts (from the league settings) are checked as invariants. Before writing,
+the app re-reads the sheet and recomputes the plan; it writes only if the
+plan's digest is the one the owner saw (signed, 10 minutes), and only if every
+other tab is protected against the service account as a whole tab
+(`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
+`requestingUserCanEdit` false). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
+per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
+`spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
+added to their players, then reads the tab back and checks each written cell,
+the PAYROLL and that nothing is left to change. The owner shares the sheet
+with the service account as Editor and protects every other tab.
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —
@@ -498,7 +547,10 @@ A season label and toggle per §5.
    unrecognized tabs, tab ↔ Yahoo team binding, discrepancy report);
    PuckPedia CSV import for free agents; match review (unmatched row vs. top
    3 candidates, tap to bind, or dismiss a row no candidate fits, undoably);
-   single-player AAV edit; force refresh; config,
+   single-player AAV edit; force refresh; **Update my tab** (§4a
+   "Writing": the edits before → after, cap room before and after, a "drop
+   this row" tick for rows awaiting review, and Confirm when writing is on;
+   a Rosters badge links to it when the tab is out of date); config,
    including the rating settings: divisor method (workbook by default, or
    per-82), divisor count (default 20; switching method pre-fills that
    method's default unless the owner typed a count), and GP floor fraction
@@ -521,6 +573,8 @@ HttpOnly, Secure session cookie (long-lived). No user table.
   `SESSION_SECRET`, `FIRESTORE_PROJECT_ID`,
   `FIRESTORE_SERVICE_ACCOUNT_JSON` (the key's JSON content, not a file path —
   there is no persistent filesystem on Vercel), and `LEAGUE_SHEET_ID`.
+  Optional: `LEAGUE_SHEET_SERVICE_ACCOUNT_JSON` (a key for the sheet only;
+  the Firestore key otherwise) and `FHA_SHEET_WRITE=1` (§4a "Writing").
 - **Never** commit, print, log, or echo secret values. Never read `.env` into
   output. Tests never need real secrets.
 - The owner's workbook, the league sheet (and its ID), and any salary CSVs
@@ -682,8 +736,8 @@ access (DECISIONS, "Yahoo API access: pending approval").
   Candidates so far: waiver recommendations (drop suggestions), trade
   evaluator, tonight's-games lineup helper and games-this-week counts (NHL
   schedule API), weekly acquisition counter, goalie-appearance tracker (the
-  league requires 3 per week), export of the owner's roster in the league
-  spreadsheet's format (the league requires it within 24 h of changes).
+  league requires 3 per week). (Exporting the owner's roster to the league
+  sheet was brought forward as "Updating the owner's own tab", §1.)
 - **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie
   model, keeper-value view.
 

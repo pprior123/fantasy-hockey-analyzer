@@ -5,7 +5,7 @@ import pytest
 
 from fha.sources.league_sheet.grid import Cell, Grid, Tab
 from fha.sources.league_sheet.models import ParsedSheet, ParsedTab, SheetRow
-from fha.sources.league_sheet.parse import parse_sheet
+from fha.sources.league_sheet.parse import MAX_BLANK_ROWS, parse_sheet
 from tests.unit.league_sheet.sheets import (
     CAP,
     CONTACT,
@@ -424,3 +424,123 @@ def test_a_formula_with_a_huge_row_number_is_unrecognized_not_a_crash() -> None:
     """M4R3A-1: int() refuses over 4300 digits; the reference pattern stops at 12."""
     tab = one(TeamTab("Vast", roster(2), payroll_formula=f"=SUM(F7:F{'9' * 5000})"))
     assert tab.status == "unrecognized"
+
+
+# ------------------------------------------------ what a writer needs (SPEC §4a "Writing")
+
+
+def test_the_writer_gets_column_letters_the_header_row_and_blank_rows() -> None:
+    players = [Player("Ann Able"), None, Player("Bo Bell"), None]
+    tab = one(TeamTab("Wasps", players))
+    assert (tab.header_row, tab.name_column, tab.position_column, tab.team_column) == (
+        6,
+        "C",
+        "D",
+        "E",
+    )
+    assert tab.salary_column == "F"
+    assert tab.blank_rows == (8, 10)  # the trailing blank row 10 counts too
+
+
+def test_blank_rows_run_to_the_end_of_the_range_past_the_last_cell() -> None:
+    # The range ends at row 12 but nothing is written below row 7 (no contact
+    # block below in this grid): rows 8-12 are still free.
+    tab = Tab.from_rows(
+        "Bare",
+        [
+            ["PAYROLL", None, (1000, "=SUM(F7:F12)")],
+            [],
+            [],
+            [],
+            [],
+            [None, None, "NAME", "Pos", "Team", "Salary"],
+            [None, None, "Ann Able", "C", "TBL", 1000],
+        ],
+    )
+    [parsed] = parse_sheet(Grid((tab,))).tabs
+    assert parsed.blank_rows == (8, 9, 10, 11, 12)
+
+
+def test_a_row_with_any_target_cell_filled_or_a_formula_is_not_blank() -> None:
+    tab = TeamTab("Yaks", [Player("Ann Able"), None, None, None]).tab()
+    cells = dict(tab.cells)
+    cells[(8, 4)] = Cell("LW")  # a position with no name or salary
+    cells[(9, 6)] = Cell(None, "=0")  # a formula with no value
+    cells[(10, 2)] = Cell(3)  # a row number in column B: not a target column
+    [parsed] = parse_sheet(Grid((summary_tab(), Tab("Yaks", cells)))).tabs
+    assert parsed.blank_rows == (10,)
+
+
+def test_empty_ir_rows_are_found_only_when_all_four_cells_are_blank() -> None:
+    below = [
+        IRRow("IR+", None),
+        IRRow("IR", Player("Ike Injured")),
+        IRRow("IR+", None),
+        IRRow("Notes", None),  # not an IR label
+    ]
+    team = TeamTab("Zebu", roster(2), below=below)
+    tab = team.tab()
+    cells = dict(tab.cells)
+    cells[(11, 6)] = Cell(500_000)  # a salary left in the second empty IR+ row
+    [parsed] = parse_sheet(Grid((summary_tab(), Tab("Zebu", cells)))).tabs
+    assert parsed.empty_ir_rows == ((9, "IR+"),)
+    assert_no_contact(parsed)
+
+
+def test_formula_and_negative_salary_flags_on_rows() -> None:
+    team = TeamTab("Elk", [Player("Ann Able"), Player("Bo Bell", salary=-500_000)])
+    tab = team.tab()
+    cells = dict(tab.cells)
+    cells[(7, 3)] = Cell("Ann Able", '="Ann "&"Able"')
+    [parsed] = parse_sheet(Grid((summary_tab(), Tab("Elk", cells)))).tabs
+    ann, bo = parsed.rows
+    assert (ann.has_formula, ann.negative_salary) == (True, False)
+    assert (bo.has_formula, bo.negative_salary, bo.salary) == (False, True, None)
+
+
+def test_the_sheet_id_is_carried_and_none_without_one() -> None:
+    tab = TeamTab("Fox", roster(1)).tab()
+    [with_id] = parse_sheet(Grid((Tab(tab.title, tab.cells, 42),))).tabs
+    assert with_id.sheet_id == 42
+    assert one(TeamTab("Fox", roster(1))).sheet_id is None
+
+
+def test_an_unrecognized_tab_has_no_writer_fields() -> None:
+    tab = one(TeamTab("Gnu", roster(2), payroll_formula="=F7+F8"))
+    assert tab.status == "unrecognized"
+    assert (tab.name_column, tab.blank_rows, tab.empty_ir_rows) == (None, (), ())
+
+
+def test_a_tab_without_position_or_team_headers_has_none_for_them() -> None:
+    team = TeamTab("Hen", roster(2))
+    team.headers["pos"] = "Notes"
+    team.headers["team"] = "Contract"
+    tab = one(team)
+    assert (tab.position_column, tab.team_column) == (None, None)
+
+
+def test_a_vast_range_keeps_only_the_first_blank_rows() -> None:
+    tab = one(TeamTab("Vast", roster(2), payroll_formula="=SUM(F7:F99999999999)"))
+    # Rows 13-14 hold this synthetic tab's contact block, inside the vast range.
+    assert len(tab.blank_rows) == MAX_BLANK_ROWS
+    assert tab.blank_rows[:5] == (9, 10, 11, 12, 15)
+
+
+def test_free_ir_rows_come_only_from_the_ir_block_below_the_range() -> None:
+    below = [
+        Player("Not IR"),  # a row between the range and the IR block
+        IRRow("IR+", None),
+        IRRow("IR", Player("Ike Injured")),
+        IRRow("IR+", None),
+        IRRow("Notes", None),  # the block ends here
+        IRRow("IR", None),  # an IR label further down: never a place to write
+    ]
+    tab = one(TeamTab("Ibis", roster(2), below=below))
+    assert tab.empty_ir_rows == ((10, "IR+"), (12, "IR+"))
+
+
+def test_free_ir_rows_are_capped() -> None:
+    from fha.sources.league_sheet.parse import MAX_IR_ROWS
+
+    tab = one(TeamTab("Jays", roster(1), below=[IRRow("IR+", None)] * (MAX_IR_ROWS + 3)))
+    assert len(tab.empty_ir_rows) == MAX_IR_ROWS

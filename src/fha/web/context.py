@@ -14,6 +14,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -21,6 +22,10 @@ from fha.services.clock import Clock, SystemClock
 from fha.services.refresh import DEFAULT_TTL_SECONDS, RefreshService
 from fha.sources.league_sheet.source import LeagueSheetSource
 from fha.storage.repository import Repository
+
+if TYPE_CHECKING:
+    from fha.sources.google_auth import TokenProvider
+    from fha.sources.league_sheet.writer import LeagueSheetWriter
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
@@ -100,6 +105,8 @@ class Services:
     sheet: LeagueSheetSource | None = None  # None: no league sheet configured
     # Awaited before every page (``page_data``): the demo's built-in salaries.
     prepare: Callable[[], Awaitable[None]] | None = None
+    # Writes the owner's tab (SPEC §4a "Writing"); None: writing is off.
+    sheet_writer: LeagueSheetWriter | None = None
 
 
 ServicesFactory = Callable[[httpx.AsyncClient], Services]
@@ -132,6 +139,42 @@ def _require_yahoo(environ: Mapping[str, str]) -> None:
         raise ConfigError(f"{' and '.join(missing)} not set (or set FHA_DEMO=1 for demo data)")
 
 
+SHEET_KEYS = ("LEAGUE_SHEET_SERVICE_ACCOUNT_JSON", "FIRESTORE_SERVICE_ACCOUNT_JSON")
+
+
+def sheet_tokens(environ: Mapping[str, str], scope: str, http: httpx.AsyncClient) -> TokenProvider:
+    """Tokens for the league sheet: its own key if set, else the Firestore key. A key
+    for the sheet alone lets a local run read a live sheet with local storage
+    (the storage factory refuses the Firestore key beside a dev file)."""
+    from fha.sources.google_auth import GoogleAuthError, ServiceAccountTokens
+
+    name = next((n for n in SHEET_KEYS if environ.get(n)), None)
+    if name is None:
+        raise ConfigError(f"LEAGUE_SHEET_ID needs {' or '.join(SHEET_KEYS)}")
+    try:
+        return ServiceAccountTokens(environ[name], [scope], http)
+    except GoogleAuthError as e:
+        raise ConfigError(f"{name}: {e}") from None
+
+
+def sheet_writer_from_env(
+    environ: Mapping[str, str], http: httpx.AsyncClient
+) -> LeagueSheetWriter | None:
+    """The writer for the owner's tab, only with ``FHA_SHEET_WRITE=1`` and the live
+    sheet. Its token has the write scope; the reader's stays read-only."""
+    flag = environ.get("FHA_SHEET_WRITE", "")
+    if flag not in ("", "0", "1"):
+        raise ConfigError("FHA_SHEET_WRITE must be 1 (on) or 0 / unset (off)")
+    if flag != "1":
+        return None
+    if not environ.get("LEAGUE_SHEET_ID"):
+        raise ConfigError("FHA_SHEET_WRITE needs LEAGUE_SHEET_ID (the live sheet)")
+    from fha.sources.league_sheet.writer import WRITE_SCOPE, SheetsApiLeagueSheetWriter
+
+    tokens = sheet_tokens(environ, WRITE_SCOPE, http)
+    return SheetsApiLeagueSheetWriter(http, environ["LEAGUE_SHEET_ID"], tokens)
+
+
 def league_sheet_from_env(
     environ: Mapping[str, str], http: httpx.AsyncClient
 ) -> LeagueSheetSource | None:
@@ -139,17 +182,11 @@ def league_sheet_from_env(
     from fha.sources.league_sheet.source import SheetsApiLeagueSheet, XlsxLeagueSheet
 
     if environ.get("LEAGUE_SHEET_ID"):
-        from fha.sources.google_auth import GoogleAuthError, ServiceAccountTokens
         from fha.sources.league_sheet.sheets_api import SCOPE
 
-        key = environ.get("FIRESTORE_SERVICE_ACCOUNT_JSON")
-        if not key:
-            raise ConfigError("LEAGUE_SHEET_ID needs FIRESTORE_SERVICE_ACCOUNT_JSON")
-        try:
-            tokens = ServiceAccountTokens(key, [SCOPE], http)
-        except GoogleAuthError as e:
-            raise ConfigError(f"FIRESTORE_SERVICE_ACCOUNT_JSON: {e}") from None
-        return SheetsApiLeagueSheet(http, environ["LEAGUE_SHEET_ID"], tokens)
+        return SheetsApiLeagueSheet(
+            http, environ["LEAGUE_SHEET_ID"], sheet_tokens(environ, SCOPE, http)
+        )
     if environ.get("LEAGUE_SHEET_XLSX"):
         return XlsxLeagueSheet(Path(environ["LEAGUE_SHEET_XLSX"]))
     return None
@@ -175,7 +212,13 @@ def production_services(
     creds = Credentials(environ["YAHOO_CLIENT_ID"], environ["YAHOO_CLIENT_SECRET"], redirect)
     client = YahooClient(http, creds, RepositoryTokenStore(repo), clock=clock.now)
     refresh = RefreshService(HttpYahooSource(client), repo, clock, ttl_seconds=settings.ttl_seconds)
-    return Services(repo, refresh, clock, league_sheet_from_env(environ, http))
+    return Services(
+        repo,
+        refresh,
+        clock,
+        league_sheet_from_env(environ, http),
+        sheet_writer=sheet_writer_from_env(environ, http),
+    )
 
 
 def demo_services(
@@ -192,6 +235,8 @@ def demo_services(
     from fha.storage.memory import InMemoryRepository
     from fha.storage.repository import RepositoryError
 
+    if environ.get("FHA_SHEET_WRITE") == "1":  # its roster is made up: never write it
+        raise ConfigError("FHA_SHEET_WRITE is not for the demo league")
     repo: Repository
     if environ.get("FHA_LOCAL_REPOSITORY"):
         from fha.storage.local_json import LocalJsonRepository

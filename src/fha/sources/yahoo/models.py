@@ -58,6 +58,8 @@ class Player:
     eligible_positions: tuple[str, ...]
     position_type: str  # "P" or "G"
     status: str | None = None  # injury designation, e.g. "IR", "DTD"
+    first_name: str = ""  # Yahoo's name.first ("" if absent): "Last, First" on the sheet
+    last_name: str = ""  # Yahoo's name.last
 
     @property
     def is_goalie(self) -> bool:

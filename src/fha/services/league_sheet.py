@@ -73,6 +73,15 @@ def encode_sheet(sheet: ParsedSheet) -> dict[str, Any]:
                 "salary_column": t.salary_column,
                 "payroll_formula": t.payroll_formula,
                 "payroll_range": t.payroll_range,
+                "sheet_id": t.sheet_id,
+                "header_row": t.header_row,
+                "name_column": t.name_column,
+                "position_column": t.position_column,
+                "team_column": t.team_column,
+                "blank_rows": list(t.blank_rows),
+                # Objects, not pairs: Firestore can't store a list in a list.
+                "empty_ir_rows": [{"row": r, "label": label} for r, label in t.empty_ir_rows],
+                "ir_block": list(t.ir_block) if t.ir_block else None,
                 "rows": [
                     {
                         "row": r.row,
@@ -82,6 +91,8 @@ def encode_sheet(sheet: ParsedSheet) -> dict[str, Any]:
                         "salary": r.salary,
                         "counted": r.counted,
                         "ir": r.ir,
+                        "has_formula": r.has_formula,
+                        "negative_salary": r.negative_salary,
                     }
                     for r in t.rows
                 ],
@@ -93,7 +104,9 @@ def encode_sheet(sheet: ParsedSheet) -> dict[str, Any]:
 
 def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
     """A stored sheet back. A negative salary or cap reads as unknown, as the parser
-    now reads it, so a sheet stored before that rule can't crash the screens."""
+    now reads it, so a sheet stored before that rule can't crash the screens. The
+    writer's fields (SPEC §4a "Writing") default to None / () / False in a sheet
+    stored before them; the sheet update then asks for a fresh read."""
     return ParsedSheet(
         cap=_amount(doc["cap"]),
         cap_source=doc["cap_source"],
@@ -108,6 +121,14 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
                 salary_column=t["salary_column"],
                 payroll_formula=t["payroll_formula"],
                 payroll_range=t["payroll_range"],
+                sheet_id=t.get("sheet_id"),
+                header_row=t.get("header_row"),
+                name_column=t.get("name_column"),
+                position_column=t.get("position_column"),
+                team_column=t.get("team_column"),
+                blank_rows=tuple(t.get("blank_rows", ())),
+                empty_ir_rows=tuple((e["row"], e["label"]) for e in t.get("empty_ir_rows", ())),
+                ir_block=tuple(t["ir_block"]) if t.get("ir_block") else None,
                 rows=tuple(
                     SheetRow(
                         r["row"],
@@ -117,6 +138,8 @@ def decode_sheet(doc: Mapping[str, Any]) -> ParsedSheet:
                         _amount(r["salary"]),
                         r["counted"],
                         r["ir"],
+                        r.get("has_formula", False),
+                        r.get("negative_salary", False),
                     )
                     for r in t["rows"]
                 ),
@@ -347,6 +370,18 @@ async def confirm_row(repo: Repository, tab: str, key: str, player_id: str) -> N
     rows = await _entries(repo, ROW_BINDINGS)
     rows.setdefault(tab, {})[key] = {"player_id": player_id, "how": "confirmed"}
     await repo.put(COLLECTION, ROW_BINDINGS, {"entries": rows})
+
+
+async def bind_written_rows(repo: Repository, tab: str, rows: Mapping[str, str]) -> None:
+    """Bind the rows the app itself wrote (row key -> player ID), so its own new rows
+    are never re-matched by name (SPEC §4a "Writing")."""
+    if not rows:
+        return
+    entries = await _entries(repo, ROW_BINDINGS)
+    bound = entries.setdefault(tab, {})
+    for key, player_id in rows.items():
+        bound[key] = {"player_id": player_id, "how": "written"}
+    await repo.put(COLLECTION, ROW_BINDINGS, {"entries": entries})
 
 
 # ---------------------------------------------------------------- salaries for the app

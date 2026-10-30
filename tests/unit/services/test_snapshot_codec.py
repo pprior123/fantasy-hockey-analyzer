@@ -68,3 +68,14 @@ async def test_position_types_and_positions_keep_their_values() -> None:
     categories = {c["stat_id"]: c for c in meta["game_stat_categories"]}
     assert (categories["0"]["display_name"], categories["0"]["position_types"]) == ("GP", ["P"])
     assert decode(*encode(snap)).game_stat_categories == snap.game_stat_categories
+
+
+async def test_a_snapshot_cached_before_first_and_last_names_still_decodes() -> None:
+    snap = await synthetic_snapshot()
+    meta, lists = encode(snap)
+    players = [*lists["available"], *(e["player"] for t in meta["teams"] for e in t["roster"])]
+    for p in players:
+        del p["first_name"], p["last_name"]
+    back = decode(meta, lists)
+    assert {(p.first_name, p.last_name) for p in back.pool} == {("", "")}
+    assert [p.name for p in back.pool] == [p.name for p in snap.pool]

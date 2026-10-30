@@ -23,7 +23,8 @@ from fha.sources.league_sheet.models import LeagueSheetError
 
 API = "https://sheets.googleapis.com/v4/spreadsheets/"
 FIELDS = (
-    "sheets(properties(title),"
+    "sheets(properties(title,sheetId),"
+    "protectedRanges(range,requestingUserCanEdit,unprotectedRanges,warningOnly),"
     "data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))"
 )
 SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -61,6 +62,8 @@ def grid_from_response(body: Any) -> Grid:
         title = _get(_get(sheet, "properties", f"sheet {i}"), "title", f"sheet {i}")
         if not isinstance(title, str):
             raise LeagueSheetError(f"sheet {i}: title is not text")
+        # Google leaves zero values out of its JSON: no sheetId is sheet 0.
+        sheet_id = _int(sheet["properties"].get("sheetId", 0), f"{title}: sheetId")
         cells: dict[tuple[int, int], Cell] = {}
         for block in _list(sheet.get("data"), f"{title}: data"):
             if not isinstance(block, dict):
@@ -77,8 +80,34 @@ def grid_from_response(body: Any) -> Grid:
                     cell = _cell(raw, f"{title}!{a1(r, c)}")
                     if cell.value is not None or cell.formula:
                         cells[(r, c)] = cell
-        tabs.append(Tab(title, cells))
+        tabs.append(Tab(title, cells, sheet_id, _locked(sheet, sheet_id, title)))
     return Grid(tuple(tabs))
+
+
+def _locked(sheet: dict[str, Any], sheet_id: int, title: str) -> bool:
+    """The tab is protected as a whole against the reader: a protected range with no
+    bounds on this tab, no unprotected ranges in it, not warning-only (anyone may edit
+    through a warning, and the API never sees it), and ``requestingUserCanEdit``
+    false. A partial protection doesn't count (SPEC §4a "Writing")."""
+    for protection in _list(sheet.get("protectedRanges"), f"{title}: protectedRanges"):
+        if not isinstance(protection, dict):
+            raise LeagueSheetError(f"{title}: a protected range is not an object")
+        grid_range = protection.get("range")
+        if not isinstance(grid_range, dict):
+            continue
+        bounds = set(grid_range) - {"sheetId"}
+        whole = not bounds and grid_range.get("sheetId", 0) == sheet_id
+        # Google leaves false out of its JSON: no requestingUserCanEdit is false.
+        can_edit = protection.get("requestingUserCanEdit", False)
+        warning_only = protection.get("warningOnly", False)
+        if (
+            whole
+            and not protection.get("unprotectedRanges")
+            and warning_only is False
+            and can_edit is False
+        ):
+            return True
+    return False
 
 
 def _list(value: Any, what: str) -> list[Any]:

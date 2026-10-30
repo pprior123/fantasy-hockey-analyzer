@@ -354,3 +354,50 @@ def test_a_stored_negative_amount_reads_back_as_unknown() -> None:
     assert back.tabs[0].rows[0].salary is None
     assert back.tabs[0].rows[1].salary == sheet().tabs[0].rows[1].salary  # others untouched
     assert decode_sheet(encode_sheet(sheet())) == sheet()
+
+
+async def test_the_writer_fields_round_trip_and_default_in_an_old_document() -> None:
+    tab = sheet().tabs[0]
+    full = replace(
+        tab,
+        sheet_id=7,
+        header_row=6,
+        name_column="C",
+        position_column="D",
+        team_column=None,
+        blank_rows=(9, 10),
+        empty_ir_rows=((12, "IR+"),),
+        rows=(replace(tab.rows[0], has_formula=True, negative_salary=True), *tab.rows[1:]),
+    )
+    stored = replace(sheet(), tabs=(full, *sheet().tabs[1:]))
+    assert decode_sheet(encode_sheet(stored)) == stored
+    # ...and through a store with Firestore's rules (no list in a list).
+    repo = InMemoryRepository()
+    await read_league_sheet(repo, FakeLeagueSheet(stored), Clock())
+    assert await load_league_sheet(repo) == (stored, T0)
+    old = encode_sheet(sheet())
+    for key in ("sheet_id", "header_row", "name_column", "position_column", "team_column"):
+        del old["tabs"][0][key]
+    del old["tabs"][0]["blank_rows"], old["tabs"][0]["empty_ir_rows"], old["tabs"][0]["ir_block"]
+    for row in old["tabs"][0]["rows"]:
+        del row["has_formula"], row["negative_salary"]
+    back = decode_sheet(old).tabs[0]
+    assert (back.sheet_id, back.name_column, back.blank_rows, back.empty_ir_rows) == (
+        None,
+        None,
+        (),
+        (),
+    )
+    assert back.ir_block is None
+    assert not back.rows[0].has_formula
+
+
+async def test_rows_the_app_wrote_are_bound_and_nothing_bound_writes_nothing() -> None:
+    from fha.services.league_sheet import ROW_BINDINGS, bind_written_rows
+
+    repo = InMemoryRepository()
+    await bind_written_rows(repo, "Pinecone", {})
+    assert await repo.get(COLLECTION, ROW_BINDINGS) is None
+    await bind_written_rows(repo, "Pinecone", {"knight ada|F": "1"})
+    doc = await repo.get(COLLECTION, ROW_BINDINGS)
+    assert doc == {"entries": {"Pinecone": {"knight ada|F": {"player_id": "1", "how": "written"}}}}

@@ -282,7 +282,7 @@ def create_app(context: AppContext) -> FastAPI:
     from fha.services.settings import SettingsError
     from fha.storage.repository import RepositoryError
     from fha.web.data import NO_DATA, BadQueryError, no_data_hint
-    from fha.web.routes import admin, league, matchup, players, rosters
+    from fha.web.routes import admin, league, matchup, players, rosters, sheet_update
 
     async def no_data(request: Request, exc: Exception) -> HTMLResponse:
         unratable = isinstance(exc, ViewError)  # M4R11A-2: Yahoo answered; the data didn't fit
@@ -386,7 +386,7 @@ def create_app(context: AppContext) -> FastAPI:
     app.add_exception_handler(HTTPException, http_error)
     app.add_exception_handler(SettingsError, bad_settings)
     app.add_exception_handler(RepositoryError, store_down)
-    for module in (players, rosters, league, matchup, admin):
+    for module in (players, rosters, league, matchup, admin, sheet_update):
         app.include_router(module.router)
     return app
 

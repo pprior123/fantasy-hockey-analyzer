@@ -606,11 +606,14 @@ def test_the_salary_cap_setting_fills_in_for_an_unreadable_cap() -> None:
     assert "Cap $119.60M" in html  # the sheet's own cap wins
 
 
-def test_a_sheet_discrepancy_shows_a_badge_linking_to_admin() -> None:
+def test_a_sheet_discrepancy_on_my_team_links_to_the_tab_update() -> None:
     svc = make_services()
     seed(svc, skip=1)  # the first rostered player is missing from the tab
-    html = client(svc).get("/rosters").text
-    assert '<a class="badge" href="/admin">Sheet differs</a>' in html
+    html = client(svc).get("/rosters").text  # my team by default
+    assert (
+        '<a class="badge" href="/admin/sheet/update">Sheet out of date: review the update</a>'
+        in html
+    )
 
 
 @pytest.mark.parametrize("path", ["/rosters", "/league", "/rosters/replace?drop=MY"])

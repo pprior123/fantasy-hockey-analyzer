@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fha.sources.league_sheet.source import SheetsApiLeagueSheet, XlsxLeagueSheet
+from fha.sources.league_sheet.writer import SheetsApiLeagueSheetWriter
 from fha.storage.firestore import FirestoreRepository
 from fha.storage.local_json import PRIVATE_DIR, LocalJsonRepository
 from fha.storage.memory import InMemoryRepository
@@ -20,6 +21,7 @@ from fha.web.context import (
     demo_services,
     league_sheet_from_env,
     production_services,
+    sheet_writer_from_env,
 )
 
 BASE = {"APP_PASSWORD": "pw", "SESSION_SECRET": "secret-" * 5}
@@ -161,16 +163,43 @@ def test_production_services_wire_firestore_and_the_live_sheet() -> None:
 @pytest.mark.parametrize(
     ("env", "message"),
     [
-        ({"LEAGUE_SHEET_ID": "s"}, "^LEAGUE_SHEET_ID needs FIRESTORE_SERVICE_ACCOUNT_JSON$"),
+        (
+            {"LEAGUE_SHEET_ID": "s"},
+            "^LEAGUE_SHEET_ID needs LEAGUE_SHEET_SERVICE_ACCOUNT_JSON or "
+            "FIRESTORE_SERVICE_ACCOUNT_JSON$",
+        ),
         (
             {"LEAGUE_SHEET_ID": "s", "FIRESTORE_SERVICE_ACCOUNT_JSON": "not json"},
             "^FIRESTORE_SERVICE_ACCOUNT_JSON: the service-account key is not valid JSON$",
+        ),
+        (
+            {
+                "LEAGUE_SHEET_ID": "s",
+                "LEAGUE_SHEET_SERVICE_ACCOUNT_JSON": "not json",
+                "FIRESTORE_SERVICE_ACCOUNT_JSON": KEY,
+            },
+            "^LEAGUE_SHEET_SERVICE_ACCOUNT_JSON: the service-account key is not valid JSON$",
         ),
     ],
 )
 def test_the_live_sheet_needs_a_usable_key(env: dict[str, str], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
         league_sheet_from_env(env, HTTP)
+
+
+def test_a_sheet_key_lets_a_live_sheet_run_with_local_storage() -> None:
+    """The rehearsal (plan Phase 6): a live sheet, its own key, and the dev file."""
+    env = {
+        **BASE,
+        "YAHOO_CLIENT_ID": "id",
+        "YAHOO_CLIENT_SECRET": "sec",
+        "FHA_LOCAL_REPOSITORY": str(PRIVATE_DIR / "rehearsal-test-never-created.json"),
+        "LEAGUE_SHEET_ID": "copy-id",
+        "LEAGUE_SHEET_SERVICE_ACCOUNT_JSON": KEY,
+    }
+    services = production_services(env, HTTP, Settings.from_env(env))
+    assert isinstance(services.repo, LocalJsonRepository)
+    assert isinstance(services.sheet, SheetsApiLeagueSheet)
 
 
 def test_no_sheet_configured_is_none() -> None:
@@ -232,3 +261,50 @@ def test_production_refreshes_with_the_consent_redirect_uri(
     }
     production_services(env, HTTP, Settings.from_env(env))
     assert [c.redirect_uri for c in seen] == [redirect]
+
+
+SHEET = {"LEAGUE_SHEET_ID": "sheet-id", "FIRESTORE_SERVICE_ACCOUNT_JSON": KEY}
+
+
+@pytest.mark.parametrize("flag", [None, "", "0"])
+def test_writing_is_off_unless_switched_on(flag: str | None) -> None:
+    env = {**SHEET, **({"FHA_SHEET_WRITE": flag} if flag is not None else {})}
+    assert sheet_writer_from_env(env, HTTP) is None
+
+
+def test_writing_switched_on_writes_the_live_sheet_with_its_own_token() -> None:
+    writer = sheet_writer_from_env({**SHEET, "FHA_SHEET_WRITE": "1"}, HTTP)
+    assert isinstance(writer, SheetsApiLeagueSheetWriter)
+    assert "sheet-id" not in repr(writer)
+    env = {
+        **BASE,
+        **SHEET,
+        "YAHOO_CLIENT_ID": "id",
+        "YAHOO_CLIENT_SECRET": "sec",
+        "FIRESTORE_PROJECT_ID": "fha-prod",
+        "FHA_SHEET_WRITE": "1",
+    }
+    services = production_services(env, HTTP, Settings.from_env(env))
+    assert isinstance(services.sheet_writer, SheetsApiLeagueSheetWriter)
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"FHA_SHEET_WRITE": "yes"}, "^FHA_SHEET_WRITE must be 1 \\(on\\) or 0 / unset \\(off\\)$"),
+        ({"FHA_SHEET_WRITE": "1"}, "^FHA_SHEET_WRITE needs LEAGUE_SHEET_ID \\(the live sheet\\)$"),
+        (
+            {"FHA_SHEET_WRITE": "1", "LEAGUE_SHEET_XLSX": "private/x.xlsx"},
+            "^FHA_SHEET_WRITE needs LEAGUE_SHEET_ID",
+        ),
+    ],
+)
+def test_writing_needs_a_clear_switch_and_the_live_sheet(env: dict[str, str], message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        sheet_writer_from_env(env, HTTP)
+
+
+def test_the_demo_league_is_never_written() -> None:
+    env = {**BASE, "FHA_DEMO": "1", "FHA_SHEET_WRITE": "1"}
+    with pytest.raises(ConfigError, match=r"^FHA_SHEET_WRITE is not for the demo league$"):
+        demo_services(env, HTTP, Settings.from_env(env))

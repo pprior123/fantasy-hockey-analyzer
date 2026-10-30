@@ -2303,9 +2303,16 @@ rows the owner never wants.
   "showing N", so it stays true as rows are appended without updating it.
 - The partial is its own path, not `/players` with an `HX-Request` branch, so
   no cache or history entry can hold a fragment under the page's URL.
-- An expired session on the partial gets the app's existing htmx answer (401
-  with `HX-Redirect` to the login page), not a login page swapped into the
-  table.
+- An expired session on the partial gets the app's htmx answer (401 with
+  `HX-Redirect` to the login page), not a login page swapped into the table.
+  The login's `next` is the page the owner was on (htmx's `HX-Current-URL`,
+  same site only), not the fragment's own URL, which would log them in to a
+  bare list of rows (review, PR #20).
+- Each Show more rebuilds the view, and may refresh from Yahoo if the cache
+  has gone stale since the first page. Then the pages come from two
+  snapshots, and a row may repeat or be skipped at the boundary. Accepted: it
+  is rare (a 30-minute cache), harmless for one reader, and pinning pages to
+  a snapshot is more than the app needs. The button dims while it loads.
 
 **Alternatives.**
 - **Paging by page number** (`page=2`). Rejected: appending keeps the rows

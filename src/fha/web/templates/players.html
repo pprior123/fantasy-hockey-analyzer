@@ -34,7 +34,7 @@
 {{ m.view_toggle("/players", params, mode) }}
 
 {# Above the table, so the page ends with it: scrolled to the end, its header stays in view. #}
-<p class="muted">{{ total }} players{% if zero_gp_hidden %} ({{ zero_gp_hidden }} with 0 GP hidden: <a href="{{ url('/players', params, zero_gp='1') }}">show them</a>){% elif query.zero_gp %} (<a href="{{ url('/players', params, zero_gp=None) }}">hide 0 GP</a>){% endif %}. Rank and percentile are over the whole league, whatever the filter.</p>
+<p class="muted">{{ total }} players{% if zero_gp_hidden %} ({{ zero_gp_hidden }} with 0 GP hidden: <a href="{{ url('/players', params, zero_gp='1') }}">show them</a>){% elif query.zero_gp and not query.single_team %} (<a href="{{ url('/players', params, zero_gp=None) }}">hide 0 GP</a>){% endif %}. Rank and percentile are over the whole league, whatever the filter.</p>
 
 {% macro header(key, label) -%}
 <th class="{{ 'first' if key == 'name' else '' }}{{ ' num' if key not in ('name', 'pos', 'team', 'owner') else '' }}{{ ' sorted' if sort == key else '' }}">

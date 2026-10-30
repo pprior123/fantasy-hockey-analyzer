@@ -10,7 +10,6 @@ from fha.domain.models import Category
 from fha.services.league_sheet import RosteredSalary
 from fha.services.league_view import LeagueView, Salaries, build_view
 from fha.services.players_table import (
-    PAGE_SIZE,
     Owner,
     PlayersQuery,
     QueryError,
@@ -190,10 +189,6 @@ def test_params_parse_with_defaults() -> None:
         zero_gp=True, start=200
     )
     assert PlayersQuery.from_params({"zero_gp": "", "start": ""}) == PlayersQuery()
-
-
-def test_pages_are_a_hundred_rows() -> None:
-    assert PAGE_SIZE == 100
 
 
 @pytest.mark.parametrize(

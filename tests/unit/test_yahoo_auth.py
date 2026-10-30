@@ -13,6 +13,7 @@ import pytest
 from fha.sources.yahoo import oauth
 from fha.sources.yahoo.oauth import Token, YahooAuthError
 from fha.storage.factory import LOCAL, repository_from_env
+from fha.storage.local_json import PRIVATE_DIR
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import Document, RepositoryError
 from fha.storage.tokens import COLLECTION, YAHOO_TOKEN, RepositoryTokenStore
@@ -510,10 +511,37 @@ async def test_the_local_target_must_be_under_private(tmp_path: Path) -> None:
 
 
 async def test_the_command_line_picks_the_local_target() -> None:
+    dev = str(PRIVATE_DIR / "dev.json")  # absolute: passes from any working directory
     async with httpx.AsyncClient() as http:
-        local = yahoo_auth.target_from_args(["--local", "private/dev.json"], http)
+        local = yahoo_auth.target_from_args(["--local", dev], http)
         assert isinstance(local.store, RepositoryTokenStore)
-        assert "the dev repository private/dev.json" in local.where
+        assert f"the dev repository {dev}" in local.where
         for extra in (["--firestore", "k.json"], ["--project", "p2"]):
             with pytest.raises(SystemExit):
-                yahoo_auth.target_from_args(["--local", "private/dev.json", *extra], http)
+                yahoo_auth.target_from_args(["--local", dev, *extra], http)
+
+
+async def test_a_directory_is_not_a_local_target(tmp_path: Path) -> None:
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(SetupError, match="is a directory"):
+            yahoo_auth.local_target(tmp_path, http, private_dir=tmp_path)
+
+
+async def test_a_local_403_says_diagnose_reads_the_scripts_token(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def ask(prompt: str) -> str:
+        return redirect_to(capsys.readouterr().out)
+
+    class Forbidden(Yahoo):
+        async def __call__(self, request: httpx.Request) -> httpx.Response:
+            if str(request.url) == oauth.TOKEN_URL:
+                return await super().__call__(request)
+            return httpx.Response(403, json={"error": {"description": "not authorized"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(Forbidden())) as http:
+        target = yahoo_auth.local_target(tmp_path / "dev.json", http, private_dir=tmp_path)
+        code = await yahoo_auth.run(ENV, ask, http, target, clock=lambda: NOW)
+    _, err = capsys.readouterr()
+    assert code == 1
+    assert "diagnose passes on the scripts'" in err

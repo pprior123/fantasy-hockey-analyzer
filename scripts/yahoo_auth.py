@@ -100,6 +100,8 @@ def repository_target(repo: Repository, project: str) -> Target:
 
 def local_target(path: Path, http: httpx.AsyncClient, private_dir: Path | None = None) -> Target:
     """Dev, real data: the app's dev repository file (``FHA_LOCAL_REPOSITORY``)."""
+    if path.is_dir():
+        raise SetupError(f"{path} is a directory: give the dev repository's file name")
     try:
         repo = repository_from_env({LOCAL: str(path)}, http, private_dir=private_dir)
     except RepositoryError as e:
@@ -109,7 +111,10 @@ def local_target(path: Path, http: httpx.AsyncClient, private_dir: Path | None =
         f"the dev repository {path}, {COLLECTION}/{YAHOO_TOKEN}",
         f"Run the app with FHA_LOCAL_REPOSITORY={path} to use it. Never commit or share this file.",
         f"saved in {path}",
-        f"Check again later with\n{DIAGNOSE}",
+        # diagnose reads the scripts' token file, not this one; access is per app
+        "Yahoo approves the app, not each token: when diagnose passes on the scripts'\n"
+        "token (python -m scripts.yahoo_auth, no options), this one works too:\n"
+        f"{DIAGNOSE}",
     )
 
 

@@ -222,6 +222,8 @@ def parse_league_settings(content: dict[str, Any]) -> LeagueSettings:
 def _player(meta: dict[str, Any]) -> Player:
     name = _get(meta, "name", "player")
     full = name.get("full") if isinstance(name, dict) else None
+    first = name.get("first") if isinstance(name, dict) else None
+    last = name.get("last") if isinstance(name, dict) else None
     positions = []
     for entry in meta.get("eligible_positions", []):
         positions.append(_as_str(_get(entry, "position", "eligible_positions"), "position"))
@@ -235,6 +237,8 @@ def _player(meta: dict[str, Any]) -> Player:
         eligible_positions=tuple(positions),
         position_type=_as_str(_get(meta, "position_type", "player"), "position_type"),
         status=_as_str(status, "status") if status else None,
+        first_name=first if isinstance(first, str) else "",
+        last_name=last if isinstance(last, str) else "",
     )
 
 

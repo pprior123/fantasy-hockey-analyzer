@@ -2211,3 +2211,68 @@ reinstalled to pick up the new name.
   that `FHA_DEMO` already makes.
 - **A separate demo icon.** Not now. The name is enough to tell the two
   apps apart.
+
+## 2026-10-30 — M4.5: the first real Yahoo recording
+
+Yahoo turned API access on for the new app (App ID `kRJFpCPr`) on
+2026-10-30, after approving the application, countersigning the Personal Use
+Agreement and receiving the new Client ID. The old app never got access: the
+approval required a new app. `.env`, Vercel and both tokens (dev, and
+production in Firestore) moved to the new app on 2026-10-13.
+
+**The recording.** The owner ran `scripts.record_yahoo`:
+- **Calls and time:** 192 API calls in 4.8 s and 5.4 s, from the owner's
+  laptop. That's within the 8-second target (SPEC §2). Vercel's `iad1` may
+  differ.
+- **League:** game 477 (season 2026), 8 teams, 217 rostered players, 1,390
+  available, and a pool of 1,607. It's week 5 of 1–26, with 4 matchups
+  this week and next.
+- **GP > 0:** 802 players this season, 1,031 last season.
+
+**PPP (SPEC §11, question 2): direct.** Yahoo has PPP as stat 8 for skaters,
+so the app uses it, not PPG + PPA. The other categories are G 1, A 2, PIM 5,
+HIT 31, SOG 14 and BLK 32.
+
+**What the real data showed, and the fixes:**
+- **GP is three stats.** Yahoo has 0 "Games Played" (skaters and goalies),
+  29 "F/D Games" (skaters) and 30 "Goalie Games", all displayed as "GP". The
+  stat map failed as ambiguous.
+  - Fix: an ambiguous GP narrows to the stat for that position type alone,
+    29 for skaters and 30 for goalies. The same rule already applied to
+    goalie GP, and any other ambiguous stat still fails.
+  - In the recording, 0 and 29 agree on every skater line, and a replay test
+    keeps checking that.
+- **False email alarms.** Yahoo's default headshot is `.../silhouette@2x.png`.
+  The sanitizer's email check matched it 1,704 times and wrote nothing.
+  - Fix: a match whose "domain" is a scale plus an image extension is skipped.
+    Real addresses still fail, including ones inside URLs.
+- **The league chat channel.** League settings carry `sendbird_channel_url`.
+  It's now dropped like `iris_group_chat_id`, and refused if it survives.
+- **Blocklist gaps.** The sanitizer is a blocklist, and Yahoo adds fields, so
+  the committed fixtures are also held to an allowlist
+  (`tests/unit/test_yahoo_fixture_hygiene.py`, `ALLOWED_KEYS`). A field that
+  isn't on the reviewed list fails CI.
+- **Shared names.** Three pairs of players share a full name: Matt Murray,
+  Elias Pettersson and Sebastian Aho. Name matching already breaks such ties
+  by team and position, or sends them to review.
+
+**Replay tests** (`tests/unit/yahoo/test_replay.py`) serve the recording to
+the real `YahooClient` and `HttpYahooSource` by exact request path. A request
+that isn't in the recording fails, and so does a recorded one the refresh no
+longer makes. They check:
+- game-key resolution;
+- the stat map;
+- the slots;
+- the pool;
+- both seasons;
+- both weeks' scoreboards;
+- the engine on the real pool.
+
+**Still to do in M4.5:** the owner's local sign-off with real data.
+
+**Alternatives.**
+- **Prefer stat 0 for GP.** Rejected: it covers both position types, so the
+  ambiguity would need a special case anyway. The position-specific stat is
+  the rule that already existed for goalies.
+- **Strip headshot URLs.** Rejected: they are public, and the email check
+  should be right rather than worked around.

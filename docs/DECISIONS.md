@@ -2373,3 +2373,43 @@ each yearly import would add more like them.
 more screen for a list of two or three; Put them back is all-or-nothing, and
 re-dismissing is one tap. Hiding rows with no candidate automatically:
 rejected, since "no close name" can also mean a typo the owner should see.
+
+## 2026-10-30 — League sheet: updating the owner's tab
+
+**What.** After a Yahoo roster change, the app proposes the edits to the
+owner's own tab in the league sheet, checks the cap, and writes only after
+the owner taps; then it reads the tab back and checks the PAYROLL (SPEC §1
+"Added after Phase 1", §4a "Writing"). The plan, its strategy critique and the
+independent review's triage are in `docs/plans/league-sheet-update.md`.
+
+Owner's answers (2026-10-30):
+- Rules: the salary cap, at most 25 rostered outside IR, up to 3 IR spots.
+  The league settings agree (C3 LW3 RW3 D6 G1 + BN9; IR+ 3). Yahoo already
+  enforces the slots, so the app checks them only as invariants; the cap is
+  the real check.
+- Placement: an add reuses a dropped player's row, else the first blank row
+  in the PAYROLL range; a drop clears its row. Values only, never rows.
+- New row: "Last, First", Yahoo position and team codes, the cap hit.
+- IR moves: both ways, counted row ↔ empty IR row below the range.
+- Over the cap: block, and say why. A tab that disagrees with itself: refuse
+  until fixed by hand. A formula in a target cell: refuse.
+- One service account (the protections keep it off the other tabs);
+  `LEAGUE_SHEET_SERVICE_ACCOUNT_JSON` allows a separate one later.
+- Writing is switched on by `FHA_SHEET_WRITE=1` in Vercel, not an Admin
+  setting, so turning it on is a deliberate step.
+- Access: the owner arranges Editor and protects every other tab, without
+  asking the commissioner first; a rehearsal on a private copy of the sheet
+  comes first.
+- Workflow: the owner checks a move in the app (Replace view) before making it
+  in Yahoo; the sheet update's block is the safety net.
+
+**Why.** The league requires each GM's tab updated within 24 h of a roster
+change and penalizes stale tabs. The app already knows the difference (the
+discrepancy report); typing it in by hand on a phone is the chore left.
+
+**Alternatives.** Structural edits (insert/delete rows): rejected, they shift
+the IR rows and contact details below and the SUM range unpredictably. A
+copy-paste list only: kept as the behaviour while writing is off, but on its
+own it leaves the chore. A writer that re-reads the raw grid: rejected, it
+puts the managers' contact details in the write path; the parser hands over
+the few facts the writer needs instead.

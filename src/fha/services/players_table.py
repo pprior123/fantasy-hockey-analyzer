@@ -2,7 +2,9 @@
 
 Pure: the query (from the URL) in, the rows to show out. Ranks and
 percentiles never change with a filter (SPEC §5: they are over the whole
-pool); filters only choose which rows are shown.
+pool); filters only choose which rows are shown. Players with 0 GP are hidden
+unless asked for, except on a single team's list; the screen shows the rows
+``PAGE_SIZE`` at a time from ``start`` (the owner's decision, 2026-10-30).
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ class SortKey(StrEnum):
 
 POSITIONS = ("C", "LW", "RW", "D", "G")
 MAX_MIN_GP_DIGITS = 4  # a season is 82 games; this keeps int() off huge strings
+MAX_START_DIGITS = 5  # the pool is ~1,600 players
+PAGE_SIZE = 100
 # Sensible first direction per column: best first for ratings, cheapest first for money.
 DESCENDING_FIRST = frozenset({SortKey.GP, SortKey.TTLTST, SortKey.PCTL, SortKey.AAV})
 
@@ -53,6 +57,8 @@ class PlayersQuery:
     min_gp: int = 0
     sort: SortKey | Category = SortKey.TTLTST  # a category sorts by its norm
     descending: bool = True
+    zero_gp: bool = False  # show players with 0 GP
+    start: int = 0  # the first row of the page asked for
 
     @classmethod
     def from_params(cls, params: Mapping[str, str]) -> PlayersQuery:
@@ -62,7 +68,7 @@ class PlayersQuery:
             value = (params.get(name) or "").strip()
             return value or None
 
-        for name in ("owner", "pos", "sort", "dir"):  # the 400 page quotes 12 characters at most
+        for name in ("owner", "pos", "sort", "dir", "zero_gp"):  # the 400 page quotes ≤ 12 chars
             if len(value := get(name) or "") > 12:
                 raise QueryError(f"unknown {name} {value[:12] + '…'!r}")
         try:
@@ -70,12 +76,11 @@ class PlayersQuery:
             position = get("pos")
             if position is not None and position not in POSITIONS:
                 raise QueryError(f"unknown position {position!r}")
-            min_gp_text = get("min_gp") or "0"
-            digits = min_gp_text.isascii() and min_gp_text.isdigit()
-            if not digits or len(min_gp_text) > MAX_MIN_GP_DIGITS:
-                shown = min_gp_text if len(min_gp_text) <= 12 else min_gp_text[:12] + "…"
-                raise QueryError(f"min_gp must be a whole number up to 9999, got {shown!r}")
-            min_gp = int(min_gp_text)
+            min_gp = _whole(get("min_gp"), "min_gp", MAX_MIN_GP_DIGITS)
+            start = _whole(get("start"), "start", MAX_START_DIGITS)
+            zero_gp = get("zero_gp")
+            if zero_gp not in (None, "1"):
+                raise QueryError(f"zero_gp must be 1 or absent, got {zero_gp!r}")
             sort_text = get("sort") or SortKey.TTLTST.value
             sort: SortKey | Category
             if sort_text in {c.value for c in Category}:
@@ -92,11 +97,44 @@ class PlayersQuery:
             if direction
             else (isinstance(sort, Category) or sort in DESCENDING_FIRST)
         )
-        return cls(owner, get("team"), position, min_gp, sort, descending)
+        return cls(owner, get("team"), position, min_gp, sort, descending, zero_gp == "1", start)
+
+    @property
+    def single_team(self) -> bool:
+        return self.team_key is not None or self.owner is Owner.MINE
+
+
+def _whole(text: str | None, name: str, max_digits: int) -> int:
+    """A query-string whole number; blank is 0. Digits are bounded, so no huge int()."""
+    text = text or "0"
+    if not (text.isascii() and text.isdigit()) or len(text) > max_digits:
+        shown = text if len(text) <= 12 else text[:12] + "…"
+        top = 10**max_digits - 1
+        raise QueryError(f"{name} must be a whole number up to {top}, got {shown!r}")
+    return int(text)
 
 
 def select(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
     """The rows the query shows, sorted; players with no value in the sort column last."""
+    hide_zero = not (query.zero_gp or query.single_team)
+    rows = [r for r in _filtered(view, query) if not (hide_zero and r.gp == 0)]
+    names = {t.team_key: t.name for t in view.teams}
+    key = _sort_value(query.sort, names)
+    present = [r for r in rows if key(r) is not None]
+    missing = [r for r in rows if key(r) is None]
+    present.sort(key=lambda r: (r.name, r.player_id))  # stable tie order: name, then id
+    present.sort(key=lambda r: _comparable(key(r)), reverse=query.descending)
+    return [*present, *missing]
+
+
+def zero_gp_hidden(view: LeagueView, query: PlayersQuery) -> int:
+    """How many players the other filters show that 0-GP hiding leaves out."""
+    if query.zero_gp or query.single_team:
+        return 0
+    return sum(1 for r in _filtered(view, query) if r.gp == 0)
+
+
+def _filtered(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
     mine = view.my_team.team_key if view.my_team else None
 
     def shown(row: PlayerRow) -> bool:
@@ -106,14 +144,7 @@ def select(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
             return False
         return row.gp >= query.min_gp
 
-    rows = [r for r in view.rows if shown(r)]
-    names = {t.team_key: t.name for t in view.teams}
-    key = _sort_value(query.sort, names)
-    present = [r for r in rows if key(r) is not None]
-    missing = [r for r in rows if key(r) is None]
-    present.sort(key=lambda r: (r.name, r.player_id))  # stable tie order: name, then id
-    present.sort(key=lambda r: _comparable(key(r)), reverse=query.descending)
-    return [*present, *missing]
+    return [r for r in view.rows if shown(r)]
 
 
 def _owned_as_asked(row: PlayerRow, query: PlayersQuery, mine: str | None) -> bool:

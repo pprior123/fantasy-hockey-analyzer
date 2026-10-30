@@ -187,8 +187,79 @@ def test_players_season_toggle() -> None:
     ],
 )
 def test_players_filters(query: str, check: Any) -> None:
-    html = client().get(f"/players?{query}").text
+    html = client().get(f"/players?{query}&{EVERY_ROW}").text
     assert check(names_in(html, "players")), query
+
+
+# ---------------------------------------------------------------- players: paging and 0 GP
+
+EVERY_ROW = "zero_gp=1&start=99000"  # 0-GP players shown, and every page at once
+DEMO_ZERO_GP = 47  # the demo league's players with 0 GP last season
+
+
+def show_more(html: str) -> tuple[str, str] | None:
+    """The "Show more" link's (href, hx-get), or None when there's no next page."""
+    found = re.search(r'<tr class="more">.*?href="([^"]*)"\s+hx-get="([^"]*)"', html, re.S)
+    return (found[1].replace("&amp;", "&"), found[2].replace("&amp;", "&")) if found else None
+
+
+def test_players_shows_a_page_of_rows_and_a_show_more_button() -> None:
+    html = client().get("/players?season=last").text
+    total = len(SNAP.pool) - DEMO_ZERO_GP
+    assert len(names_in(html, "players")) == 100
+    assert f"{total} players ({DEMO_ZERO_GP} with 0 GP hidden" in html
+    more = ("/players?season=last&start=100", "/players/rows?season=last&start=100")
+    assert show_more(html) == more
+    assert f'Show 100 more <span class="muted">({total - 100} left)' in html
+
+
+def test_show_more_returns_the_next_page_alone_then_stops() -> None:
+    c = client()
+    everything = names_in(c.get("/players?start=99000").text, "players")
+    assert len(everything) == len(SNAP.pool) - DEMO_ZERO_GP
+    got, link = [], "/players/rows?start=0"
+    while link:
+        part = c.get(link)
+        assert part.status_code == 200
+        assert "<html" not in part.text  # rows only
+        assert "<thead" not in part.text
+        got += names_in(f'<table class="data players">{part.text}</table>', "players")
+        more = show_more(part.text)
+        link = more[1] if more else ""
+    assert got == everything  # every row once, in order, and the last page has no button
+
+
+def test_the_no_js_show_more_shows_every_row_so_far() -> None:
+    c = client()
+    page = c.get("/players?start=100").text
+    everything = names_in(c.get("/players?start=99000").text, "players")
+    assert names_in(page, "players") == everything[:200]
+    assert show_more(page) == ("/players?start=200", "/players/rows?start=200")
+
+
+def test_links_start_from_the_top_but_refresh_comes_back_here() -> None:
+    html = client().get("/players?owner=free&start=100").text
+    hrefs = [h for h in re.findall(r'href="([^"]*)"', html) if h.startswith("/players")]
+    paging = [h for h in hrefs if "start=" in h]
+    assert paging == ["/players?owner=free&amp;start=200"]  # only the button's own link
+    assert any("sort=name" in h for h in hrefs)  # the headers are among the links checked
+    assert 'name="next" value="/players?owner=free&amp;start=100"' in html  # Refresh
+
+
+def test_zero_gp_players_can_be_shown_and_hidden_again() -> None:
+    c = client()
+    html = c.get("/players?owner=free").text
+    assert '<a href="/players?owner=free&amp;zero_gp=1">show them</a>' in html
+    shown = c.get("/players?owner=free&zero_gp=1").text
+    assert "with 0 GP hidden" not in shown
+    assert '(<a href="/players?owner=free">hide 0 GP</a>)' in shown
+    assert '<input type="hidden" name="zero_gp" value="1">' in shown  # Apply keeps it
+
+
+def test_my_team_hides_nobody() -> None:
+    html = client().get(f"/players?owner=mine&{EVERY_ROW}").text
+    assert len(names_in(html, "players")) == len(MINE.roster)
+    assert "0 GP" not in client().get("/players?owner=mine").text  # nothing hidden, no toggle
 
 
 @pytest.mark.parametrize(("view", "columns"), [("", 9), ("&view=cats", 14)])
@@ -242,10 +313,14 @@ def test_the_categories_toggle_swaps_salary_columns_for_norms() -> None:
         "sort=salary",
         "season=bogus",
         "min_gp=" + "9" * 4301,  # M4R1B-9: int() of a huge string was a 500
+        "start=x",
+        "start=" + "9" * 6,
+        "zero_gp=yes",
     ],
 )
-def test_bad_player_queries_are_a_400_page(query: str) -> None:
-    response = client().get(f"/players?{query}")
+@pytest.mark.parametrize("path", ["/players", "/players/rows"])
+def test_bad_player_queries_are_a_400_page(query: str, path: str) -> None:
+    response = client().get(f"{path}?{query}")
     assert response.status_code == 400
     assert 'class="error"' in response.text
     assert FOOTER in response.text

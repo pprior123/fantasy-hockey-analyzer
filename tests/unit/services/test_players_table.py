@@ -10,12 +10,14 @@ from fha.domain.models import Category
 from fha.services.league_sheet import RosteredSalary
 from fha.services.league_view import LeagueView, Salaries, build_view
 from fha.services.players_table import (
+    PAGE_SIZE,
     Owner,
     PlayersQuery,
     QueryError,
     SortKey,
     _comparable,
     select,
+    zero_gp_hidden,
 )
 from fha.sources.yahoo.demo import demo_snapshot
 from tests.unit.services.snapshots import synthetic_snapshot
@@ -34,8 +36,12 @@ def ids(rows: Any) -> list[str]:
     return [r.player_id for r in rows]
 
 
+ALL = PlayersQuery(zero_gp=True)  # every player: 0-GP players are hidden by default
+ZERO_GP = {"3", "6", *(str(n) for n in range(100, 160, 5))}  # the synthetic league's
+
+
 def test_the_default_is_everyone_by_ttltst_best_first(view: LeagueView) -> None:
-    rows = select(view, PlayersQuery())
+    rows = select(view, ALL)
     assert len(rows) == len(view.rows)
     rated = [r.ttltst for r in rows if r.ttltst is not None]
     assert rated == sorted(rated, reverse=True)
@@ -46,15 +52,38 @@ def test_the_default_is_everyone_by_ttltst_best_first(view: LeagueView) -> None:
     ("owner", "expected"),
     [
         (Owner.MINE, {"1", "2", "3"}),
-        (Owner.TAKEN, {"1", "2", "3", "4", "5", "6"}),
+        (Owner.TAKEN, {"1", "2", "4", "5"}),  # 3 and 6 have 0 GP
     ],
 )
 def test_owner_chips(view: LeagueView, owner: Owner, expected: set[str]) -> None:
     assert set(ids(select(view, PlayersQuery(owner=owner)))) == expected
 
 
+def test_zero_gp_players_are_hidden_by_default_and_counted(view: LeagueView) -> None:
+    """The owner's decision (2026-10-30): hidden unless asked for, with how many."""
+    shown = set(ids(select(view, PlayersQuery())))
+    assert shown == {r.player_id for r in view.rows} - ZERO_GP
+    assert zero_gp_hidden(view, PlayersQuery()) == len(ZERO_GP)
+    assert set(ids(select(view, ALL))) == shown | ZERO_GP
+    assert zero_gp_hidden(view, ALL) == 0
+    taken = PlayersQuery(owner=Owner.TAKEN)
+    assert zero_gp_hidden(view, taken) == 2  # counted under the same filters: 3 and 6
+    assert zero_gp_hidden(view, PlayersQuery(min_gp=1)) == 0  # min GP hides them anyway
+
+
+@pytest.mark.parametrize(
+    "query", [PlayersQuery(owner=Owner.MINE), PlayersQuery(team_key=f"{LK}.t.2")]
+)
+def test_a_single_team_shows_its_zero_gp_players(view: LeagueView, query: PlayersQuery) -> None:
+    """One team's roster is short, and a 0-GP player on it (IR all season) is still
+    on the roster, so nothing is hidden there."""
+    rows = ids(select(view, query))
+    assert ZERO_GP & set(rows)
+    assert zero_gp_hidden(view, query) == 0
+
+
 def test_free_agents_and_a_single_team(view: LeagueView) -> None:
-    free = select(view, PlayersQuery(owner=Owner.FREE))
+    free = select(view, replace(ALL, owner=Owner.FREE))
     assert len(free) == 60
     assert all(r.owner_key is None for r in free)
     team = select(view, PlayersQuery(team_key=f"{LK}.t.2", owner=Owner.FREE))  # team wins
@@ -62,7 +91,7 @@ def test_free_agents_and_a_single_team(view: LeagueView) -> None:
 
 
 def test_position_and_min_gp(view: LeagueView) -> None:
-    goalies = select(view, PlayersQuery(position="G"))
+    goalies = select(view, replace(ALL, position="G"))
     assert ids(goalies) == ["3"]
     busy = select(view, PlayersQuery(min_gp=9))
     assert set(ids(busy)) == {"1", "2"}
@@ -106,7 +135,7 @@ def test_every_column_sorts_in_order_with_ties_by_name_and_blanks_last(
     """The exact order (M4R1B-5): by the column's value in the asked direction, ties by
     name then id, and rows with no value last, in display order."""
     value = COLUMN[key]
-    rows = select(DEMO_VIEW, PlayersQuery(sort=key, descending=descending))
+    rows = select(DEMO_VIEW, PlayersQuery(sort=key, descending=descending, zero_gp=True))
     present = [r for r in DEMO_VIEW.rows if value(r) is not None]
     blank = [r for r in DEMO_VIEW.rows if value(r) is None]
     assert len({value(r) for r in present}) > 2  # a real sort, not a trivial one
@@ -123,7 +152,7 @@ def test_blank_columns_are_blanks_not_values() -> None:
 
 
 def test_sort_by_aav_puts_unknown_salaries_last(view: LeagueView) -> None:
-    rows = select(view, PlayersQuery(sort=SortKey.AAV, descending=False))
+    rows = select(view, replace(ALL, sort=SortKey.AAV, descending=False))
     assert ids(rows)[:2] == ["100", "1"]
     assert all(r.aav is None for r in rows[2:])
 
@@ -141,7 +170,7 @@ def test_sort_by_a_category_uses_its_norm(view: LeagueView) -> None:
 
 
 def test_sort_by_owner_uses_team_names(view: LeagueView) -> None:
-    rows = select(view, PlayersQuery(sort=SortKey.OWNER, descending=False))
+    rows = select(view, replace(ALL, sort=SortKey.OWNER, descending=False))
     assert ids(rows)[:3] == sorted(ids(rows)[:3], key=lambda pid: (view.by_id[pid].name, pid))
     assert all(r.owner_key is None for r in rows[6:])
 
@@ -157,6 +186,14 @@ def test_params_parse_with_defaults() -> None:
     assert PlayersQuery.from_params({"sort": "HIT"}) == PlayersQuery(sort=Category.HIT)
     assert PlayersQuery.from_params({"sort": "gp", "dir": "asc"}).descending is False
     assert PlayersQuery.from_params({"owner": " ", "min_gp": ""}) == PlayersQuery()
+    assert PlayersQuery.from_params({"zero_gp": "1", "start": "200"}) == PlayersQuery(
+        zero_gp=True, start=200
+    )
+    assert PlayersQuery.from_params({"zero_gp": "", "start": ""}) == PlayersQuery()
+
+
+def test_pages_are_a_hundred_rows() -> None:
+    assert PAGE_SIZE == 100
 
 
 @pytest.mark.parametrize(
@@ -170,6 +207,10 @@ def test_params_parse_with_defaults() -> None:
         ({"min_gp": "10000"}, "up to 9999"),
         ({"sort": "salary"}, "salary"),
         ({"dir": "up"}, "dir must be asc or desc"),
+        ({"zero_gp": "yes"}, "zero_gp must be 1"),
+        ({"start": "x"}, "start must be a whole number"),
+        ({"start": "-100"}, "start must be a whole number"),
+        ({"start": "9" * 6}, "start must be a whole number up to 99999"),
     ],
 )
 def test_bad_params_are_refused(params: dict[str, str], message: str) -> None:

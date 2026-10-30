@@ -74,6 +74,9 @@ table.data th.first { background: var(--soft); }
 table.data thead th.first { z-index: 3; }
 table.data th.sorted a { color: var(--brand); }
 table.data tr.ir td { color: var(--muted); }
+/* "Show more": a big tap target that stays at the left edge when the table scrolls sideways. */
+table.data tr.more td { padding: .6rem .45rem; border-bottom: 0; }
+table.data tr.more .btn { position: sticky; left: .45rem; display: inline-block; min-height: 2.75rem; padding: .75rem 1.2rem; text-decoration: none; }
 table.data tr.mine td { font-weight: 600; }
 table.data tr.trailing td, table.data tr.trailing th { background: #fff1f0; }
 table.data th.trailing, table.data td.trailing { background: #fff1f0; }

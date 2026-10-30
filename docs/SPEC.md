@@ -468,7 +468,10 @@ Common to the tables: a **Categories** toggle swaps the salary columns
    $/TTLTST. Tap a header to sort. Filter chips: All / My Team / Free Agents /
    Taken, plus a team picker for any single team; position; min GP. Tap a row
    to expand the 7-category norm breakdown. Sticky header. Last-refreshed time
-   and a Refresh button.
+   and a Refresh button. 100 rows at a time, with a **Show more** button that
+   appends the next 100; players with 0 GP are hidden unless asked for (not
+   on a single team's list), and the count says how many (DECISIONS, "Players:
+   100 rows at a time"). Rank and percentile stay over the whole league.
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in

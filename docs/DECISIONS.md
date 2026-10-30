@@ -2276,3 +2276,42 @@ longer makes. They check:
   the rule that already existed for goalies.
 - **Strip headshot URLs.** Rejected: they are public, and the email check
   should be right rather than worked around.
+
+## 2026-10-30 — Players: 100 rows at a time, 0-GP players hidden
+
+**What.** The Players table shows the first 100 rows of the current filter and
+sort, then a **Show more** button that appends the next 100 in place (htmx,
+`GET /players/rows?…&start=N`). Without JavaScript the same button is a link
+to `/players?…&start=N`, which renders every row up to N + 100. Players with
+0 GP in the season shown are hidden by default; the count line says how many
+and links to `zero_gp=1` to show them (and back). A single team's list (My
+Team, or the team picker) hides nobody: a roster is short, and a 0-GP player
+on it (IR all season) is still on the roster. Rank and percentile are
+unchanged: they are computed over the whole league before any filter
+(SPEC §5).
+
+**Why.** The owner's decision, 2026-10-30. The real pool is 1,607 players, a
+713 KB page that was slow on the phone; the first page is now about 65 KB.
+On this season's data 805 of the 1,607 have 0 GP, so most of the table was
+rows the owner never wants.
+
+**Details.**
+- Every other link on the page (sort headers, chips, filters, the season and
+  view toggles) starts from the top again: `start` is dropped from them.
+  Refresh comes back to the same URL, `start` included.
+- The count line states totals ("469 players (47 with 0 GP hidden…)"), not
+  "showing N", so it stays true as rows are appended without updating it.
+- The partial is its own path, not `/players` with an `HX-Request` branch, so
+  no cache or history entry can hold a fragment under the page's URL.
+- An expired session on the partial gets the app's existing htmx answer (401
+  with `HX-Redirect` to the login page), not a login page swapped into the
+  table.
+
+**Alternatives.**
+- **Paging by page number** (`page=2`). Rejected: appending keeps the rows
+  already read on screen, which is what scrolling on a phone wants.
+- **Infinite scroll** (`hx-trigger="revealed"`). Rejected for now: a button
+  is predictable and the owner asked for one.
+- **Default `min_gp` to 1** instead of a separate toggle. Rejected: the
+  owner's Min GP box would show a 1 they never typed, and the single-team
+  exemption would be a special case of a number.

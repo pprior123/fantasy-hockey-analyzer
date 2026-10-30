@@ -198,8 +198,15 @@ DEMO_ZERO_GP = 47  # the demo league's players with 0 GP last season
 
 
 def show_more(html: str) -> tuple[str, str] | None:
-    """The "Show more" link's (href, hx-get), or None when there's no next page."""
-    found = re.search(r'<tr class="more">.*?href="([^"]*)"\s+hx-get="([^"]*)"', html, re.S)
+    """The "Show more" link's (href, hx-get), or None when there's no next page. The
+    link must swap its own row for the response, so the rows append to the table."""
+    found = re.search(
+        r'<tr class="more">.*?href="([^"]*)"\s+hx-get="([^"]*)"'
+        r' hx-target="closest tr" hx-swap="outerHTML">',
+        html,
+        re.S,
+    )
+    assert found or '<tr class="more">' not in html, "a Show more row without its swap"
     return (found[1].replace("&amp;", "&"), found[2].replace("&amp;", "&")) if found else None
 
 

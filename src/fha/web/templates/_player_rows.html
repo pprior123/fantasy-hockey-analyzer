@@ -1,0 +1,31 @@
+{# The Players table's rows, and its "Show more" row: the page includes this, and htmx's
+   "Show more" gets it alone (/players/rows), swapping it in for the button's row. #}
+{% import "_macros.html" as m %}
+{% for r in rows %}
+<tr class="{{ 'ir' if r.in_ir_slot else '' }}">
+  <td class="first">
+    {% if r.rating and r.rating.rated %}
+    <details><summary>{{ r.name }}</summary>{{ m.norms_list(r.norms, categories) }}</details>
+    {% else %}{{ r.name }}{% endif %}
+    {% if r.status %} <span class="badge">{{ r.status }}</span>{% endif %}
+  </td>
+  <td>{{ r.position }}</td>
+  <td>{{ r.nhl_team or DASH }}</td>
+  <td>{{ team_names.get(r.owner_key, 'FA') if r.owner_key else 'FA' }}{% if r.in_ir_slot %} <span class="muted">{{ r.slot }}</span>{% endif %}</td>
+  <td class="num">{{ r.gp }}</td>
+  <td class="num">{{ r.ttltst|number(3) }}</td>
+  <td class="num">{{ r.percentile|pctl }}</td>
+  {% if mode == 'money' %}
+  <td class="num">{{ r.aav|money }}</td>
+  <td class="num">{{ r.value|number(2) }}</td>
+  {% else %}
+  {% for cat in categories %}<td class="num">{{ r.norms.get(cat)|number }}</td>{% endfor %}
+  {% endif %}
+</tr>
+{% endfor %}
+{% if next_start is not none %}
+<tr class="more"><td colspan="{{ colspan }}">
+  <a class="btn secondary" href="{{ url('/players', params, start=next_start|string) }}"
+     hx-get="{{ url('/players/rows', params, start=next_start|string) }}" hx-target="closest tr" hx-swap="outerHTML">Show {{ [left, page_size]|min }} more <span class="muted">({{ left }} left)</span></a>
+</td></tr>
+{% endif %}

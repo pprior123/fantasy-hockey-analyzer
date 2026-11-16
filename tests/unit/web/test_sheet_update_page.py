@@ -327,3 +327,43 @@ def test_a_named_ir_row_outside_the_ir_block_is_never_shown() -> None:
         html = page(seeded(tab), "?tick=" + "&tick=".join(str(r) for r in range(1, 60)))
         assert "is labelled IR outside the IR rows" in html
         assert "Zqx" not in html
+
+
+def aged(token: str, seconds: int) -> str:
+    """The same preview digest, signed ``seconds`` ago."""
+    import time
+
+    from itsdangerous import TimestampSigner
+
+    class Then(TimestampSigner):
+        def get_timestamp(self) -> int:
+            return int(time.time()) - seconds
+
+    digest = URLSafeTimedSerializer(SETTINGS.session_secret, salt=CONFIRM_SALT).loads(token)
+    return URLSafeTimedSerializer(SETTINGS.session_secret, salt=CONFIRM_SALT, signer=Then).dumps(
+        digest
+    )
+
+
+def test_a_real_preview_older_than_ten_minutes_writes_nothing() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    data = {"token": aged(token, 601)}
+    response = c.post("/admin/sheet/update", data=data, follow_redirects=True)
+    assert "That preview is too old: check it again." in response.text
+    assert sheet.writes == 0
+    data = {"token": aged(token, 590)}
+    response = c.post("/admin/sheet/update", data=data, follow_redirects=True)
+    assert "Written: 3 cells on Mine." in response.text
+    assert sheet.writes == 1
+
+
+def test_a_second_tap_on_the_same_preview_writes_nothing_more() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    c.post("/admin/sheet/update", data={"token": token})
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert "Nothing to write: Mine already matches your roster." in response.text
+    assert sheet.writes == 1

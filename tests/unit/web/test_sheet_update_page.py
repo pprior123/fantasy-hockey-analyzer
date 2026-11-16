@@ -141,6 +141,16 @@ def test_admin_links_my_tab_to_the_update() -> None:
     assert html.index("/admin/sheet/update") < html.index('id="bindings"')
 
 
+def test_the_admin_link_with_no_tab_bound_leads_to_a_note() -> None:
+    svc = make_services()
+    source = FakeLeagueSheet(parse_sheet(s.grid(mine_tab())))
+    svc.sheet = source
+    asyncio.run(read_league_sheet(svc.repo, source, svc.clock))
+    c = client(svc)
+    assert "/admin/sheet/update" in c.get("/admin").text
+    assert "No tab is bound to your team yet" in c.get("/admin/sheet/update").text
+
+
 def test_a_sheet_read_but_not_stored_uses_the_stored_copy(monkeypatch: Any) -> None:
     from fha.storage.repository import RepositoryError
     from fha.web.routes import sheet_update

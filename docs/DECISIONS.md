@@ -2508,7 +2508,9 @@ by hand on the copy; Yahoo was never changed.
   protections instead of editing the tab's; the Data → Protect sheets and
   ranges panel edits the tab's own.
 - Also fixed: Admin's "Update my tab" link moves to the League sheet card (in
-  the discrepancy report, a tab that matches has its details closed); a
+  the discrepancy report, a tab that matches has its details closed), shown
+whenever the sheet is read and the owner's team is known (with no tab bound,
+the page says so); a
   negative amount on the update page reads -$890,861, not $-890,861; Cap hit
   edit's example placeholder ($7,250,000) was read as a player's salary, now
   "e.g. 5,500,000 or 5.5M".

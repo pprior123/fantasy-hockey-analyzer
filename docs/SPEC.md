@@ -217,8 +217,9 @@ plan's digest is the one the owner saw (signed, 10 minutes), and only if every
 other tab is protected against the service account as a whole tab
 (`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
 `requestingUserCanEdit` false), and its own tab is not (a tab locked against
-the app is refused with a message naming the fix, before Google can answer 400). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
-per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
+the app is refused with a message naming the fix; a write Google refuses for a
+protected cell says so). The write is one atomic `spreadsheets.batchUpdate`
+(`updateCells` per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
 `spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet

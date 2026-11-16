@@ -9,7 +9,7 @@ and maps what it can't recognize to None, never to a guess.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 
 # Letters NFKD doesn't decompose into a base letter plus accents.
@@ -115,8 +115,18 @@ def name_matches(query: str, name: str) -> bool:
     "McDavid, Connor"). Not fuzzy: a misspelling finds nothing. A query with no words
     matches every name; whether that is a search at all is the caller's call.
     """
-    normalized = normalize_name(name)
-    return all(word in normalized for word in normalize_name(query).split())
+    return name_matcher(query)(name)
+
+
+def name_matcher(query: str) -> Callable[[str], bool]:
+    """``name_matches`` with ``query`` normalized once, for testing many names."""
+    words = normalize_name(query).split()
+
+    def matches(name: str) -> bool:
+        normalized = normalize_name(name)
+        return all(word in normalized for word in words)
+
+    return matches
 
 
 def name_keys(raw: str) -> set[str]:

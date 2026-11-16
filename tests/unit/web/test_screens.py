@@ -378,7 +378,10 @@ def test_the_search_form_keeps_how_the_list_is_shown_not_who_is_in_it() -> None:
     form = search_form(html)
     assert hidden_inputs(form) == {"view": "cats", "season": "last", "sort": "name", "dir": "asc"}
     assert re.findall(r'<input[^>]*name="([^"]*)"', form) == ["view", "season", "sort", "dir", "q"]
-    submitted = client().get("/players?view=cats&season=last&sort=name&dir=asc&q=zeke").text
+    opening = html.split('class="toolbar search"', 1)[0].rsplit("<form", 1)[1]
+    assert 'method="get" action="/players"' in opening
+    # Submit as a browser would: the form's own controls, with "zeke" typed in the box.
+    submitted = client().get("/players", params={**hidden_inputs(form), "q": "zeke"}).text
     rows = names_in(submitted, "players")
     assert set(rows) == matching("zeke")  # every owner, every position, any GP
     assert rows == sorted(rows, key=str.casefold)  # the sort kept
@@ -406,11 +409,14 @@ def test_clear_drops_the_search_and_every_filter_chosen_after_it() -> None:
     team = SNAP.teams[1].team_key
     html = c.get(f"/players?q=zeke&owner=free&team={team}&pos=C&view=cats&sort=gp").text
     assert clear_link(html) == "/players?view=cats&sort=gp"
-    cleared = c.get("/players?view=cats&sort=gp").text
-    assert names_in(cleared, "players") == names_in(
-        c.get("/players?sort=gp&view=cats").text, "players"
-    )
-    assert f"({DEMO_ZERO_GP} with 0 GP hidden" in cleared
+    cleared = c.get(clear_link(html) or "").text
+    # Expected straight from the view: every player with GP, most GP first, ties by
+    # name then id; the first page of them.
+    view = build_view_for_test()
+    played = sorted((r for r in view.rows if r.gp > 0), key=lambda r: (r.name, r.player_id))
+    played.sort(key=lambda r: r.gp, reverse=True)
+    assert names_in(cleared, "players") == [r.name for r in played[:100]]
+    assert f"{len(played)} players ({DEMO_ZERO_GP} with 0 GP hidden" in cleared
 
 
 def test_a_search_pages_through_show_more_and_the_no_js_link() -> None:

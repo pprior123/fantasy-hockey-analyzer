@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from fha.domain.models import Category
-from fha.domain.names import name_matches, normalize_name
+from fha.domain.names import name_matcher, normalize_name
 from fha.services.league_view import LeagueView, PlayerRow
 
 
@@ -156,10 +156,10 @@ def zero_gp_hidden(view: LeagueView, query: PlayersQuery) -> int:
 
 def _filtered(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
     mine = view.my_team.team_key if view.my_team else None
-    words = normalize_name(query.q or "")  # once, not per row
+    matches = name_matcher(query.q or "") if query.searching else None  # normalized once
 
     def shown(row: PlayerRow) -> bool:
-        if words and not name_matches(words, row.name):
+        if matches is not None and not matches(row.name):
             return False
         if not _owned_as_asked(row, query, mine):
             return False

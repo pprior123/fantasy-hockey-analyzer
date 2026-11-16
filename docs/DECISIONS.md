@@ -2616,7 +2616,8 @@ two-comma name; "Wing, Left" as a position). Two are equivalent:
   "" and the swapped text is `" " + raw`, which normalizes the same;
 - `position_group` mutant 12 (the `/` replacement disabled): `normalize_name`
   already turns `/` into a space.
-`name_matches`: 5 mutants, all killed. Earlier "all killed" counts for
+`name_matches` and `name_matcher` (the query normalized once, for the
+Players screen's many rows; Codex, PR #25): 8 mutants, all killed. Earlier "all killed" counts for
 `domain/` may have the same blind spot: a full run that treats every status
 other than "killed" as a survivor is a separate task.
 

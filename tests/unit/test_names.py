@@ -9,6 +9,7 @@ from fha.domain.names import (
     PositionGroup,
     canonical_team,
     name_keys,
+    name_matcher,
     name_matches,
     normalize_name,
     position_group,
@@ -245,6 +246,28 @@ def test_a_query_with_no_words_matches_everything() -> None:
 
 
 NAME = st.lists(NAME_PART, min_size=1, max_size=4).map(" ".join)
+
+
+@given(st.text(max_size=20), NAME)
+def test_a_prepared_matcher_agrees_with_name_matches(query: str, name: str) -> None:
+    """The Players screen normalizes the query once, then tests every row."""
+    assert name_matcher(query)(name) == name_matches(query, name)
+
+
+def test_a_prepared_matcher_normalizes_the_query_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    import fha.domain.names as names
+
+    seen: list[str] = []
+    real = names.normalize_name
+
+    def counting(raw: str) -> str:
+        seen.append(raw)
+        return real(raw)
+
+    monkeypatch.setattr(names, "normalize_name", counting)
+    matches = name_matcher("McDavid")
+    assert [matches(n) for n in ("Connor McDavid", "Sidney Crosby")] == [True, False]
+    assert seen == ["McDavid", "Connor McDavid", "Sidney Crosby"]
 
 
 @given(NAME)

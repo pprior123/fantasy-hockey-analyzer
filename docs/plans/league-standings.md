@@ -13,7 +13,10 @@ standings table built from the same team profiles (SPEC §5).
 
 ### Definitions (all from `team_profile`: rated skaters outside IR / IR+ slots)
 
-For each team T and each column X in {G, A, PPP, PIM, HIT, SOG, BLK, TTLTST}:
+The categories are the engine's (`view.config.categories`, carried by every
+`TeamProfile.categories`): the 7 by default, but SPEC §5 keeps the list in
+config, so nothing below assumes 7. For each team T and each column X in
+those categories plus TTLTST:
 - `value(T, X)` = `mean_norm(T, X)` for a category, `team_ttltst(T)` for TTLTST
   (unchanged; None for a team with no profile players).
 - **Rank** among the teams with a value: competition ranking, higher is
@@ -29,15 +32,20 @@ For each team T and each column X in {G, A, PPP, PIM, HIT, SOG, BLK, TTLTST}:
 - **Roto points** per category: with n teams having a value, rank 1 scores n
   points, rank n scores 1; tied teams share the points of the places they
   span (two teams tied for 2nd each get (n-1 + n-2) / 2). **Roto total** = the
-  sum over the 7 categories; None if any category has no value for the team.
+  sum over the configured categories; None if any of them has no value for
+  the team.
   It is from rates per 82 games, not Yahoo's season totals, so it's labelled
   "Roto (rates)" and the page notes it is a guide, not the standings.
-- **Gap to the team above** in X: `value(A) - value(T)`, where A is the team with the smallest value strictly above T's.
-  None for rank 1, and for teams with no value. Ties have no gap (a tied team
-  is not "above"). Shown in per-82 units where possible (a category gap ×
-  that category's divisor = the difference in the mean player's per-82
-  total), e.g. "G +2.1 per 82 to pass Team X"; the TTLTST gap stays in TTLTST
-  units.
+- **Gap to the next place up** in X: `value(A) - value(T)`, where A is the
+  next distinct value strictly above T's. It is the amount needed **to tie**
+  that place, so it is labelled "to tie". Tied teams each have a gap to the
+  next higher distinct value: with values 10, 8, 8, both 8s show a gap of 2
+  to the 10. The gap is None for the best value and for teams with no value.
+  The "above" teams are all the teams at value A (names joined, by name). A
+  gap is rounded up for display, so a positive gap never shows as 0.
+  Category gaps are shown as the difference in the **mean skater's per-82
+  rate** (gap × the category's divisor), e.g. "G: 2.1 per 82 to tie Team X",
+  with the norm gap in the details. The TTLTST gap stays in TTLTST units.
 
 ### The screen
 
@@ -52,13 +60,17 @@ For each team T and each column X in {G, A, PPP, PIM, HIT, SOG, BLK, TTLTST}:
   (unknown → 400, quoted at most 12 characters). Default: Roto, best first.
   The owner's row stays highlighted (bold) but is no longer pinned to the top,
   so the order reads as standings (open question 2).
-- **Tap a team row** (today: a link to Rosters): the name stays a link to
-  Rosters. A small "▸" toggle opens a details row with, for each column,
-  value · rank · Pctl · gap to the team above (in per-82 units).
-- **My gaps** (above the table): one line per category for the owner's team:
-  "G #4, +2.1 per 82 to pass Team X", sorted by the smallest gap first, so
-  the closest places to gain read first. It is information, not a
+- **Team details, no script:** the team name becomes a native
+  `<details><summary>`, as Players' rows already do (`_player_rows.html:8`;
+  the CSP `default-src 'self'` forbids inline handlers). Inside it: a link
+  "Roster →" (today's tap target) and a small list of every column: value ·
+  rank · Pctl · gap to tie. The expanded content wraps (`white-space: normal`,
+  overriding the table cells' `nowrap`), so it can't widen the table.
+- **My gaps** (above the table): one line per category for the owner's team,
+  **in category order** (gaps in different units can't be ranked against each
+  other): "G #4 · 2.1 per 82 to tie Team X". It is information, not a
   recommendation (SPEC §1 keeps waiver/trade recommendations out of scope).
+  Hidden when the owner's team isn't known (`view.my_team` is None).
 - Heat shading must not be the only cue: the rank number is always printed,
   and the colours meet contrast on white.
 
@@ -84,22 +96,34 @@ season and view toggles, payroll / room.
 
 ## 3. Phases (one commit each, each green)
 
-1. `domain/standings.py`, test-first:
+1. `domain/standings.py`, test-first (categories from the profiles, with a
+   subset-of-categories test):
    - examples for ranks with ties, roto points with ties, and pctl;
    - pctl matches `engine.rate` exactly when the team value equals a
      player's score;
-   - gaps and gaps per 82;
+   - gaps and gaps per 82: tied leaders, tied followers (10, 8, 8), several
+     teams at the target value, and a tiny positive gap;
    - None handling (a team with no profile players; a category with one
      team).
    - Hypothesis properties: each category's roto points sum to n(n+1)/2;
      ranks lie in 1..n; pctl lies in [0, 100) and never falls as the value
      rises.
    - mutmut.
-2. `LeagueQuery` + `league_table` with standings and sorting; service tests
-   (every sort key, both directions, None last, unknown sort → error).
-3. Route + template + CSS: both views, heat classes, details row, My gaps, sort
-   headers carrying `view` and `season`; screen tests on the demo league,
-   including escaping and the 400s; check at 390 px.
+2. `LeagueQuery` + `league_table` with standings and sorting; service tests:
+   - every sort key in both directions, None last, an unknown sort → error;
+   - **the wiring:** a two-season fixture whose team order reverses and
+     whose divisors differ, asserting ranks, Pctl, points and per-82 gaps
+     for each season;
+   - the Pctl denominator over a pool with rated skaters, skaters below the
+     GP floor with GP > 0, GP-0 skaters and goalies;
+   - a season with every GP at 0, and one with GP > 0 but nobody eligible:
+     everything unavailable, no error;
+   - no owner's team (no My gaps).
+3. Route + template + CSS: both views, heat classes, team details, My gaps,
+   sort headers carrying `view` and `season`. Screen tests on the demo league,
+   including escaping and the 400s. League renders the whole table (8 rows):
+   no paging, no htmx. **Manual check at 390 px:** opening and closing
+   details, reading Pctl, scrolling sideways, following "Roster →".
 4. Docs.
 
 ## 4. Risks
@@ -116,12 +140,28 @@ season and view toggles, payroll / room.
 
 1. **What the heat shading follows.** Team means cluster high on the players'
    Pctl scale (most teams may sit at 60–90), so shading by Pctl would make
-   most cells look alike. *Recommend: shade by the team's rank in that column*
-   (8 ranks → 5 bands: 1, 2–3, 4–5, 6–7, 8), so strengths and weaknesses
-   stand out, and keep the Pctl as a number.
+   most cells look alike. *Recommend: shade by the team's rank in that column*,
+   so strengths and weaknesses stand out, and keep the Pctl as a number.
+   Band = from the rank's position (rank − 1) / (n − 1) over the n teams
+   with a value, in 5 equal steps; ties share a band; a cell with no value,
+   or n = 1, is neutral.
 2. **The owner's team pinned first?** Today it is. *Recommend: not pinned*
    when sorting (standings read top to bottom), bold and with a "you" marker.
 3. **Default sort.** *Recommend Roto (rates)*, the closest to standings. The
    alternative is TTLTST, today's order.
 4. **Gap units.** *Recommend per-82 units* for categories ("+2.1 G per 82"),
    with the norm gap in the details row. The alternative is norm units only.
+
+## 6. Review (Codex `gpt-6.1-sol`, high, read-only, 2026-11-16): ready with changes
+
+| # | Severity | Finding | Triage |
+|---|---|---|---|
+| 1 | Medium | "the 7 categories" conflicts with SPEC §5 (categories are config); a subset config would miss columns/divisors. | Accepted: categories come from the profiles, with a subset test (§1, §3.1). |
+| 2 | Medium | Sorting My gaps by size compares different units. | Accepted: category order (§1). |
+| 3 | Medium | "To pass" vs the formula (which ties); tie policy unclear (10, 8, 8); several teams at the target. | Accepted: "to tie", tied teams gap to the next distinct value, all target teams named, round up (§1, §3.1). |
+| 4 | Medium | Tests don't check the season / pool wiring or degenerate pools. | Accepted: two-season, denominator, empty-pool and no-owner tests (§3.2). |
+| 5 | Medium | The details toggle: the CSP forbids inline scripts; `nowrap` cells would widen. | Accepted: native `<details>` as on Players, wrapped content, a manual 390 px check (§1, §3.3). |
+
+Open questions: Codex agrees with all four recommendations. On 1 it adds:
+neutral cells with no value, ties share a band, and bands for fewer teams.
+That is now in the recommendation.

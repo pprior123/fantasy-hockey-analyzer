@@ -28,7 +28,10 @@ async def league(request: Request) -> HTMLResponse:
         refreshed_at=data.refreshed_label,
         data=data,
         params=params,
-        table=league_table(view, discrepancies=discrepancy_flags(data.reports)),
+        table=[
+            r.summary
+            for r in league_table(view, discrepancies=discrepancy_flags(data.reports)).rows
+        ],
         categories=view.config.categories,
         cap=view.cap,
         mode=mode,

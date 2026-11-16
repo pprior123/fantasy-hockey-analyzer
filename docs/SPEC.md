@@ -229,7 +229,8 @@ sending, a dropped connection) or a 5xx is an unknown outcome: the app reads the
 tab, and says the write went through (every new cell is there), that no change
 shows yet but Google may still apply it (every old cell is), or that the outcome
 is unknown (anything else, or the check itself failed). A row the parser skipped
-(no name) is unknown there, never taken as cleared; only rows it found blank are.
+(no name), or a salary cell with no number, is unknown there, never taken as
+cleared; only rows it found blank are.
 The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet

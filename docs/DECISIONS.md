@@ -2573,3 +2573,6 @@ the lost-answer path:
   the parser skipped (no name, other cells left) as four blank cells; only
   rows the parser found blank (`blank_rows`, `empty_ir_rows`) count as
   cleared now.
+- Round 2 (Codex): a parsed row whose salary cell holds text (`???`) read as
+  a verified blank salary. A parsed salary cell with no number is now unknown
+  to verification too.

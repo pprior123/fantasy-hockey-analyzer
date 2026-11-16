@@ -476,3 +476,16 @@ async def test_a_row_the_parser_skips_is_not_taken_as_cleared() -> None:
     )
     result, _, _ = await confirm(BEFORE, live(RESIDUE, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
     assert result.message.startswith("The write's outcome is unknown (Sheets API write")
+
+
+async def test_a_row_left_with_only_text_in_its_salary_cell_is_not_taken_as_cleared() -> None:
+    # Parsed (the salary cell isn't blank), but "???" reads as no number: unknown.
+    text_left = s.Player("", "", "", "???")
+    after = replace(AFTER_ONE, players=[*AFTER_ONE.players[:3], text_left, *AFTER_ONE.players[4:]])
+    result, _, _ = await confirm(BEFORE, live(after, TAB_TWO))
+    assert result.message.startswith(
+        "Written (7 cells), but these cells don't hold what was written: F10"
+    )
+    lost = FakeLeagueSheetWriter(LOST)
+    result, _, _ = await confirm(BEFORE, live(after, TAB_TWO), writer=lost)
+    assert result.message.startswith("The write's outcome is unknown (Sheets API write")

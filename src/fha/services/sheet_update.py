@@ -366,11 +366,15 @@ def _added_keys(plan: UpdatePlan, rows: Sequence[TabRow], layout: TabLayout) -> 
 def _cell_values(rows: Sequence[TabRow], layout: TabLayout) -> dict[int, dict[str, object]]:
     """The four cells of each row the parser read, and of each row it found blank (all
     four cells, no formula). A row it skipped (no name, say) is absent: unknown, never
-    taken as blank."""
+    taken as blank. So is a parsed salary cell with no number: it may hold text."""
     values: dict[int, dict[str, object]] = {
         r: dict.fromkeys(layout.columns) for r in (*layout.blank_rows, *layout.empty_ir_rows)
     }
-    values.update({r.row: dict(row_values(r, layout)) for r in rows})
+    for r in rows:
+        known = dict(row_values(r, layout))
+        if r.salary is None:
+            del known[layout.salary_column]
+        values[r.row] = known
     return values
 
 

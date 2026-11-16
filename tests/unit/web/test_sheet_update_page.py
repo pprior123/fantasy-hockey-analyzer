@@ -306,7 +306,7 @@ def test_without_yahoo_data_the_confirm_writes_nothing(monkeypatch: Any) -> None
     c = client(svc)
     token = token_in(c.get("/admin/sheet/update").text)
 
-    async def fail(*args: Any) -> Any:
+    async def fail(*args: Any, **kwargs: Any) -> Any:
         raise RefreshError("down")
 
     monkeypatch.setattr(sheet_update, "page_data", fail)
@@ -367,3 +367,45 @@ def test_a_second_tap_on_the_same_preview_writes_nothing_more() -> None:
     response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
     assert "Nothing to write: Mine already matches your roster." in response.text
     assert sheet.writes == 1
+
+
+def yahoo_now(svc: Services, source: Any) -> None:
+    """Yahoo as it is now: ``source``, behind the app's (still fresh) cached snapshot."""
+    from fha.services.refresh import RefreshService
+
+    svc.refresh = RefreshService(source, svc.repo, svc.clock)
+
+
+def test_a_roster_changed_in_yahoo_after_the_preview_is_not_written() -> None:
+    from dataclasses import replace
+
+    from fha.sources.yahoo.fake import FakeYahooSource
+    from tests.unit.web.helpers import demo_snapshot
+
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    snap = demo_snapshot()
+    teams = tuple(
+        replace(t, roster=t.roster[:1] + t.roster[2:]) if t.team_key == MINE.team_key else t
+        for t in snap.teams
+    )
+    yahoo_now(svc, FakeYahooSource(replace(snap, teams=teams)))  # a player dropped in Yahoo
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert "changed since the preview" in response.text
+    assert sheet.writes == 0
+
+
+def test_a_confirm_that_cannot_reach_yahoo_writes_nothing() -> None:
+    class Down:
+        async def fetch_snapshot(self, *, last_season: bool = True) -> Any:
+            raise RuntimeError("Yahoo is down")
+
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    yahoo_now(svc, Down())
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    said = "Nothing was written: your Yahoo roster couldn&#39;t be checked just now"
+    assert said in response.text
+    assert sheet.writes == 0

@@ -7,8 +7,9 @@ review get a "drop this row" tick; ticking re-renders the preview (a GET, so it
 changes nothing). While writing is off (no ``FHA_SHEET_WRITE=1``), the page says
 to apply the edits by hand, and the confirm answers 404.
 
-The confirm (POST) carries the preview's digest, signed and short-lived; the
-service re-reads the sheet and writes only if the plan is still that one. The
+The confirm (POST) carries the preview's digest, signed and short-lived. It
+fetches the Yahoo roster afresh (refusing if Yahoo can't be read), the service
+re-reads the sheet, and it writes only if the plan is still that one. The
 outcome comes back to the page as a signed flash, as on Admin.
 
 Hygiene (SPEC §4a): only parsed fields reach the page.
@@ -114,11 +115,19 @@ async def sheet_update_confirm(request: Request, token: str = Form()) -> Redirec
         return _back(request, "error", "That preview is too old: check it again.", ticked)
     if not isinstance(expected, str):
         return _back(request, "error", "That preview is too old: check it again.", ticked)
-    try:
-        data = await page_data(request)
+    try:  # Yahoo as it is now, not the cached roster: the write follows today's roster
+        data = await page_data(request, force=True)
     except NO_DATA as e:
         return _back(
             request, "error", f"Nothing was written: no Yahoo data ({type(e).__name__}).", ticked
+        )
+    if data.cached.refresh_error is not None:  # the stored snapshot, maybe not today's
+        return _back(
+            request,
+            "error",
+            "Nothing was written: your Yahoo roster couldn't be checked just now "
+            f"({data.cached.refresh_error}). Try again in a minute.",
+            ticked,
         )
     result = await write_update(
         svc.repo,

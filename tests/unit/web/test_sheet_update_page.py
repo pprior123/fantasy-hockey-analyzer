@@ -72,6 +72,14 @@ def test_the_preview_lists_the_changes_and_the_cells() -> None:
     assert svc.sheet.fetches == 2  # type: ignore[attr-defined]  # seeding, then afresh
 
 
+def test_room_over_the_cap_reads_minus_dollars() -> None:
+    svc = seeded(mine_tab())
+    asyncio.run(set_aav_override(svc.repo, FIRST.player_id, 500_000_000))
+    html = page(svc)
+    assert '<span class="over">-$' in html
+    assert "$-" not in html
+
+
 def sheet_name_of(player: Any) -> str:
     from fha.services.sheet_update import _member
 
@@ -127,7 +135,20 @@ def test_admin_links_my_tab_to_the_update() -> None:
     svc = seeded(mine_tab())
     html = client(svc).get("/admin").text
     assert '<a class="btn secondary" href="/admin/sheet/update">Update my tab →</a>' in html
-    assert html.count("/admin/sheet/update") == 1  # my tab only
+    assert html.count("/admin/sheet/update") == 1
+    # In the League sheet card, not the discrepancy report, where a tab that
+    # matches has its details closed (the rehearsal, 2026-11-16).
+    assert html.index("/admin/sheet/update") < html.index('id="bindings"')
+
+
+def test_the_admin_link_with_no_tab_bound_leads_to_a_note() -> None:
+    svc = make_services()
+    source = FakeLeagueSheet(parse_sheet(s.grid(mine_tab())))
+    svc.sheet = source
+    asyncio.run(read_league_sheet(svc.repo, source, svc.clock))
+    c = client(svc)
+    assert "/admin/sheet/update" in c.get("/admin").text
+    assert "No tab is bound to your team yet" in c.get("/admin/sheet/update").text
 
 
 def test_a_sheet_read_but_not_stored_uses_the_stored_copy(monkeypatch: Any) -> None:

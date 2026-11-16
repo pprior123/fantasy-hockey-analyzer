@@ -72,6 +72,16 @@ def _cell(e: CellEdit) -> dict[str, Any]:
     return {"userEnteredValue": {kind: e.new}}
 
 
+def _protected(response: httpx.Response) -> bool:
+    """Google's 400 for a protected cell. Only this test reads the body; it is never
+    shown, so nothing in it (ranges, the spreadsheet ID) can reach a message."""
+    try:
+        message = response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return False
+    return isinstance(message, str) and "protected cell" in message
+
+
 class SheetsApiLeagueSheetWriter:
     def __init__(self, http: httpx.AsyncClient, sheet_id: str, token: TokenProvider) -> None:
         self._http = http
@@ -96,7 +106,9 @@ class SheetsApiLeagueSheetWriter:
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             raise LeagueSheetError(f"Sheets API write failed ({type(e).__name__})") from None
         if response.status_code != httpx.codes.OK:
-            raise LeagueSheetError(f"Sheets API refused the write: HTTP {response.status_code}")
+            why = " (a cell to change is protected against the app)" if _protected(response) else ""
+            status = response.status_code
+            raise LeagueSheetError(f"Sheets API refused the write: HTTP {status}{why}")
 
     def __repr__(self) -> str:
         return "SheetsApiLeagueSheetWriter(<sheet id hidden>)"

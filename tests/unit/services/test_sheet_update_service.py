@@ -245,6 +245,17 @@ async def test_another_editable_tab_writes_nothing() -> None:
     assert "2 other tab(s) (Summary, Maple)" in (await confirm(many))[0].message
 
 
+async def test_my_own_tab_locked_against_the_app_writes_nothing() -> None:
+    # Rehearsal (2026-11-16): the copied sheet protected the owner's tab too, and
+    # Google answered the write with a bare HTTP 400.
+    result, writer, _ = await confirm(live(TAB_ONE, TAB_TWO, editable=()))
+    assert result.message == (
+        "Nothing was written: Pinecone is protected against the app. Add the app's service "
+        "account to its protection (Data → Protect sheets and ranges → Pinecone)."
+    )
+    assert writer.writes == []
+
+
 async def test_unknown_protections_write_nothing() -> None:
     result, writer, _ = await confirm(live(TAB_ONE, TAB_TWO, unknown=True))
     assert result.message == "Nothing was written: the sheet's protections couldn't be checked."

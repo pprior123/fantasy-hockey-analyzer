@@ -152,6 +152,35 @@ async def test_a_refused_write_names_the_status_only() -> None:
     assert str(info.value) == "Sheets API refused the write: HTTP 403"
 
 
+REFUSED = "Sheets API refused the write: HTTP 400"
+PROTECTED = f"You are trying to edit a protected cell or object ({SHEET_ID})"
+
+
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        (
+            {"error": {"message": PROTECTED}},
+            f"{REFUSED} (a cell to change is protected against the app)",
+        ),
+        ({"error": {"message": "Range exceeds grid limits"}}, REFUSED),
+        ({"error": "not an object"}, REFUSED),
+        ({"error": {"message": 7}}, REFUSED),
+        (None, REFUSED),
+    ],
+)
+async def test_a_protected_cell_is_named_and_the_body_never_shown(body: Any, said: str) -> None:
+    def google(request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(400, text="<html>not json</html>")
+        return httpx.Response(400, json=body)
+
+    with pytest.raises(LeagueSheetError) as info:
+        await writer(google).write(TAB, EDITS)
+    assert str(info.value) == said
+    assert SHEET_ID not in str(info.value)
+
+
 async def test_transport_and_auth_failures_never_carry_the_sheet_id() -> None:
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"cannot reach {request.url}")

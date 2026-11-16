@@ -2479,3 +2479,40 @@ the rehearsal checks the parse, and the preview shows every drop before the
 confirm. A sheet stored by a pre-round-2 branch build decodes with no IR block
 and its IR rows are refused; only local builds ever stored one, and the confirm
 reads the sheet fresh.
+
+**Rehearsal on a private copy (2026-11-16, the owner, guided; plan Phase 6).**
+A fresh copy of the league sheet, shared with the service account as Editor,
+read and written by a local run (`FHA_LOCAL_REPOSITORY` on a copy of the dev
+data, `LEAGUE_SHEET_ID` = the copy, `FHA_SHEET_WRITE=1`). Differences were made
+by hand on the copy; Yahoo was never changed.
+- Drop + add (a made-up row in Rantanen's row): 4 cells written, read-back
+  PAYROLL as expected (three times). Back from IR+ (row 34 → 16) and to IR+
+  (row 17 → 32, with an add into the freed row): 8 cells each, moved rows copied
+  as parsed.
+- Refused, nothing written: over the cap ("over the cap by $890,861"); a
+  preview older than 10 minutes; a tab edited between preview and tap; two
+  unprotected non-team tabs ("Proposed rules changes", "2025 Draft
+  Availability") named by the protection check.
+- A script bypassing the app, writing to two other tabs (one with sheet ID 0)
+  with the service account: Google answered HTTP 400 "You are trying to edit a
+  protected cell or object" for both. The live API matched the assumptions:
+  sheet ID 0 and a missing `requestingUserCanEdit` read as 0 and false.
+- Latency: about 10–20 s per confirm by eye, locally, including a Yahoo read;
+  Vercel's `maxDuration` is 60 s.
+- Found: the league's sheet already protects every team tab to its own GM, so
+  the copy's protection on the owner's tab left the app out and Google answered
+  the first write with a bare HTTP 400. Fixed: the confirm refuses when the
+  owner's own tab is locked against the app, naming the fix, and a write Google
+  refuses for a protected cell says so (the body is read for that test only,
+  never shown). Sheets' right-click "Protect sheet" made stray one-cell
+  protections instead of editing the tab's; the Data → Protect sheets and
+  ranges panel edits the tab's own.
+- Also fixed: Admin's "Update my tab" link moves to the League sheet card (in
+  the discrepancy report, a tab that matches has its details closed), shown
+whenever the sheet is read and the owner's team is known (with no tab bound,
+the page says so); a
+  negative amount on the update page reads -$890,861, not $-890,861; Cap hit
+  edit's example placeholder ($7,250,000) was read as a player's salary, now
+  "e.g. 5,500,000 or 5.5M".
+- Owner: the `_` before positions on the tab is only a sort aid; new rows in
+  Yahoo's plain codes are fine.

@@ -216,12 +216,15 @@ the app re-reads the sheet and recomputes the plan; it writes only if the
 plan's digest is the one the owner saw (signed, 10 minutes), and only if every
 other tab is protected against the service account as a whole tab
 (`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
-`requestingUserCanEdit` false). The write is one atomic `spreadsheets.batchUpdate` (`updateCells`
-per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
+`requestingUserCanEdit` false), and its own tab is not (a tab locked against
+the app is refused with a message naming the fix; a write Google refuses for a
+protected cell says so). The write is one atomic `spreadsheets.batchUpdate`
+(`updateCells` per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
 `spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet
-with the service account as Editor and protects every other tab.
+with the service account as Editor and protects every other tab; if their own
+tab is protected, its protection must list the service account.
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —

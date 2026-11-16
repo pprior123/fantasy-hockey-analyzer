@@ -226,8 +226,11 @@ protected cell says so). The write is one atomic `spreadsheets.batchUpdate`
 `spreadsheets`-scope token; reads keep `readonly`. A failure before the request
 leaves, or a 4xx, means nothing was written. A lost answer (a timeout after
 sending, a dropped connection) or a 5xx is an unknown outcome: the app reads the
-tab, and says the write went through (every new cell is there), that nothing was
-written (every old cell is), or that the outcome is unknown. The app binds the rows it
+tab, and says the write went through (every new cell is there), that no change
+shows yet but Google may still apply it (every old cell is), or that the outcome
+is unknown (anything else, or the check itself failed). A row the parser skipped
+(no name) is unknown there, never taken as cleared; only rows it found blank are.
+The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet
 with the service account as Editor and protects every other tab; if their own

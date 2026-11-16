@@ -407,12 +407,14 @@ async def test_a_lost_answer_with_the_change_on_the_tab_is_a_write() -> None:
     assert {"player_id": "3", "how": "written"} in bindings.values()
 
 
-async def test_a_lost_answer_with_the_tab_unchanged_is_no_write() -> None:
+async def test_a_lost_answer_with_the_tab_unchanged_is_not_called_a_failure() -> None:
+    # Google may still be applying the batch: an unchanged tab proves nothing yet.
     result, _, repo = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
     assert (result.ok, result.written) == (False, 0)
     assert result.message == (
-        "Nothing was written: Google's answer was lost "
-        "(Sheets API write: no answer (ReadTimeout)), and the tab is unchanged."
+        "Google's answer was lost (Sheets API write: no answer (ReadTimeout)) and the tab "
+        "shows no change yet, but Google may still apply it. Open this page again in a "
+        "minute before writing again."
     )
     bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {}).get("entries", {})
     assert "written" not in repr(bindings)
@@ -433,3 +435,44 @@ async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown(
         "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)): the "
         "tab holds neither the old cells nor the new ones. Check the tab."
     )
+
+
+async def test_a_storage_failure_while_checking_a_lost_answer_is_still_unknown(
+    monkeypatch: Any,
+) -> None:
+    from fha.services import sheet_update
+    from fha.storage.repository import RepositoryError
+
+    real, reads = sheet_update.read_league_sheet, []
+
+    async def second_read_unstored(*args: Any) -> Any:
+        reads.append(1)
+        if len(reads) == 2:  # the check after the lost answer
+            raise RepositoryError("project fha-prod refused", detail="HTTP 503")
+        return await real(*args)
+
+    monkeypatch.setattr(sheet_update, "read_league_sheet", second_read_unstored)
+    result, _, _ = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
+    assert (result.ok, result.written) == (False, 0)
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)), and "
+        "the app's storage failed while checking. Check the tab before writing again."
+    )
+    assert "fha-prod" not in result.message
+
+
+# Zed's row (10) with its name cleared by hand but its other cells left: the parser
+# skips a nameless row, which must not read as four verified blanks.
+RESIDUE = replace(
+    AFTER_ONE,
+    players=[*AFTER_ONE.players[:3], s.Player("", "C", "TBL", ""), *AFTER_ONE.players[4:]],
+)
+
+
+async def test_a_row_the_parser_skips_is_not_taken_as_cleared() -> None:
+    result, _, _ = await confirm(BEFORE, live(RESIDUE, TAB_TWO))
+    assert result.message.startswith(
+        "Written (7 cells), but these cells don't hold what was written: C10, D10, E10, F10"
+    )
+    result, _, _ = await confirm(BEFORE, live(RESIDUE, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
+    assert result.message.startswith("The write's outcome is unknown (Sheets API write")

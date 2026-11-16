@@ -2550,9 +2550,11 @@ review log and triage are on PR #23. Fixed:
    now separates a definite "not written" (no connection, a 4xx) from an
    unknown outcome (the request left but the answer was lost, or a 5xx).
    On an unknown outcome the confirm re-reads the tab: every new cell there
-   means it was written (bind and read back as usual), every old cell means
-   nothing was written, anything else (or no read) means the outcome is
-   unknown.
+   means it was written (bind and read back as usual), anything else (or no
+   read) means the outcome is unknown. Every old cell still there is reported
+   as "no change yet, but Google may still apply it", not as nothing written.
+   A timed-out batch may still be in progress, and atomicity doesn't prove it
+   finished (Codex, on PR #24).
 5. **The expiry test** now signs the real preview digest 601 s ago (refused)
    and 590 s ago (written). Before, dropping `max_age` went unnoticed. A
    second tap on the same preview is tested to write nothing more.
@@ -2560,3 +2562,14 @@ review log and triage are on PR #23. Fixed:
 mutmut on `domain/sheet_update.py`: the one justified survivor
 (`_check_result` mutant 3) remains. The forced salary clear lands only on a
 row whose name is cleared or rewritten, so its justification still holds.
+
+**Codex review of PR #24 (the fixes).** Three findings, all accepted, all in
+the lost-answer path:
+- a storage failure while checking a lost answer was reported as "Written";
+  it now says the outcome is unknown;
+- an unchanged tab after a lost answer was called "nothing was written"; it
+  now says no change shows yet and Google may still apply it;
+- verification (after a lost answer, and the normal read-back) treated a row
+  the parser skipped (no name, other cells left) as four blank cells; only
+  rows the parser found blank (`blank_rows`, `empty_ir_rows`) count as
+  cleared now.

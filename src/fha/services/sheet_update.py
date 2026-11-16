@@ -290,18 +290,26 @@ async def write_update(
             log.warning("sheet update: %s; checking the tab", lost)
             try:
                 after = await read_league_sheet(repo, source, clock)
+                landed = await _landed(repo, snapshot, after, plan)
             except LeagueSheetError as e:
                 return WriteResult(
                     False,
                     f"The write's outcome is unknown ({lost}), and the tab couldn't be read "
                     f"to check ({e}). Check the tab before writing again.",
                 )
-            landed = await _landed(repo, snapshot, after, plan)
-            if landed is False:
+            except RepositoryError as e:  # not "Written": nothing is known yet
+                log.warning("checking a lost write, the app's storage failed (%s)", e.summary)
                 return WriteResult(
                     False,
-                    f"Nothing was written: Google's answer was lost ({lost}), "
-                    "and the tab is unchanged.",
+                    f"The write's outcome is unknown ({lost}), and the app's storage failed "
+                    "while checking. Check the tab before writing again.",
+                )
+            if landed is False:  # Google may still be applying it: not a "no"
+                return WriteResult(
+                    False,
+                    f"Google's answer was lost ({lost}) and the tab shows no change yet, but "
+                    "Google may still apply it. Open this page again in a minute before "
+                    "writing again.",
                 )
             if landed is None:
                 return WriteResult(
@@ -355,18 +363,30 @@ def _added_keys(plan: UpdatePlan, rows: Sequence[TabRow], layout: TabLayout) -> 
     }
 
 
+def _cell_values(rows: Sequence[TabRow], layout: TabLayout) -> dict[int, dict[str, object]]:
+    """The four cells of each row the parser read, and of each row it found blank (all
+    four cells, no formula). A row it skipped (no name, say) is absent: unknown, never
+    taken as blank."""
+    values: dict[int, dict[str, object]] = {
+        r: dict.fromkeys(layout.columns) for r in (*layout.blank_rows, *layout.empty_ir_rows)
+    }
+    values.update({r.row: dict(row_values(r, layout)) for r in rows})
+    return values
+
+
 async def _landed(
     repo: Repository, snapshot: LeagueSnapshot, sheet: ParsedSheet, plan: UpdatePlan
 ) -> bool | None:
-    """After a lost answer: True if the tab holds every new cell, False if it holds
-    every old one (Google applies a batch all or nothing), None if neither."""
+    """After a lost answer: True if the tab holds every new cell, False if it still
+    holds every old one (not applied yet: Google may still apply it), None if
+    neither or unknown."""
     after = await prepare_update(repo, snapshot, sheet)
     if after.layout is None:
         return None
-    values = {r.row: row_values(r, after.layout) for r in after.rows}
+    values = _cell_values(after.rows, after.layout)
 
     def holds(row: int, column: str, value: object) -> bool:
-        return values.get(row, {}).get(column) == value
+        return column in values.get(row, {}) and values[row][column] == value
 
     if all(holds(e.row, e.column, e.new) for e in plan.edits):
         return True
@@ -397,9 +417,11 @@ async def _read_back(
     after = await prepare_update(repo, snapshot, sheet)
     if after.tab is None or after.plan is None or after.layout is None:
         return failed(f"the tab can't be planned now ({after.problem})")
-    values = {r.row: row_values(r, after.layout) for r in after.rows}
+    values = _cell_values(after.rows, after.layout)
     wrong = [
-        f"{e.column}{e.row}" for e in plan.edits if values.get(e.row, {}).get(e.column) != e.new
+        f"{e.column}{e.row}"
+        for e in plan.edits
+        if e.column not in values.get(e.row, {}) or values[e.row][e.column] != e.new
     ]
     if wrong:
         return failed(f"these cells don't hold what was written: {', '.join(wrong[:6])}")

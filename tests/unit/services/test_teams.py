@@ -515,3 +515,28 @@ def test_the_teams_a_gap_is_to_are_named_in_order() -> None:
     assert cell.above
     assert table.above(cell) == ", ".join(sorted(table.names[k] for k in cell.above))
     assert table.names == {t.team_key: t.name for t in view.teams}
+
+
+@pytest.mark.parametrize("descending", [True, False])
+@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.ROTO])
+def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
+    snap: LeagueSnapshot, key: LeagueSort | Category, descending: bool
+) -> None:
+    """Mine has only a goalie left (no value); theirs is rated with a HIT mean of exactly
+    0 (the synthetic league has no hits). Treating no value as 0 would tie them, and
+    "Name 1" (mine) would sort first by name."""
+    teams = tuple(
+        replace(t, roster=tuple(e for e in t.roster if e.player.is_goalie))
+        if t.team_key == MINE
+        else t
+        for t in snap.teams
+    )
+    view = view_of(replace(snap, teams=teams))
+    rows = league_table(view, LeagueQuery(key, descending)).rows
+    assert [r.team.team_key for r in rows] == [THEIRS, MINE]
+    theirs, mine = rows
+    assert theirs.standing.categories[Category.HIT].value == 0.0
+    assert mine.standing.categories[Category.HIT].value is None
+    assert mine.standing.ttltst.value is None
+    assert mine.standing.roto is None
+    assert theirs.standing.roto == len(view.config.categories)  # alone: 1 point each

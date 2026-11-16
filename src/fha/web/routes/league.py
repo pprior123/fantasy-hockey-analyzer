@@ -25,9 +25,10 @@ async def league(request: Request) -> HTMLResponse:
     mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
-    # A category outside the config is refused by league_table, but the app's categories
-    # are always the engine's full set, so every category parsed here is one of them.
-    table = league_table(view, query, discrepancies=discrepancy_flags(data.reports))
+    try:  # a category the stored rating settings leave out is refused here
+        table = league_table(view, query, discrepancies=discrepancy_flags(data.reports))
+    except QueryError as e:
+        return bad_request(request, f"That sort isn't one League knows: {e}.", "/league", "league")
     return render(
         request,
         "league.html",

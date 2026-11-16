@@ -19,6 +19,7 @@ from fha.services.league_sheet import bind_tab, read_league_sheet
 from fha.services.league_view import LeagueView, Salaries, Season, build_view
 from fha.services.players_table import PlayersQuery, select
 from fha.services.refresh import RefreshService
+from fha.services.settings import save_rating_settings
 from fha.services.teams import LeagueQuery, LeagueTable, league_table
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
@@ -1173,6 +1174,21 @@ def test_team_names_are_escaped_in_the_table_and_the_gaps() -> None:
     html = client(services_for(replace(SNAP, teams=teams))).get("/league?view=cats").text
     assert "<b>Bad" not in html
     assert "&lt;b&gt;Bad &amp; &#34;Co&#34;&lt;/b&gt;" in html
+
+
+def test_a_category_the_rating_settings_leave_out_is_a_400() -> None:
+    svc = make_services()
+    asyncio.run(save_rating_settings(svc.repo, {"categories": ["G", "A"]}))
+    c = client(svc)
+    response = c.get("/league?sort=HIT")
+    assert response.status_code == 400
+    assert "HIT isn&#39;t one of this league&#39;s categories" in response.text
+    html = c.get("/league?view=cats&sort=G").text
+    head = html.split('class="data league"', 1)[1].split("</thead>", 1)[0]
+    assert "sort=G" in head
+    assert "sort=HIT" not in head
+    my_gaps = html.split('class="my-gaps"', 1)[1].split("</section>", 1)[0]
+    assert re.findall(r"<li><b>(\w+)</b>", my_gaps) == ["G", "A"]
 
 
 @pytest.mark.parametrize(

@@ -2661,9 +2661,9 @@ by size, since the units differ.
 - A team value's Pctl uses the engine's formula for a player, so a team valued
   exactly as a player gets that player's percentile (property-tested). It is
   clamped at 0, since a float mean can land an ulp under its smallest member.
-- The categories come from the profiles (the engine's config), never a fixed 7.
-  The service refuses a sort by a category outside them. The route can't reach
-  that case, since the app's categories are the full set.
+- The categories come from the profiles (the engine's config, which the
+  stored rating settings can narrow), never a fixed 7. A sort by a category
+  outside them is a 400 (Codex, PR #26).
 - A season with nobody rated (no games, or nobody above the GP floor) shows
   every cell as "—", sorted by name, with no error.
 - The two-season wiring test uses the demo league. Its team order differs

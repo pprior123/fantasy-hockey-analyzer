@@ -1055,6 +1055,7 @@ def test_league_has_a_row_per_team_with_a_roster_link_in_its_details() -> None:
         assert link in row.split("<details>", 1)[1].split("</details>", 1)[0]
     assert html.count("Roster →</a>") == len(SNAP.teams)
     assert "Profiles compare rates" in html
+    assert "Pctl: where a player rated at the team's average TTLTST would rank" in html
     assert "a guide, not the league's standings" in html
 
 
@@ -1073,7 +1074,7 @@ def test_league_is_in_pctl_order_by_default_and_my_team_is_not_pinned() -> None:
 
 @pytest.mark.parametrize(
     ("key", "label"),
-    [("team", "Team"), ("roto", "Roto"), ("ttltst", "TTLTST"), ("pctl", "Pctl"), ("G", "G")],
+    [("team", "Team"), ("ttltst", "TTLTST"), ("pctl", "Pctl"), ("G", "G")],
 )
 def test_league_headers_sort_and_carry_the_view_and_season(key: str, label: str) -> None:
     c = client()
@@ -1115,11 +1116,10 @@ def test_league_category_cells_show_rank_heat_and_pctl() -> None:
     for r, row in zip(table.rows, rows, strict=True):
         cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
         g = r.standing.categories[Category.G]
-        g_cell = cells[3]  # Roto, TTLTST, Pctl, then G
+        g_cell = cells[2]  # TTLTST, Pctl, then G
         assert f'heat-{g.heat}"' in g_cell
         assert f'title="Pctl {percentile(g.pctl)}"' in g_cell
         assert f'{number(g.value)}<small class="rank">#{g.rank}</small>' in g_cell
-        assert f">{number(r.standing.roto, 1)}</td>" in cells[0]
     heats = {
         re.search(r"heat-(\d)", c)[1]  # type: ignore[index]
         for row in rows
@@ -1133,10 +1133,11 @@ def test_league_shows_each_teams_pctl_in_both_views(view: str) -> None:
     html = client().get(f"/league{view}").text
     head = html.split('class="data league"', 1)[1].split("</thead>", 1)[0]
     labels = re.findall(r'<a href="[^"]*">(\w+)', head)
-    assert labels[:4] == ["Team", "Roto", "TTLTST", "Pctl"]
+    assert labels[:3] == ["Team", "TTLTST", "Pctl"]
+    assert "Roto" not in html
     for r, row in zip(demo_table().rows, league_rows(html), strict=True):
         cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
-        assert cells[2] == f'<td class="num">{percentile(r.standing.ttltst.pctl)}</td>'
+        assert cells[1] == f'<td class="num">{percentile(r.standing.ttltst.pctl)}</td>'
 
 
 @pytest.mark.parametrize("view", ["", "&view=cats"])
@@ -1147,7 +1148,7 @@ def test_league_pctl_is_a_dash_when_nobody_is_rated(view: str) -> None:
     html = client(svc).get(f"/league?season=current{view}").text
     for row in league_rows(html):
         cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
-        assert cells[2] == '<td class="num">—</td>'
+        assert cells[1] == '<td class="num">—</td>'
 
 
 def test_league_details_list_each_columns_rank_pctl_and_gap() -> None:
@@ -1218,6 +1219,7 @@ def test_a_category_the_rating_settings_leave_out_is_a_400() -> None:
     ("query", "quoted"),
     [
         ("sort=points", "&#39;points&#39;"),
+        ("sort=roto", "&#39;roto&#39;"),  # removed (plans/league-pctl.md)
         ("sort=" + "x" * 13, "&#39;xxxxxxxxxxxx…&#39;"),
         ("dir=up", "&#39;up&#39;"),
     ],

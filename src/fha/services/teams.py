@@ -72,7 +72,6 @@ def summarize(
 
 class LeagueSort(StrEnum):
     TEAM = "team"
-    ROTO = "roto"
     TTLTST = "ttltst"
     PCTL = "pctl"  # the Pctl of the team's average TTLTST
     PAYROLL = "payroll"
@@ -174,7 +173,6 @@ def _league_sort_value(sort: LeagueSort | Category) -> Callable[[LeagueRow], obj
         return lambda r: r.standing.categories[sort].value
     by: dict[LeagueSort, Callable[[LeagueRow], object | None]] = {
         LeagueSort.TEAM: lambda r: r.team.name,
-        LeagueSort.ROTO: lambda r: r.standing.roto,
         LeagueSort.TTLTST: lambda r: r.standing.ttltst.value,
         LeagueSort.PCTL: lambda r: r.standing.ttltst.pctl,
         LeagueSort.PAYROLL: lambda r: r.summary.payroll,

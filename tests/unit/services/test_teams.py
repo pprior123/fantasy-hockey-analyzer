@@ -359,7 +359,7 @@ def test_the_league_table_flags_discrepancies_and_does_not_pin_my_team(
     table = league_table(view_of(snap), discrepancies={THEIRS: True})
     flags = {r.team.team_key: r.summary.has_discrepancies for r in table.rows}
     assert flags == {MINE: False, THEIRS: True}
-    # Roto: THEIRS leads every category it differs in, so it is first, mine second.
+    # By Pctl (the default): THEIRS's average TTLTST is higher, so it is first.
     assert [r.team.team_key for r in table.rows] == [THEIRS, MINE]
     assert table.mine is not None
     assert table.mine.team.team_key == MINE
@@ -373,7 +373,6 @@ def test_without_my_team_there_is_no_mine(snap: LeagueSnapshot) -> None:
 # Each sort's value, read off the row directly (not through the code under test).
 LEAGUE_COLUMN: dict[LeagueSort | Category, Any] = {
     LeagueSort.TEAM: lambda r: r.team.name.casefold(),
-    LeagueSort.ROTO: lambda r: r.standing.roto,
     LeagueSort.TTLTST: lambda r: r.summary.profile.ttltst,
     LeagueSort.PCTL: lambda r: r.standing.ttltst.pctl,
     LeagueSort.PAYROLL: lambda r: r.summary.payroll,
@@ -424,6 +423,7 @@ def test_league_params_parse_with_defaults() -> None:
     ("params", "message"),
     [
         ({"sort": "points"}, "unknown sort 'points'"),
+        ({"sort": "roto"}, "unknown sort 'roto'"),  # removed (plans/league-pctl.md)
         ({"sort": "x" * 13}, "unknown sort 'xxxxxxxxxxxx…'"),
         ({"dir": "up"}, "dir must be asc or desc, got 'up'"),
         ({"dir": "y" * 13}, "unknown dir 'yyyyyyyyyyyy…'"),
@@ -456,7 +456,7 @@ def pctl_by_hand(view: LeagueView, value: float) -> float:
 
 @pytest.mark.parametrize("season", [Season.LAST, Season.CURRENT])
 def test_the_standings_use_the_season_shown(season: Season) -> None:
-    """Ranks, Pctl, roto points and per-82 gaps from that season's ratings, pool and
+    """Ranks, Pctl and per-82 gaps from that season's ratings, pool and
     divisors (the demo's team order and divisors differ between the seasons)."""
     view = demo_view(season)
     rows = league_table(view, LeagueQuery(LeagueSort.TTLTST)).rows
@@ -469,9 +469,9 @@ def test_the_standings_use_the_season_shown(season: Season) -> None:
         g = r.standing.categories[Category.G]
         if g.gap is not None:
             assert g.gap_per82 == pytest.approx(g.gap * view.result.divisors[Category.G])
-    n = len(rows)
     for cat in view.config.categories:
-        assert sum(r.standing.categories[cat].points or 0 for r in rows) == n * (n + 1) / 2
+        best = max(rows, key=lambda r: r.summary.profile.mean_norm[cat] or 0.0)
+        assert best.standing.categories[cat].rank == 1
 
 
 def test_the_demo_seasons_differ_so_the_wiring_test_can_tell_them_apart() -> None:
@@ -509,7 +509,6 @@ def test_a_season_with_nobody_rated_has_no_standings_and_no_error(case: str) -> 
     table = league_table(view)
     assert len(table.rows) == len(snap.teams)
     for r in table.rows:
-        assert r.standing.roto is None
         assert r.standing.ttltst == EMPTY
         assert all(c == EMPTY for c in r.standing.categories.values())
     assert [r.team.name for r in table.rows] == sorted(r.team.name for r in table.rows)
@@ -526,7 +525,7 @@ def test_the_teams_a_gap_is_to_are_named_in_order() -> None:
 
 
 @pytest.mark.parametrize("descending", [True, False])
-@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.ROTO, LeagueSort.PCTL])
+@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.PCTL])
 def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
     snap: LeagueSnapshot, key: LeagueSort | Category, descending: bool
 ) -> None:
@@ -546,8 +545,8 @@ def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
     assert theirs.standing.categories[Category.HIT].value == 0.0
     assert mine.standing.categories[Category.HIT].value is None
     assert mine.standing.ttltst.value is None
-    assert mine.standing.roto is None
-    assert theirs.standing.roto == len(view.config.categories)  # alone: 1 point each
+    assert mine.standing.ttltst.pctl is None
+    assert theirs.standing.ttltst.pctl is not None
 
 
 @pytest.mark.parametrize("season", [Season.LAST, Season.CURRENT])

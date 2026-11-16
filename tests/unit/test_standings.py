@@ -1,7 +1,6 @@
 """League standings from team profiles (plans/league-standings.md §1): ranks, Pctl on
-the players' scale, roto points, gaps to tie, heat bands."""
-
-import math
+the players' scale, gaps to tie, heat bands. (Roto points were removed: the owner
+prefers the Pctl, plans/league-pctl.md.)"""
 
 import pytest
 from hypothesis import given
@@ -28,7 +27,7 @@ def player(pid: str, ttltst: float | None, **norms: float) -> Rating:
     return Rating(pid, f"P{pid}", ttltst, None, None, None, full)
 
 
-# ---------------------------------------------------------------- ranks and roto points
+# ---------------------------------------------------------------- ranks
 
 
 def test_ranks_are_competition_ranks_with_ties_sharing_the_best() -> None:
@@ -46,43 +45,21 @@ def test_ranks_are_competition_ranks_with_ties_sharing_the_best() -> None:
     assert [table[k].ttltst.rank for k in "abcd"] == [1, 1, 1, 1]
 
 
-def test_roto_points_share_the_places_tied_teams_span() -> None:
-    teams = {
-        "a": team(1.0, G=3.0, A=0.5),
-        "b": team(1.0, G=2.0, A=0.9),
-        "c": team(1.0, G=2.0, A=0.1),
-        "d": team(1.0, G=1.0, A=0.1),
-    }
-    table = standings(teams, [], 0, DIVISORS)
-    assert [table[k].categories[G].points for k in "abcd"] == [4, 2.5, 2.5, 1]
-    assert [table[k].categories[A].points for k in "abcd"] == [3, 4, 1.5, 1.5]
-    assert [table[k].roto for k in "abcd"] == [7, 6.5, 4, 2.5]
-    assert table["a"].ttltst.points is None  # TTLTST is not a roto category
-
-
-def test_a_team_with_no_value_has_no_rank_points_or_roto_and_is_not_counted() -> None:
+def test_a_team_with_no_value_has_no_rank_and_is_not_counted() -> None:
     teams = {"a": team(2.0, G=3.0, A=1.0), "b": team(1.0, G=2.0, A=2.0), "x": team(None)}
     table = standings(teams, [], 0, DIVISORS)
     empty = table["x"]
-    assert empty.categories[G] == Cell(None, None, None, None, None, None, (), None)
-    assert empty.ttltst == Cell(None, None, None, None, None, None, (), None)
-    assert empty.roto is None
-    assert [table[k].categories[G].points for k in "ab"] == [2, 1]  # n = 2, not 3
-
-
-def test_roto_is_none_when_any_category_has_no_value() -> None:
-    teams = {"a": team(1.0, G=3.0), "b": team(1.0, G=2.0, A=1.0)}  # a has no A
-    table = standings(teams, [], 0, DIVISORS)
-    assert table["a"].roto is None
-    assert table["a"].categories[G].points == 2
-    assert table["b"].roto == 1 + 1  # last in G of 2, alone (first) in A of 1
+    assert empty.categories[G] == Cell(None, None, None, None, None, (), None)
+    assert empty.ttltst == Cell(None, None, None, None, None, (), None)
+    assert [table[k].categories[G].rank for k in "ab"] == [1, 2]
+    assert [table[k].categories[G].heat for k in "ab"] == [0, 4]  # n = 2, not 3
 
 
 def test_the_categories_come_from_the_profiles() -> None:
     teams = {"a": team(1.0, (HIT,), HIT=2.0), "b": team(0.5, (HIT,), HIT=1.0)}
     table = standings(teams, [], 0, DIVISORS)
     assert list(table["a"].categories) == [HIT]
-    assert table["a"].roto == 2
+    assert [table[k].categories[HIT].rank for k in "ab"] == [1, 2]
     assert table["b"].categories[HIT].gap_per82 == pytest.approx(100.0)
 
 
@@ -213,16 +190,20 @@ def leagues(draw: st.DrawFn) -> dict[str, TeamProfile]:
 
 
 @given(leagues())
-def test_each_categorys_points_sum_to_n_n_plus_1_over_2(teams: dict[str, TeamProfile]) -> None:
+def test_a_rank_is_one_plus_the_teams_above_and_lies_in_1_to_n(
+    teams: dict[str, TeamProfile],
+) -> None:
     table = standings(teams, [], 0, DIVISORS)
     for cat in CATS:
-        points = [table[k].categories[cat].points for k in teams]
-        valued = [p for p in points if p is not None]
+        values = {k: p.mean_norm[cat] for k, p in teams.items()}
+        valued = [v for v in values.values() if v is not None]
         n = len(valued)
-        assert math.fsum(valued) == pytest.approx(n * (n + 1) / 2)
         ranks = [table[k].categories[cat].rank for k in teams]
         assert all(1 <= r <= n for r in ranks if r is not None)
         assert sum(r is not None for r in ranks) == n
+        for k, v in values.items():
+            expected = None if v is None else 1 + sum(1 for w in valued if w > v)
+            assert table[k].categories[cat].rank == expected
 
 
 @given(

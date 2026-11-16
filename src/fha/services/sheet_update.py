@@ -371,7 +371,7 @@ def _cell_values(rows: Sequence[TabRow], layout: TabLayout) -> dict[int, dict[st
         r: dict.fromkeys(layout.columns) for r in (*layout.blank_rows, *layout.empty_ir_rows)
     }
     for r in rows:
-        known = dict(row_values(r, layout))
+        known: dict[str, object] = dict(row_values(r, layout))
         if r.salary is None:
             del known[layout.salary_column]
         values[r.row] = known

@@ -4,6 +4,7 @@ import asyncio
 import re
 from dataclasses import replace
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -11,9 +12,11 @@ from fastapi.testclient import TestClient
 
 from fha.domain.engine import DEFAULT_CONFIG
 from fha.domain.matcher import NO_ALIASES
+from fha.domain.names import name_matches
 from fha.services.free_agents import import_free_agent_salaries
 from fha.services.league_sheet import bind_tab, read_league_sheet
 from fha.services.league_view import LeagueView, Salaries, Season, build_view
+from fha.services.players_table import PlayersQuery, select
 from fha.services.refresh import RefreshService
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
@@ -281,6 +284,217 @@ def test_the_demo_has_zero_gp_players_on_my_team() -> None:
     assert "0" in gp
 
 
+# ---------------------------------------------------------------- players: name search
+
+
+def search_form(html: str) -> str:
+    return html.split('class="toolbar search"', 1)[1].split("</form>", 1)[0]
+
+
+def filter_form(html: str) -> str:
+    return html.split('class="toolbar filters"', 1)[1].split("</form>", 1)[0]
+
+
+def hidden_inputs(form: str) -> dict[str, str]:
+    return dict(re.findall(r'<input type="hidden" name="([^"]*)" value="([^"]*)">', form))
+
+
+def player_links(html: str) -> list[str]:
+    """Every link on the page to /players (unescaped), the Clear link included."""
+    return [h.replace("&amp;", "&") for h in re.findall(r'href="(/players[^"]*)"', html)]
+
+
+def clear_link(html: str) -> str | None:
+    found = re.search(r'<a href="([^"]*)">Clear</a>', search_form(html))
+    return found[1].replace("&amp;", "&") if found else None
+
+
+def matching(q: str) -> set[str]:
+    return {p.name for p in SNAP.pool if name_matches(q, p.name)}
+
+
+def test_a_search_finds_names_whoever_owns_them_with_zero_gp_players() -> None:
+    html = client().get("/players?season=last&q=Stavik").text
+    rows = names_in(html, "players")
+    assert set(rows) == matching("stavik")
+    assert len(rows) == len(set(rows))
+    owners = {p.player_id for t in SNAP.teams for p in (e.player for e in t.roster)}
+    found = [p for p in SNAP.pool if p.name in set(rows)]
+    assert any(p.player_id in owners for p in found)  # rostered
+    assert any(p.player_id not in owners for p in found)  # free agents
+    assert f"{len(rows)} players match “Stavik”." in html
+    assert "0 GP" not in html  # no hidden count, no toggle
+    assert 'name="q" value="Stavik"' in search_form(html)
+    assert clear_link(html) == "/players?season=last"
+
+
+def test_a_search_includes_zero_gp_players() -> None:
+    """0-GP players show while searching, without zero_gp=1 (the plan, §1)."""
+    c = client()
+    hidden = set(names_in(c.get(f"/players?season=last&{EVERY_ROW}").text, "players"))
+    hidden -= set(names_in(c.get("/players?season=last&start=99000").text, "players"))
+    assert len(hidden) == DEMO_ZERO_GP
+    zero = sorted(hidden)[0]
+    assert zero in names_in(c.get(f"/players?season=last&q={zero}").text, "players")
+    assert "0 GP" not in c.get("/players?season=last&q=zeke&zero_gp=1").text  # no toggle
+
+
+def test_one_match_and_no_match_say_so() -> None:
+    c = client()
+    name = SNAP.pool[0].name
+    assert len(matching(name)) == 1
+    assert f"1 player matches “{name}”." in c.get(f"/players?q={name}").text
+    html = c.get("/players?q=mcdavdi").text
+    assert names_in(html, "players") == []
+    assert "No player matches “mcdavdi”." in html
+    assert clear_link(html) == "/players"
+
+
+@pytest.mark.parametrize("q", ["", "%20%20", "!!", "-%20."])
+def test_a_query_with_no_words_is_the_normal_list(q: str) -> None:
+    c = client()
+    plain = c.get("/players?season=last").text
+    html = c.get(f"/players?season=last&q={q}").text
+    assert names_in(html, "players") == names_in(plain, "players")
+    assert f"({DEMO_ZERO_GP} with 0 GP hidden" in html
+    assert clear_link(html) is None
+    assert 'name="q" value=""' in search_form(html)
+    assert not any("q=" in h for h in player_links(html))  # no link carries it
+    assert "match" not in html.split("Rank and percentile", 1)[0].rsplit("<p", 1)[1]
+
+
+def test_the_search_form_keeps_how_the_list_is_shown_not_who_is_in_it() -> None:
+    """Submitting the box starts from the whole league: owner, team, position, min GP
+    and the 0-GP toggle are left behind; view, season and sort are kept."""
+    team = SNAP.teams[1].team_key
+    html = (
+        client()
+        .get(
+            f"/players?owner=mine&team={team}&pos=C&min_gp=5&zero_gp=1"
+            "&view=cats&season=last&sort=name&dir=asc"
+        )
+        .text
+    )
+    form = search_form(html)
+    assert hidden_inputs(form) == {"view": "cats", "season": "last", "sort": "name", "dir": "asc"}
+    assert re.findall(r'<input[^>]*name="([^"]*)"', form) == ["view", "season", "sort", "dir", "q"]
+    opening = html.split('class="toolbar search"', 1)[0].rsplit("<form", 1)[1]
+    assert 'method="get" action="/players"' in opening
+    # Submit as a browser would: the form's own controls, with "zeke" typed in the box.
+    submitted = client().get("/players", params={**hidden_inputs(form), "q": "zeke"}).text
+    rows = names_in(submitted, "players")
+    assert set(rows) == matching("zeke")  # every owner, every position, any GP
+    assert rows == sorted(rows, key=str.casefold)  # the sort kept
+
+
+def test_after_a_search_the_filters_narrow_it_and_carry_q() -> None:
+    c = client()
+    html = c.get("/players?q=zeke&season=last").text
+    links = [h for h in player_links(html) if h != clear_link(html)]
+    assert links
+    assert all("q=zeke" in h for h in links)
+    assert any("owner=free" in h for h in links)
+    assert any("sort=name" in h for h in links)
+    assert any("view=cats" in h for h in links)
+    assert any("view=totals" in h for h in links)
+    assert hidden_inputs(filter_form(html))["q"] == "zeke"  # Apply keeps it
+    free = names_in(c.get("/players?q=zeke&season=last&owner=free").text, "players")
+    available = {p.name for p in SNAP.available}
+    assert free
+    assert set(free) == matching("zeke") & available
+
+
+def test_clear_drops_the_search_and_every_filter_chosen_after_it() -> None:
+    c = client()
+    team = SNAP.teams[1].team_key
+    html = c.get(f"/players?q=zeke&owner=free&team={team}&pos=C&view=cats&sort=gp").text
+    assert clear_link(html) == "/players?view=cats&sort=gp"
+    cleared = c.get(clear_link(html) or "").text
+    # Expected straight from the view: every player with GP, most GP first, ties by
+    # name then id; the first page of them.
+    view = build_view_for_test()
+    played = sorted((r for r in view.rows if r.gp > 0), key=lambda r: (r.name, r.player_id))
+    played.sort(key=lambda r: r.gp, reverse=True)
+    assert names_in(cleared, "players") == [r.name for r in played[:100]]
+    assert f"{len(played)} players ({DEMO_ZERO_GP} with 0 GP hidden" in cleared
+
+
+def test_a_search_pages_through_show_more_and_the_no_js_link() -> None:
+    """A query over two pages ("a"): every match once, in order, through htmx's
+    /players/rows and through the plain /players?start= link."""
+    c = client()
+    everything = names_in(c.get("/players?q=a&start=99000").text, "players")
+    assert len(everything) == len(matching("a")) > 2 * 100
+    assert set(everything) == matching("a")
+    got, link = [], "/players/rows?q=a&start=0"
+    while link:
+        part = c.get(link)
+        assert part.status_code == 200
+        got += names_in(f'<table class="data players">{part.text}</table>', "players")
+        more = show_more(part.text)
+        assert more is None or all("q=a" in u for u in more)
+        link = more[1] if more else ""
+    assert got == everything
+    page = c.get("/players?q=a&start=100").text
+    assert names_in(page, "players") == everything[:200]
+    assert show_more(page) == ("/players?q=a&start=200", "/players/rows?q=a&start=200")
+    paging = [h for h in player_links(page) if "start=" in h]
+    assert paging == ["/players?q=a&start=200"]  # a new search or filter starts at the top
+    assert "start" not in hidden_inputs(search_form(page))
+    assert "start" not in hidden_inputs(filter_form(page))
+
+
+ODD_Q = '"Zeke" & <i>\'s'  # quotes, an ampersand, markup; matches the Zekes with an i
+
+
+@pytest.mark.parametrize("q", [ODD_Q, '<b>"zqx"&\'</b>'])
+def test_the_echoed_query_is_escaped_and_round_trips(q: str) -> None:
+    html = client().get("/players", params={"q": q, "season": "last"}).text
+    shown = q.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    shown = shown.replace('"', "&#34;").replace("'", "&#39;")
+    assert "<i>" not in html
+    assert "<b>" not in html
+    assert f'name="q" value="{shown}"' in search_form(html)
+    assert f'<input type="hidden" name="q" value="{shown}">' in filter_form(html)
+    assert f"“{shown}”" in html
+    links = [h for h in player_links(html) if h != clear_link(html)]
+    assert links
+    for link in links:
+        assert parse_qs(urlsplit(link).query)["q"] == [q]
+    rows = names_in(html, "players")
+    assert set(rows) == matching(q)
+    assert bool(rows) == (q == ODD_Q)  # with and without matches
+
+
+def row_html(html: str, name: str) -> str:
+    rows = re.findall(r"<tr[^>]*>\s*<td class=\"first\">.*?</tr>", html, flags=re.S)
+    (row,) = [r for r in rows if f"<summary>{name}</summary>" in r]
+    return row
+
+
+def test_a_searched_player_keeps_the_league_rank_in_both_seasons() -> None:
+    """Rank and Pctl stay over the whole league (SPEC §7.1): a rated player below first,
+    whose GP (and so rank) differs between the seasons."""
+    c = client()
+    seen = {}
+    for season in (Season.LAST, Season.CURRENT):
+        view = build_view(SNAP, DEFAULT_CONFIG, Salaries(), season=season)
+        row = next(r for r in view.rows if r.name == "Bram Corberg")
+        assert row.rating is not None
+        assert row.rating.rank is not None
+        assert row.rating.rank > 1
+        (searched,) = select(view, PlayersQuery(q="Bram Corberg"))
+        assert searched.rating == row.rating
+        seen[season] = (row.gp, row.rating.rank, row.percentile)
+        plain = c.get(f"/players?season={season.value}&{EVERY_ROW}").text
+        found = c.get(f"/players?season={season.value}&q=Bram%20Corberg").text
+        assert row_html(found, "Bram Corberg") == row_html(plain, "Bram Corberg")
+    last, current = seen[Season.LAST], seen[Season.CURRENT]
+    assert last[0] != current[0]
+    assert last[1] != current[1]
+    assert last[2] != current[2]
+
+
 @pytest.mark.parametrize(("view", "columns"), [("", 9), ("&view=cats", 14)])
 def test_an_empty_table_spans_all_its_columns(view: str, columns: int) -> None:
     html = client().get(f"/players?min_gp=9999{view}").text
@@ -335,6 +549,7 @@ def test_the_categories_toggle_swaps_salary_columns_for_norms() -> None:
         "start=x",
         "start=" + "9" * 6,
         "zero_gp=yes",
+        "q=" + "x" * 41,
     ],
 )
 @pytest.mark.parametrize("path", ["/players", "/players/rows"])
@@ -1131,6 +1346,14 @@ def test_a_bad_value_is_quoted_short_on_the_400_page(query: str) -> None:
     assert response.status_code == 400
     assert "&#39;xxxxxxxxxxxx…&#39;" in response.text
     assert "x" * 13 not in response.text
+
+
+def test_an_over_long_search_is_quoted_short_on_the_400_page() -> None:
+    response = client().get("/players?q=" + "x" * 41)
+    assert response.status_code == 400
+    assert "at most 40 characters, got &#39;xxxxxxxxxxxx…&#39;" in response.text
+    assert "x" * 13 not in response.text
+    assert client().get("/players?q=" + "x" * 40).status_code == 200
 
 
 def test_the_stale_note_says_when_yahoo_is_asked_again() -> None:

@@ -2,6 +2,7 @@
 
 import json
 import random
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,11 @@ from fha.domain.names import name_keys, normalize_name
 
 SEED = json.loads((Path(__file__).parents[1] / "fixtures" / "alias_seed.json").read_text())
 SEED_ALIASES = Aliases.from_seed(SEED)
+# ASCII test ids: mutmut 3.8 records a non-ASCII explicit id escaped twice, then can't
+# select it, so the run on fha.domain.names* stops before testing any mutant.
+SEED_IDS = [
+    unicodedata.normalize("NFKD", s["salary_name"]).encode("ascii", "ignore").decode() for s in SEED
+]
 
 
 def c(pid: str, name: str, team: str | None = None, pos: str | None = None) -> Candidate:
@@ -207,7 +213,7 @@ def same_person(a: dict[str, str], b: dict[str, str]) -> bool:
     return bool(names_a & names_b)
 
 
-@pytest.mark.parametrize("seed", SEED, ids=[s["salary_name"] for s in SEED])
+@pytest.mark.parametrize("seed", SEED, ids=SEED_IDS)
 def test_every_seed_alias_matches_its_player(seed: dict[str, str]) -> None:
     """The seed's salary name finds its stats name among every other seeded player."""
     target = c("target", seed["stats_name"])
@@ -227,7 +233,7 @@ NEEDS_AN_ALIAS = {
 }
 
 
-@pytest.mark.parametrize("seed", SEED, ids=[s["salary_name"] for s in SEED])
+@pytest.mark.parametrize("seed", SEED, ids=SEED_IDS)
 def test_without_aliases_only_the_known_cases_fail(seed: dict[str, str]) -> None:
     result = match(Query(seed["salary_name"]), [c("target", seed["stats_name"])])
     if seed["salary_name"] in NEEDS_AN_ALIAS or seed["stats_name"] == "Dmitri Vornkov":

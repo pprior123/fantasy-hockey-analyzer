@@ -8,6 +8,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from fha.services.players_table import (
+    MAX_Q_CHARS,
     PAGE_SIZE,
     POSITIONS,
     Owner,
@@ -40,6 +41,9 @@ OWNER_CHIPS = (
     (Owner.FREE, "Free Agents"),
     (Owner.TAKEN, "Taken"),
 )
+# What a name search keeps (plans/players-name-search.md §1): how the list is shown,
+# not which players are in it; the owner chip, team, position and min GP start over.
+DISPLAY_STATE = ("view", "season", "sort", "dir")
 
 
 def bad_request(request: Request, message: str, back: str, active: str) -> HTMLResponse:
@@ -82,6 +86,9 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
     rows = select(view, query, totals=mode == "totals")
     end = query.start + PAGE_SIZE
     params.pop("start", None)  # every other link starts from the top again
+    if not query.searching:
+        params.pop("q", None)  # "" or "!!": no search, so no link carries it
+    display_state = {k: params[k] for k in DISPLAY_STATE if params.get(k)}
     categories = view.config.categories
     context: dict[str, Any] = {
         "rows": rows[query.start if partial else 0 : end],
@@ -111,6 +118,8 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         columns=COLUMNS,
         money_columns=MONEY_COLUMNS,
         owner_chips=OWNER_CHIPS,
+        display_state=display_state,
+        max_q_chars=MAX_Q_CHARS,
         positions=POSITIONS,
         sort_keys={k.value for k in SortKey},
         here=str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),

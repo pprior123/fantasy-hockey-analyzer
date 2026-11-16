@@ -537,6 +537,10 @@ A season label and toggle per §5.
    appends the next 100; players with 0 GP are hidden unless asked for (not
    on a single team's list), and the count says how many (DECISIONS, "Players:
    100 rows at a time"). Rank and percentile stay over the whole league.
+   A **name search** box finds players by part of a name (every word, any
+   order, accents and punctuation ignored, not fuzzy) whoever owns them, 0-GP
+   players included; a search starts from the whole league, and the filters
+   then narrow it (DECISIONS, "Players: name search").
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in

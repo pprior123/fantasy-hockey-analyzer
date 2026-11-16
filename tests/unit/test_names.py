@@ -9,6 +9,8 @@ from fha.domain.names import (
     PositionGroup,
     canonical_team,
     name_keys,
+    name_matcher,
+    name_matches,
     normalize_name,
     position_group,
     surname,
@@ -39,6 +41,7 @@ from fha.domain.names import (
         ("McDavid, Connor", "connor mcdavid"),
         ("Carlsson,\N{NO-BREAK SPACE}Leo", "leo carlsson"),
         ("Di Giuseppe, Phillip", "phillip di giuseppe"),
+        ("Smith, John, Jr.", "john jr smith"),  # the first comma splits, as in surname()
         ("Leo\N{NO-BREAK SPACE}Carlsson", "leo carlsson"),
         ("Andersen", "andersen"),
         ("Andersen,", "andersen"),
@@ -189,6 +192,98 @@ def test_surname(raw: str, last: str) -> None:
     assert surname(raw) == last
 
 
+# ---------------------------------------------------------------- name_matches (Players search)
+
+
+@pytest.mark.parametrize(
+    ("query", "name"),
+    [
+        ("mcd", "Connor McDavid"),
+        ("connor mc", "Connor McDavid"),
+        ("mcdavid connor", "Connor McDavid"),  # any word order
+        ("MCDAVID", "Connor McDavid"),
+        ("  connor   mcdavid ", "Connor McDavid"),
+        ("Stützle", "Tim Stutzle"),  # accents either side
+        ("stutzle", "Tim Stützle"),
+        ("mcdavid", "McDavid, Connor"),  # the comma form
+        ("connor mcdavid", "McDavid, Connor"),
+        ("McDavid, Connor", "Connor McDavid"),
+        ("o'reilly", "Ryan O'Reilly"),  # punctuation as normalize_name drops it
+        ("oreilly", "Ryan O\N{RIGHT SINGLE QUOTATION MARK}Reilly"),
+        ("ekman larsson", "Oliver Ekman-Larsson"),
+        ("ekman-larsson", "Oliver Ekman-Larsson"),
+        ("j.t.", "J.T. Compher"),
+        ("connor connor", "Connor McDavid"),  # a repeated word needs only one place
+        ("avid", "Connor McDavid"),  # inside a word, not only at its start
+    ],
+)
+def test_every_query_word_inside_the_name_matches(query: str, name: str) -> None:
+    assert name_matches(query, name)
+
+
+@pytest.mark.parametrize(
+    ("query", "name"),
+    [
+        ("crosby", "Connor McDavid"),  # an unrelated name
+        ("mcdavdi", "Connor McDavid"),  # a misspelling: not fuzzy
+        ("connor crosby", "Connor McDavid"),  # every word must match, not any
+        ("crosby connor", "Connor McDavid"),
+        ("connormcdavid", "Connor McDavid"),  # a word doesn't span the space
+        ("mcdavid x", "Connor McDavid"),
+        ("stutzlex", "Tim Stützle"),
+        ("connor mcdavid", ""),
+    ],
+)
+def test_a_query_word_missing_from_the_name_does_not_match(query: str, name: str) -> None:
+    assert not name_matches(query, name)
+
+
+def test_a_query_with_no_words_matches_everything() -> None:
+    """Vacuously: no word is missing. Whether a blank query is a search at all is the
+    caller's call (the Players screen treats it as no search)."""
+    assert name_matches("", "Connor McDavid")
+    assert name_matches(" !! ", "Connor McDavid")
+
+
+NAME = st.lists(NAME_PART, min_size=1, max_size=4).map(" ".join)
+
+
+@given(st.text(max_size=20), NAME)
+def test_a_prepared_matcher_agrees_with_name_matches(query: str, name: str) -> None:
+    """The Players screen normalizes the query once, then tests every row."""
+    assert name_matcher(query)(name) == name_matches(query, name)
+
+
+def test_a_prepared_matcher_normalizes_the_query_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    import fha.domain.names as names
+
+    seen: list[str] = []
+    real = names.normalize_name
+
+    def counting(raw: str) -> str:
+        seen.append(raw)
+        return real(raw)
+
+    monkeypatch.setattr(names, "normalize_name", counting)
+    matches = name_matcher("McDavid")
+    assert [matches(n) for n in ("Connor McDavid", "Sidney Crosby")] == [True, False]
+    assert seen == ["McDavid", "Connor McDavid", "Sidney Crosby"]
+
+
+@given(NAME)
+def test_a_name_matches_each_of_its_own_words(name: str) -> None:
+    assert name_matches(name, name)
+    for word in name.split():
+        assert name_matches(word, name)
+
+
+@given(NAME, st.text(max_size=20), st.text(max_size=12))
+def test_adding_a_word_never_turns_a_miss_into_a_match(name: str, query: str, word: str) -> None:
+    if not name_matches(query, name):
+        assert not name_matches(f"{query} {word}", name)
+        assert not name_matches(f"{word} {query}", name)
+
+
 # ---------------------------------------------------------------- canonical_team
 
 
@@ -305,7 +400,10 @@ def test_position_group(raw: str, group: PositionGroup) -> None:
     assert position_group(raw) is group
 
 
-@pytest.mark.parametrize("raw", ["", "  ", "BN", "IR", "Util", "C/D", "F,G", "X", None])
+# "Wing, Left": a comma separates positions, it never swaps words into "left wing".
+@pytest.mark.parametrize(
+    "raw", ["", "  ", "BN", "IR", "Util", "C/D", "F,G", "X", "Wing, Left", None]
+)
 def test_unknown_or_mixed_positions_are_none(raw: str | None) -> None:
     assert position_group(raw) is None
 

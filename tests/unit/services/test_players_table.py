@@ -256,3 +256,100 @@ def test_equal_names_break_ties_by_player_id() -> None:
     rows = [r for r in select(view, PlayersQuery(sort=SortKey.NAME, descending=False))]
     got = [r.player_id for r in rows if r.name == "Elias Twin"]
     assert got == sorted([a.player_id, b.player_id])
+
+
+# ---------------------------------------------------------------- name search (q)
+
+# Real-looking names on the synthetic league: owner t.1 (mine) has 1, 2 and the
+# goalie 3; t.2 has 4, 5 and 6; 100+ are free agents. 0 GP: 3, 6, 100.
+RENAMED = {
+    "1": "Connor McDavid",  # mine, 10 GP
+    "4": "Connor Brown",  # another team's
+    "111": "Connor Murphy",  # a free agent with GP
+    "100": "Connor Garland",  # a free agent with 0 GP, unrated
+    "3": "Connor Hellebuyck",  # my goalie, 0 GP
+    "6": "Tim Stützle",  # another team's, 0 GP, unrated
+    "5": "Sidney Crosby",
+    "2": "Elias Pettersson",  # two players with one name, on different owners
+    "146": "Elias Pettersson",
+}
+CONNORS = {"1", "4", "111", "100", "3"}
+
+
+@pytest.fixture
+def named(view: LeagueView) -> LeagueView:
+    rows = tuple(replace(r, name=RENAMED.get(r.player_id, r.name)) for r in view.rows)
+    return replace(view, rows=rows)
+
+
+def test_a_search_finds_names_whoever_owns_them_zero_gp_included(named: LeagueView) -> None:
+    """Mine, another team's, free agents; 0-GP players without asking (the plan, §1)."""
+    query = PlayersQuery(q="connor")
+    assert set(ids(select(named, query))) == CONNORS
+    assert zero_gp_hidden(named, query) == 0
+    assert set(ids(select(named, PlayersQuery(q="CONNOR mcd")))) == {"1"}
+    assert set(ids(select(named, PlayersQuery(q="stutzle")))) == {"6"}  # unrated, 0 GP
+
+
+def test_a_search_shows_the_rows_unchanged(named: LeagueView) -> None:
+    """The same rows, not recomputed: rank and percentile stay over the whole league."""
+    by_id = {r.player_id: r for r in named.rows}
+    for row in select(named, PlayersQuery(q="connor")):
+        assert row is by_id[row.player_id]
+
+
+def test_a_goalie_is_found_by_name(named: LeagueView) -> None:
+    assert ids(select(named, PlayersQuery(q="hellebuyck"))) == ["3"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (PlayersQuery(q="connor", owner=Owner.MINE), {"1", "3"}),
+        (PlayersQuery(q="connor", owner=Owner.FREE), {"111", "100"}),
+        (PlayersQuery(q="connor", owner=Owner.TAKEN), {"1", "4", "3"}),
+        (PlayersQuery(q="connor", team_key=f"{LK}.t.2"), {"4"}),
+        (PlayersQuery(q="connor", position="G"), {"3"}),
+        (PlayersQuery(q="connor", min_gp=1), {"1", "4", "111"}),
+    ],
+)
+def test_the_filters_narrow_a_search(
+    named: LeagueView, query: PlayersQuery, expected: set[str]
+) -> None:
+    assert set(ids(select(named, query))) == expected
+
+
+@pytest.mark.parametrize("q", [None, "", "  ", "!!", " - . "])
+def test_a_query_with_no_words_is_no_search(named: LeagueView, q: str | None) -> None:
+    """Parsed or built directly: the normal list, 0-GP players hidden and counted."""
+    params = {} if q is None else {"q": q}
+    assert PlayersQuery.from_params(params) == PlayersQuery()
+    built = PlayersQuery(q=q)
+    assert ids(select(named, built)) == ids(select(named, PlayersQuery()))
+    assert zero_gp_hidden(named, built) == zero_gp_hidden(named, PlayersQuery()) == len(ZERO_GP)
+    assert not built.searching
+
+
+def test_a_search_with_no_match_shows_nobody(named: LeagueView) -> None:
+    query = PlayersQuery(q="mcdavdi")  # not fuzzy
+    assert select(named, query) == []
+    assert zero_gp_hidden(named, query) == 0
+
+
+def test_tied_names_are_both_found_in_tie_order(named: LeagueView) -> None:
+    query = PlayersQuery(q="elias pettersson", sort=SortKey.NAME, descending=False)
+    assert ids(select(named, query)) == ["146", "2"]  # one name: player_id decides
+
+
+def test_q_parses_trimmed() -> None:
+    assert PlayersQuery.from_params({"q": "  McDavid  "}) == PlayersQuery(q="McDavid")
+    assert PlayersQuery.from_params({"q": "x" * 40}).q == "x" * 40
+    assert PlayersQuery.from_params({"q": "Stützle", "owner": "free"}) == PlayersQuery(
+        owner=Owner.FREE, q="Stützle"
+    )
+
+
+def test_an_over_long_q_is_refused_quoting_twelve_characters() -> None:
+    with pytest.raises(QueryError) as e:
+        PlayersQuery.from_params({"q": "abcdefghijklm" + "x" * 28})
+    assert str(e.value) == "q must be at most 40 characters, got 'abcdefghijkl…'"

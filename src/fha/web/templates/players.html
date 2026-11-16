@@ -7,6 +7,14 @@
   {{ m.refresh_button(here) }}
 </div>
 
+{# A search starts from the whole league: it carries only how the list is shown. #}
+<form method="get" action="/players" class="toolbar search" role="search">
+  {% for key, value in display_state.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <input type="search" name="q" value="{{ query.q if query.searching else '' }}" maxlength="{{ max_q_chars }}" placeholder="Player name" aria-label="Player name" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <button type="submit" class="btn secondary">Search</button>
+  {% if query.searching %}<a href="{{ url('/players', display_state) }}">Clear</a>{% endif %}
+</form>
+
 <nav class="chips owner-chips" aria-label="Owner">
   {% for owner, label in owner_chips %}
   <a class="chip {{ 'on' if query.owner == owner and not query.team_key else '' }}" href="{{ url('/players', params, owner=owner.value, team=None) }}">{{ label }}</a>
@@ -14,7 +22,7 @@
 </nav>
 
 <form method="get" action="/players" class="toolbar filters">
-  {% for key in ("owner", "sort", "dir", "season", "view", "zero_gp") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
+  {% for key in ("owner", "sort", "dir", "season", "view", "zero_gp", "q") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
   <label>Team
     <select name="team">
       <option value="">Any</option>
@@ -34,7 +42,7 @@
 {{ m.view_toggle("/players", params, mode, totals=True) }}
 
 {# Above the table, so the page ends with it: scrolled to the end, its header stays in view. #}
-<p class="muted">{{ total }} players{% if zero_gp_hidden %} ({{ zero_gp_hidden }} with 0 GP hidden: <a href="{{ url('/players', params, zero_gp='1') }}">show them</a>){% elif query.zero_gp and not query.single_team %} (<a href="{{ url('/players', params, zero_gp=None) }}">hide 0 GP</a>){% endif %}. Rank and percentile are over the whole league, whatever the filter.</p>
+<p class="muted">{% if query.searching %}{% if total %}{{ total }} {{ 'player matches' if total == 1 else 'players match' }}{% else %}No player matches{% endif %} “{{ query.q }}”{% else %}{{ total }} players{% if zero_gp_hidden %} ({{ zero_gp_hidden }} with 0 GP hidden: <a href="{{ url('/players', params, zero_gp='1') }}">show them</a>){% elif query.zero_gp and not query.single_team %} (<a href="{{ url('/players', params, zero_gp=None) }}">hide 0 GP</a>){% endif %}{% endif %}. Rank and percentile are over the whole league, whatever the filter.</p>
 
 {% macro header(key, label) -%}
 <th class="{{ 'first' if key == 'name' else '' }}{{ ' num' if key not in ('name', 'pos', 'team', 'owner') else '' }}{{ ' sorted' if sort == key else '' }}">

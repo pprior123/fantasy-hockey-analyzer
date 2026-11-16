@@ -3,7 +3,8 @@
 Pure: the query (from the URL) in, the rows to show out. Ranks and
 percentiles never change with a filter (SPEC §5: they are over the whole
 pool); filters only choose which rows are shown. Players with 0 GP are hidden
-unless asked for, except on a single team's list; the screen shows the rows
+unless asked for, except on a single team's list or in a name search (``q``,
+whoever owns the player: plans/players-name-search.md); the screen shows the rows
 ``PAGE_SIZE`` at a time from ``start`` (the owner's decision, 2026-10-30).
 """
 
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from fha.domain.models import Category
+from fha.domain.names import name_matcher, normalize_name
 from fha.services.league_view import LeagueView, PlayerRow
 
 
@@ -40,6 +42,7 @@ class SortKey(StrEnum):
 POSITIONS = ("C", "LW", "RW", "D", "G")
 MAX_MIN_GP_DIGITS = 4  # a season is 82 games; this keeps int() off huge strings
 MAX_START_DIGITS = 5  # the pool is ~1,600 players
+MAX_Q_CHARS = 40  # longer than any player's name
 PAGE_SIZE = 100
 # Sensible first direction per column: best first for ratings, cheapest first for money.
 DESCENDING_FIRST = frozenset({SortKey.GP, SortKey.TTLTST, SortKey.PCTL, SortKey.AAV})
@@ -59,6 +62,7 @@ class PlayersQuery:
     descending: bool = True
     zero_gp: bool = False  # show players with 0 GP
     start: int = 0  # the first row of the page asked for
+    q: str | None = None  # a name search, as typed (trimmed); see ``searching``
 
     @classmethod
     def from_params(cls, params: Mapping[str, str]) -> PlayersQuery:
@@ -71,6 +75,11 @@ class PlayersQuery:
         for name in ("owner", "pos", "sort", "dir", "zero_gp"):  # the 400 page quotes ≤ 12 chars
             if len(value := get(name) or "") > 12:
                 raise QueryError(f"unknown {name} {value[:12] + '…'!r}")
+        q = get("q")
+        if q is not None and len(q) > MAX_Q_CHARS:
+            raise QueryError(f"q must be at most {MAX_Q_CHARS} characters, got {q[:12] + '…'!r}")
+        if q is not None and not normalize_name(q):
+            q = None  # no words ("!!"): no search
         try:
             owner = Owner(get("owner") or Owner.ALL)
             position = get("pos")
@@ -97,11 +106,21 @@ class PlayersQuery:
             if direction
             else (isinstance(sort, Category) or sort in DESCENDING_FIRST)
         )
-        return cls(owner, get("team"), position, min_gp, sort, descending, zero_gp == "1", start)
+        return cls(owner, get("team"), position, min_gp, sort, descending, zero_gp == "1", start, q)
 
     @property
     def single_team(self) -> bool:
         return self.team_key is not None or self.owner is Owner.MINE
+
+    @property
+    def searching(self) -> bool:
+        """A name search: ``q`` has a word. Blank or punctuation-only is no search."""
+        return bool(self.q and normalize_name(self.q))
+
+    @property
+    def shows_zero_gp(self) -> bool:
+        """0-GP players are shown: asked for, on one team's list, or in a name search."""
+        return self.zero_gp or self.single_team or self.searching
 
 
 def _whole(text: str | None, name: str, max_digits: int) -> int:
@@ -117,7 +136,7 @@ def _whole(text: str | None, name: str, max_digits: int) -> int:
 def select(view: LeagueView, query: PlayersQuery, *, totals: bool = False) -> list[PlayerRow]:
     """The rows the query shows, sorted; players with no value in the sort column last.
     ``totals``: a category sorts by its season total (the Totals view), not its norm."""
-    hide_zero = not (query.zero_gp or query.single_team)
+    hide_zero = not query.shows_zero_gp
     rows = [r for r in _filtered(view, query) if not (hide_zero and r.gp == 0)]
     names = {t.team_key: t.name for t in view.teams}
     key = _sort_value(query.sort, names, totals=totals)
@@ -130,15 +149,18 @@ def select(view: LeagueView, query: PlayersQuery, *, totals: bool = False) -> li
 
 def zero_gp_hidden(view: LeagueView, query: PlayersQuery) -> int:
     """How many players the other filters show that 0-GP hiding leaves out."""
-    if query.zero_gp or query.single_team:
+    if query.shows_zero_gp:
         return 0
     return sum(1 for r in _filtered(view, query) if r.gp == 0)
 
 
 def _filtered(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
     mine = view.my_team.team_key if view.my_team else None
+    matches = name_matcher(query.q or "") if query.searching else None  # normalized once
 
     def shown(row: PlayerRow) -> bool:
+        if matches is not None and not matches(row.name):
+            return False
         if not _owned_as_asked(row, query, mine):
             return False
         if query.position is not None and query.position not in row.eligible_positions:

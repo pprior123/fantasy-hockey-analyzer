@@ -10,7 +10,8 @@
     add        = a roster player in no row
 
 Rows are never inserted or deleted: a drop clears the row's four cells (name,
-position, team, salary), a move copies them verbatim to a free row of the other
+position, team, salary; a salary cell with no number is cleared even if it
+looks blank, since it may hold text), a move copies them verbatim to a free row of the other
 kind, and an add writes ``Last, First`` with Yahoo's position and team codes and
 the cap hit. Free rows: the rows this plan frees first, in row order, then the
 tab's blank rows. Column A (the IR labels) and the header row are never written.
@@ -159,8 +160,11 @@ def plan_update(
     ``active_slots`` / ``ir_slots``: the league's non-IR and IR slot counts.
     """
     refusals: list[str] = []
-    _check_tab(rows, payroll, tab_cap, cap, refusals)
     _check_shape(rows, layout, active_slots, ir_slots, refusals)
+    # A named IR row outside the IR block may be a contact line: refused above by its
+    # row number, and from here on in no change, edit or message.
+    rows = [r for r in rows if r.counted or in_ir_block(r.row, layout)]
+    _check_tab(rows, payroll, tab_cap, cap, refusals)
     by_player = {r.player_id: r for r in rows if r.status == "matched" and r.player_id}
 
     # A row with no name (a salary line, a buyout amount) is never a dropped player:
@@ -196,8 +200,12 @@ def plan_update(
     olds = {r.row: row_values(r, layout) for r in rows}
     cells: dict[tuple[int, str], CellValue] = {}  # (row, column) -> new value
     # Every freed row is cleared first, so a fill into a freed row always wins.
-    for r in [*drops, *(r for _, r in to_ir), *(r for _, r in back)]:
+    freed = [*drops, *(r for _, r in to_ir), *(r for _, r in back)]
+    for r in freed:
         cells.update(dict.fromkeys((r.row, c) for c in layout.columns))  # None: clear
+    # A salary cell with no number may hold text ("???"), which the parsed None can't
+    # tell from a blank: its clear is always sent, so no text outlives the row.
+    always = {(r.row, layout.salary_column) for r in freed if r.salary is None}
     changes = [Change("drop", r.name, r.row, None) for r in drops]
     added: list[tuple[int, str]] = []
     for into_ir, moves, pool in ((True, to_ir, ir_pool), (False, back, counted_pool)):
@@ -226,7 +234,7 @@ def plan_update(
     edits = tuple(
         CellEdit(row, col, olds.get(row, {}).get(col), new)
         for (row, col), new in sorted(cells.items())
-        if olds.get(row, {}).get(col) != new
+        if olds.get(row, {}).get(col) != new or (row, col) in always
     )
     unknown = any(m.aav is None for m in adds)  # refused above, IR or not
     payroll_after = None if unknown else _payroll_after(payroll, edits, layout)
@@ -245,7 +253,7 @@ def plan_update(
 def allowed_rows(rows: Iterable[TabRow], layout: TabLayout) -> frozenset[int]:
     """The rows the app may write: the PAYROLL range's player rows and the IR rows."""
     in_range = range(layout.first_row, layout.last_row + 1)
-    ir = {r.row for r in rows if not r.counted and _in_block(r.row, layout)}
+    ir = {r.row for r in rows if not r.counted and in_ir_block(r.row, layout)}
     ir |= set(layout.empty_ir_rows)
     return frozenset({*in_range, *ir} - {layout.header_row})
 
@@ -294,14 +302,15 @@ def _check_shape(
             "IR rows cover"
         )
     for r in rows:
-        if not r.counted and r.name and not _in_block(r.row, layout):
+        if not r.counted and r.name and not in_ir_block(r.row, layout):
             refusals.append(
                 f"row {r.row} is labelled IR outside the IR rows right below "
                 "the PAYROLL range: fix the tab by hand first"
             )
 
 
-def _in_block(row: int, layout: TabLayout) -> bool:
+def in_ir_block(row: int, layout: TabLayout) -> bool:
+    """Row ``row`` is in the run of IR rows right below the PAYROLL range."""
     block = layout.ir_block
     return block is not None and block[0] <= row <= block[1]
 

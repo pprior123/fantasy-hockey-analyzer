@@ -2516,3 +2516,63 @@ the page says so); a
   "e.g. 5,500,000 or 5.5M".
 - Owner: the `_` before positions on the tab is only a sort aid; new rows in
   Yahoo's plain codes are fine.
+
+## 2026-11-16 — League sheet update: the Codex review
+
+**What.** The owner asked for one Codex review (`gpt-6.1-sol`, reasoning
+high, read-only, on a clean checkout without `.env` or `private/`) of the
+whole feature, `pre-sheet-update`..`4c712f0` (PR #22 + PR #23). It reported 5
+findings; each was checked against the code and all 5 were accepted. The
+review log and triage are on PR #23. Fixed:
+1. **The confirm forces a Yahoo refresh** and writes nothing if Yahoo can't
+   be read just then (any `refresh_error`, including the failure backoff that
+   serves the old snapshot). Before, the confirm used the cached snapshot (30
+   min TTL), so a roster changed in Yahoo after the preview could still be
+   written. This reverses plan Phase 3's "the owner taps Refresh; no extra
+   Yahoo call". The digest already guaranteed that the plan written was the
+   one previewed; now the plan also follows Yahoo as of the tap. Codex rated
+   it High; triaged as Medium, since only the owner's tab is affected.
+   **Cost:** every confirm adds a full league fetch (local rehearsal: about
+   10–20 s per confirm including one; Vercel's limit is 60 s). Alternative
+   rejected: a roster-only Yahoo call, which needs a new source method for one
+   screen.
+2. **A dropped row whose salary cell has no number** (`???`) now has that
+   cell cleared too. The parsed `None` couldn't tell text from a blank, so the
+   text outlived the drop, and an IR row left that way was never free again.
+   Trade-off: a truly blank salary cell in such a row gets a redundant clear.
+3. **A named IR row outside the IR block** (perhaps a contact line), already
+   refused by its row number since round 3, is now also kept out of the
+   preview's changes, review rows and every other message. Not a new leak:
+   the parser has read any IR-labelled row below the range since M3, and
+   Admin's discrepancy report shows that row's name. Narrowing the parser to
+   the IR block is left as a question for the owner.
+4. **A lost answer from Google is not "nothing was changed".** The writer
+   now separates a definite "not written" (no connection, a 4xx) from an
+   unknown outcome (the request left but the answer was lost, or a 5xx).
+   On an unknown outcome the confirm re-reads the tab: every new cell there
+   means it was written (bind and read back as usual), anything else (or no
+   read) means the outcome is unknown. Every old cell still there is reported
+   as "no change yet, but Google may still apply it", not as nothing written.
+   A timed-out batch may still be in progress, and atomicity doesn't prove it
+   finished (Codex, on PR #24).
+5. **The expiry test** now signs the real preview digest 601 s ago (refused)
+   and 590 s ago (written). Before, dropping `max_age` went unnoticed. A
+   second tap on the same preview is tested to write nothing more.
+
+mutmut on `domain/sheet_update.py`: the one justified survivor
+(`_check_result` mutant 3) remains. The forced salary clear lands only on a
+row whose name is cleared or rewritten, so its justification still holds.
+
+**Codex review of PR #24 (the fixes).** Three findings, all accepted, all in
+the lost-answer path:
+- a storage failure while checking a lost answer was reported as "Written";
+  it now says the outcome is unknown;
+- an unchanged tab after a lost answer was called "nothing was written"; it
+  now says no change shows yet and Google may still apply it;
+- verification (after a lost answer, and the normal read-back) treated a row
+  the parser skipped (no name, other cells left) as four blank cells; only
+  rows the parser found blank (`blank_rows`, `empty_ir_rows`) count as
+  cleared now.
+- Round 2 (Codex): a parsed row whose salary cell holds text (`???`) read as
+  a verified blank salary. A parsed salary cell with no number is now unknown
+  to verification too.

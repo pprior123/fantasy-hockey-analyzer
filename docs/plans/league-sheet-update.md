@@ -285,6 +285,10 @@ offline.
   (itsdangerous, its own salt, `max_age` 10 min) of the tab's parsed state,
   the edits and the owner's ticks. Only the hash goes in the form, never the
   state itself. `POST /admin/sheet/update`:
+  0. Fetch the Yahoo roster afresh (a forced refresh); if Yahoo can't be read,
+     write nothing. *Added after the Codex review (2026-11-16): the preview may
+     come from the cached snapshot, so a roster changed in Yahoo after it now
+     changes the hash instead of being written from the cache.*
   1. Read the live sheet again (and store it, as Read sheet does).
   2. Recompute the plan.
   3. If the hash differs, write nothing, show the new preview, and say "the
@@ -366,7 +370,7 @@ Only then the real sheet: Editor, the protections, the tab's IR+ rows, and
 |---|---|
 | A write to another tab | The pure guard and the writer's own check (title and `sheetId` of the tab bound to the `is_mine` team); Google's protections on every other tab and `GM s`; the protection check before every write. |
 | A write outside the player rows | Allowed rows and columns come from the parser; column A and the header row are never written; there are no structural edits. |
-| A write on stale data | Re-read, recompute, and compare hashes just before writing. The remaining window is seconds, and only the owner edits this tab. |
+| A write on stale data | Fetch the Yahoo roster afresh, re-read the sheet, recompute, and compare hashes just before writing. The remaining window is seconds, and only the owner edits this tab. |
 | A partial write | `batchUpdate` is atomic (to be confirmed in Phase 4). |
 | A broader scope leaking into reads | A separate token; the read path keeps `readonly`. |
 | One key that can write both Firestore and the sheet | Accepted for now and recorded. Phase 4b allows a separate account. |

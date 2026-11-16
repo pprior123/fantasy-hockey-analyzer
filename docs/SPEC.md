@@ -195,7 +195,8 @@ Writing (owner's tab only; off unless `FHA_SHEET_WRITE=1`, never in the demo):
 Admin → **Update my tab** reads the sheet afresh, compares the Yahoo roster of
 the owner's team (`is_owned_by_current_login`) with its bound tab, and plans
 value-only edits to the name, position, team and salary cells
-(`domain/sheet_update.py`). A dropped player's row is cleared; an added player
+(`domain/sheet_update.py`). A dropped player's row is cleared (a salary cell
+with no number is cleared too, since it may hold text such as `???`); an added player
 fills a cleared row first, then a blank row inside the PAYROLL range, written
 as "Last, First" with Yahoo's position and team codes and the cap hit; a player
 moving into or out of an IR slot has his four cells copied as parsed (whole
@@ -208,11 +209,13 @@ reason) when the result would be over the cap, the tab disagrees with itself
 or a row holds a negative salary), the tab as read lists more than 3 players over the
 league's slots or its PAYROLL range spans more than twice the roster spots
 (it may reach into the contact details), a named IR row lies outside the IR
-block right below the range, a cell to change holds a formula, a row to
+block right below the range (it may be a contact line: it is named by its row
+number only, and never shown as a change or a review row), a cell to change holds a formula, a row to
 move has no salary number, a row awaits match review (unless the owner ticks
 it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
 counts (from the league settings) are checked as invariants. Before writing,
-the app re-reads the sheet and recomputes the plan; it writes only if the
+the app fetches the Yahoo roster afresh (writing nothing if Yahoo can't be read
+just then), re-reads the sheet and recomputes the plan; it writes only if the
 plan's digest is the one the owner saw (signed, 10 minutes), and only if every
 other tab is protected against the service account as a whole tab
 (`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
@@ -220,7 +223,15 @@ other tab is protected against the service account as a whole tab
 the app is refused with a message naming the fix; a write Google refuses for a
 protected cell says so). The write is one atomic `spreadsheets.batchUpdate`
 (`updateCells` per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
-`spreadsheets`-scope token; reads keep `readonly`. The app binds the rows it
+`spreadsheets`-scope token; reads keep `readonly`. A failure before the request
+leaves, or a 4xx, means nothing was written. A lost answer (a timeout after
+sending, a dropped connection) or a 5xx is an unknown outcome: the app reads the
+tab, and says the write went through (every new cell is there), that no change
+shows yet but Google may still apply it (every old cell is), or that the outcome
+is unknown (anything else, or the check itself failed). A row the parser skipped
+(no name), or a salary cell with no number, is unknown there, never taken as
+cleared; only rows it found blank are.
+The app binds the rows it
 added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet
 with the service account as Editor and protects every other tab; if their own

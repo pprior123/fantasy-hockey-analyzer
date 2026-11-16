@@ -306,10 +306,106 @@ def test_without_yahoo_data_the_confirm_writes_nothing(monkeypatch: Any) -> None
     c = client(svc)
     token = token_in(c.get("/admin/sheet/update").text)
 
-    async def fail(*args: Any) -> Any:
+    async def fail(*args: Any, **kwargs: Any) -> Any:
         raise RefreshError("down")
 
     monkeypatch.setattr(sheet_update, "page_data", fail)
     response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
     assert "Nothing was written: no Yahoo data (RefreshError)." in response.text
+    assert sheet.writes == 0
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+def test_a_named_ir_row_outside_the_ir_block_is_never_shown() -> None:
+    # Below a gap, an IR label with a name may be a contact line: refused by row number,
+    # its name in no change, review or message.
+    for stray in ("Zqx Contact Line", f"Zqx {FIRST.name}"):  # unmatched; close to a player
+        tab = mine_tab()
+        tab.below = [*tab.below, s.IRRow("notes"), s.IRRow("IR", s.Player(stray, "C", "TBL", 1))]
+        html = page(seeded(tab), "?tick=" + "&tick=".join(str(r) for r in range(1, 60)))
+        assert "is labelled IR outside the IR rows" in html
+        assert "Zqx" not in html
+
+
+def aged(token: str, seconds: int) -> str:
+    """The same preview digest, signed ``seconds`` ago."""
+    import time
+
+    from itsdangerous import TimestampSigner
+
+    class Then(TimestampSigner):
+        def get_timestamp(self) -> int:
+            return int(time.time()) - seconds
+
+    digest = URLSafeTimedSerializer(SETTINGS.session_secret, salt=CONFIRM_SALT).loads(token)
+    return URLSafeTimedSerializer(SETTINGS.session_secret, salt=CONFIRM_SALT, signer=Then).dumps(
+        digest
+    )
+
+
+def test_a_real_preview_older_than_ten_minutes_writes_nothing() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    data = {"token": aged(token, 601)}
+    response = c.post("/admin/sheet/update", data=data, follow_redirects=True)
+    assert "That preview is too old: check it again." in response.text
+    assert sheet.writes == 0
+    data = {"token": aged(token, 590)}
+    response = c.post("/admin/sheet/update", data=data, follow_redirects=True)
+    assert "Written: 3 cells on Mine." in response.text
+    assert sheet.writes == 1
+
+
+def test_a_second_tap_on_the_same_preview_writes_nothing_more() -> None:
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    c.post("/admin/sheet/update", data={"token": token})
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert "Nothing to write: Mine already matches your roster." in response.text
+    assert sheet.writes == 1
+
+
+def yahoo_now(svc: Services, source: Any) -> None:
+    """Yahoo as it is now: ``source``, behind the app's (still fresh) cached snapshot."""
+    from fha.services.refresh import RefreshService
+
+    svc.refresh = RefreshService(source, svc.repo, svc.clock)
+
+
+def test_a_roster_changed_in_yahoo_after_the_preview_is_not_written() -> None:
+    from dataclasses import replace
+
+    from fha.sources.yahoo.fake import FakeYahooSource
+    from tests.unit.web.helpers import demo_snapshot
+
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    snap = demo_snapshot()
+    teams = tuple(
+        replace(t, roster=t.roster[:1] + t.roster[2:]) if t.team_key == MINE.team_key else t
+        for t in snap.teams
+    )
+    yahoo_now(svc, FakeYahooSource(replace(snap, teams=teams)))  # a player dropped in Yahoo
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    assert "changed since the preview" in response.text
+    assert sheet.writes == 0
+
+
+def test_a_confirm_that_cannot_reach_yahoo_writes_nothing() -> None:
+    class Down:
+        async def fetch_snapshot(self, *, last_season: bool = True) -> Any:
+            raise RuntimeError("Yahoo is down")
+
+    svc, sheet = writable(mine_tab())
+    c = client(svc)
+    token = token_in(c.get("/admin/sheet/update").text)
+    yahoo_now(svc, Down())
+    response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
+    said = "Nothing was written: your Yahoo roster couldn&#39;t be checked just now"
+    assert said in response.text
     assert sheet.writes == 0

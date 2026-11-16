@@ -11,7 +11,7 @@ from fha.services.sheet_update import build_update, prepare_update, write_update
 from fha.sources.league_sheet.grid import Grid, Tab
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.parse import parse_sheet
-from fha.sources.league_sheet.writer import FakeLeagueSheetWriter
+from fha.sources.league_sheet.writer import FakeLeagueSheetWriter, UncertainWriteError
 from fha.sources.yahoo.models import RosterSlot
 from fha.storage.memory import InMemoryRepository
 from tests.unit.league_sheet import sheets as s
@@ -373,3 +373,119 @@ async def test_a_storage_failure_after_the_write_still_says_it_was_written(
         "Check the tab, then read the sheet again (Admin)."
     )
     assert "fha-prod" not in result.message
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+async def test_a_dropped_row_with_a_text_salary_is_cleared_and_free_again() -> None:
+    without_cy = replace(ONE, roster=ONE.roster[:4])
+    after = replace(AFTER_ONE, players=[*AFTER_ONE.players[:4], None])  # Cy's "???" gone too
+    result, writer, _ = await confirm(BEFORE, live(after, TAB_TWO), teams=(without_cy, TWO))
+    assert result.ok, result.message
+    [(_, edits)] = writer.writes
+    assert {f"{e.column}{e.row}": e.new for e in edits if e.row == 11} == dict.fromkeys(
+        ("C11", "D11", "E11", "F11")
+    )
+    reread = live(after, TAB_TWO).tab("Pinecone")
+    assert reread is not None
+    assert 11 in reread.blank_rows  # free for the next add
+
+
+LOST = UncertainWriteError("Sheets API write: no answer (ReadTimeout)")
+
+
+async def test_a_lost_answer_with_the_change_on_the_tab_is_a_write() -> None:
+    result, _, repo = await confirm(BEFORE, AFTER, writer=FakeLeagueSheetWriter(LOST))
+    assert result.ok, result.message
+    assert result.message == (
+        "Google's answer was lost, but the write went through. "
+        "Written: 7 cells on Pinecone. PAYROLL is now $16,400,000, as expected."
+    )
+    assert result.written == 7
+    bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {})["entries"]["Pinecone"]
+    assert {"player_id": "3", "how": "written"} in bindings.values()
+
+
+async def test_a_lost_answer_with_the_tab_unchanged_is_not_called_a_failure() -> None:
+    # Google may still be applying the batch: an unchanged tab proves nothing yet.
+    result, _, repo = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
+    assert (result.ok, result.written) == (False, 0)
+    assert result.message == (
+        "Google's answer was lost (Sheets API write: no answer (ReadTimeout)) and the tab "
+        "shows no change yet, but Google may still apply it. Open this page again in a "
+        "minute before writing again."
+    )
+    bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {}).get("entries", {})
+    assert "written" not in repr(bindings)
+
+
+async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown() -> None:
+    down = LeagueSheetError("HTTP 503")
+    result, _, _ = await confirm(BEFORE, down, writer=FakeLeagueSheetWriter(LOST))
+    assert not result.ok
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)), and "
+        "the tab couldn't be read to check (HTTP 503). Check the tab before writing again."
+    )
+    # Row 9 new, row 10 (Zed) old: neither state (someone edited the tab meanwhile).
+    half = replace(AFTER_ONE, players=[*AFTER_ONE.players[:3], *TAB_ONE.players[3:]])
+    result, _, _ = await confirm(BEFORE, live(half, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)): the "
+        "tab holds neither the old cells nor the new ones. Check the tab."
+    )
+
+
+async def test_a_storage_failure_while_checking_a_lost_answer_is_still_unknown(
+    monkeypatch: Any,
+) -> None:
+    from fha.services import sheet_update
+    from fha.storage.repository import RepositoryError
+
+    real, reads = sheet_update.read_league_sheet, []
+
+    async def second_read_unstored(*args: Any) -> Any:
+        reads.append(1)
+        if len(reads) == 2:  # the check after the lost answer
+            raise RepositoryError("project fha-prod refused", detail="HTTP 503")
+        return await real(*args)
+
+    monkeypatch.setattr(sheet_update, "read_league_sheet", second_read_unstored)
+    result, _, _ = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
+    assert (result.ok, result.written) == (False, 0)
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)), and "
+        "the app's storage failed while checking. Check the tab before writing again."
+    )
+    assert "fha-prod" not in result.message
+
+
+# Zed's row (10) with its name cleared by hand but its other cells left: the parser
+# skips a nameless row, which must not read as four verified blanks.
+RESIDUE = replace(
+    AFTER_ONE,
+    players=[*AFTER_ONE.players[:3], s.Player("", "C", "TBL", ""), *AFTER_ONE.players[4:]],
+)
+
+
+async def test_a_row_the_parser_skips_is_not_taken_as_cleared() -> None:
+    result, _, _ = await confirm(BEFORE, live(RESIDUE, TAB_TWO))
+    assert result.message.startswith(
+        "Written (7 cells), but these cells don't hold what was written: C10, D10, E10, F10"
+    )
+    result, _, _ = await confirm(BEFORE, live(RESIDUE, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
+    assert result.message.startswith("The write's outcome is unknown (Sheets API write")
+
+
+async def test_a_row_left_with_only_text_in_its_salary_cell_is_not_taken_as_cleared() -> None:
+    # Parsed (the salary cell isn't blank), but "???" reads as no number: unknown.
+    text_left = s.Player("", "", "", "???")
+    after = replace(AFTER_ONE, players=[*AFTER_ONE.players[:3], text_left, *AFTER_ONE.players[4:]])
+    result, _, _ = await confirm(BEFORE, live(after, TAB_TWO))
+    assert result.message.startswith(
+        "Written (7 cells), but these cells don't hold what was written: F10"
+    )
+    lost = FakeLeagueSheetWriter(LOST)
+    result, _, _ = await confirm(BEFORE, live(after, TAB_TWO), writer=lost)
+    assert result.message.startswith("The write's outcome is unknown (Sheets API write")

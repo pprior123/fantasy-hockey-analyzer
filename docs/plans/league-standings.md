@@ -1,6 +1,8 @@
 # Plan: League screen ranks, percentiles, roto points, gaps
 
-Status: implemented, 2026-11-16 (PR #26). Owner chose the features (2026-11-16): rank AND
+Status: implemented, 2026-11-16 (PR #26). **Roto superseded the same day** by
+`docs/plans/league-pctl.md` (PR #27): the owner prefers the Pctl of each team's
+average TTLTST; the text below is kept as history. Owner chose the features (2026-11-16): rank AND
 percentile for each of the 7 categories and overall, sort by any column, heat
 shading, roto points, and the gap to the team above. On 2026-11-16 the owner
 confirmed all four §5 recommendations: heat shading by team rank (not Pctl,

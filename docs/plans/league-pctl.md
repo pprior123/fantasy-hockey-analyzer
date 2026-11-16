@@ -1,6 +1,6 @@
 # Plan: League ranks teams by the Pctl of their average TTLTST, not Roto
 
-Status: draft, Codex-reviewed, 2026-11-16. The owner's decision (2026-11-16), after trying the
+Status: implemented, 2026-11-16 (PR #27); Codex-reviewed plan, owner OK. The owner's decision (2026-11-16), after trying the
 League standings (PR #26): "I'd prefer the existing percentile method that
 converts avg TTLTST to percentile value … so I can see that my average is 90th
 percentile or something". Scope chosen: **overall only**.

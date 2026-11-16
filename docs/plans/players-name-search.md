@@ -40,7 +40,10 @@ as is (not this feature's scope).
 - **0-GP players are included while `q` is set**, as on a single team's list
   (`hide_zero = not (zero_gp or single_team or q)`), and the 0-GP note is not
   shown.
-- A **Clear** link (`q=None`) next to the box returns to the unfiltered list.
+- A **Clear** link next to the box returns to the unfiltered list. It is
+  built from the same display-state allowlist as the search form (`view`,
+  `season`, `sort`, `dir`), not `url(params, q=None)`, which would keep a chip
+  or team chosen after the search (`format.url` keeps every other param).
 
 ## 2. What changes, what stays
 
@@ -61,21 +64,43 @@ paging (Show more carries `q`), Rosters, Admin's search, the matcher.
 
 ## 3. Phases (one commit each, each green)
 
-1. `name_matches` + tests (examples above, an empty query, accents, comma
-   form, multi-word order, punctuation; a hypothesis property: a name always
-   matches each of its own words). mutmut on `fha.domain.names*`.
+1. `name_matches` + tests: the examples above, accents, the comma form,
+   word order, punctuation, and **false cases**: an unrelated name, a
+   misspelling ("mcdavdi"), and "connor crosby" against "Connor McDavid" (every
+   word must match, not any). A query that normalizes to nothing is "no
+   search", decided by the caller (`PlayersQuery`), not by `name_matches`.
+   Hypothesis: a name matches each of its own words; adding a word that isn't
+   in the name never turns a miss into a match. mutmut on `fha.domain.names*`.
 2. `PlayersQuery.q`, `_filtered`, `zero_gp_hidden`; tests in
-   `test_players_table.py`: matches across owners and free agents, 0-GP
-   included, combined with an owner chip / team / position, sort and paging
-   unchanged, over-long `q` refused.
+   `test_players_table.py`:
+   - matches across owners and free agents;
+   - 0-GP players included **without** `zero_gp=1`;
+   - combined with an owner chip, a team, a position;
+   - absent, blank and punctuation-only `q` behave exactly like no `q`,
+     including the normal 0-GP hiding;
+   - an over-long `q` is refused;
+   - zero results;
+   - a goalie and an unrated skater are found by name;
+   - tied names.
 3. Template + route tests in `test_screens.py`:
-   - the box, and the Clear link;
-   - `q` carried by chips, sort headers, the filter form, the view toggle and
-     Show more (htmx partial);
-   - submitting resets the owner and team;
-   - a name with `<script>` is escaped;
-   - rank/Pctl of a searched player equal his unfiltered values;
-   - at 390 px the box fits the toolbar.
+   - the box; the Clear link's URL **and** its rows after a search narrowed by
+     a chip;
+   - `q` carried by chips, sort headers, the filter form and the view toggle;
+   - submitting resets owner, team, position and min GP;
+   - **paging, end to end:** a query matching over 200 demo players (e.g.
+     "a"), followed through the htmx `/players/rows` links to the end
+     (exact ordered rows, none repeated or unfiltered) and through the plain
+     `/players?start=` link (cumulative rows), as the existing paging test
+     does; a new search or filter resets `start`;
+   - escaping of the **echoed query**: a `q` with quotes, `&` and markup, with
+     and without matches, is escaped in the input value, the hidden input and
+     the count / no-match text, and round-trips through the generated URLs;
+   - rank parity: a rated player below first place (non-null rank and Pctl)
+     has the same values searched as unfiltered (compared in the service
+     data, since the row shows Pctl but no rank cell), in both seasons, with
+     a player whose GP differs between them.
+   - **Manual check at 390 px** (not a route test): a full-length query,
+     Search, Clear and the no-match text fit; wrapping is fine.
 4. Docs (SPEC, DECISIONS).
 
 ## 4. Risks
@@ -94,3 +119,17 @@ paging (Show more carries `q`), Rosters, Admin's search, the matcher.
 2. **Should Admin's "Find a player" use `name_matches` too** (word order
    free)? *Recommend yes, but in a later small PR*, so this one changes one
    screen.
+
+## 6. Review (Codex `gpt-6.1-sol`, high, read-only, 2026-11-16): ready with changes
+
+| # | Severity | Finding | Triage |
+|---|---|---|---|
+| 1 | Medium | Clear via `url(params, q=None)` keeps chips/filters chosen after the search (`format.url` keeps every other param). | Accepted: Clear uses the display-state allowlist (§1). |
+| 2 | Medium | The domain tests couldn't fail for an always-true or any-word matcher. | Accepted: false cases and a monotonic property; the "no search" rule lives in `PlayersQuery`, tested there (§3.1, §3.2). |
+| 3 | Medium | Paging needs route-level traversal tests, not just "`q` is carried". | Accepted: end-to-end paging through both link kinds (§3.3). |
+| 4 | Medium | Fixtures: the existing `EVERY_ROW` sets `zero_gp=1` and would bypass the new rule; rank parity could compare blanks; seasons differ. | Accepted (§3.2, §3.3). |
+| 5 | Low | The escaping test should target the echoed query, not player names (already escaped). | Accepted (§3.3). |
+| 6 | Low | A TestClient can't check 390 px. | Accepted: a manual check (§3.3). |
+
+Open questions: Codex agrees with both recommendations (no live search now;
+Admin later, keeping Admin's "empty query finds nothing" behaviour).

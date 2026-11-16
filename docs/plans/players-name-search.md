@@ -1,6 +1,6 @@
 # Plan: Players name search
 
-Status: draft, 2026-11-16. Owner agreed to the feature as proposed (2026-11-16).
+Status: implemented, 2026-11-16 (PR #25). Owner agreed to the feature as proposed (2026-11-16).
 
 ## 1. The decision
 

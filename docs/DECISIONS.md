@@ -2576,3 +2576,49 @@ the lost-answer path:
 - Round 2 (Codex): a parsed row whose salary cell holds text (`???`) read as
   a verified blank salary. A parsed salary cell with no number is now unknown
   to verification too.
+
+## 2026-11-16 — Players: name search
+
+**What.** A name box on Players (plan: `docs/plans/players-name-search.md`,
+PR #25). `name_matches` (`domain/names.py`) normalizes both sides with
+`normalize_name` and needs every query word inside the name, in any order:
+"mcd", "mcdavid connor" and "Stützle" all work; "mcdavdi" finds nothing. The
+search shows players whoever owns them, 0-GP players included, with the
+league-wide rank and percentile unchanged. Submitting the box keeps only how
+the list is shown (view, season, sort, direction) and drops the owner chip,
+team, position, min GP and the 0-GP toggle. After a search, every link and
+the filter form carry `q`, so the filters narrow it. **Clear** returns to the
+same display state with no filters. A `q` with no words ("", "!!") is no
+search, and no link carries it. Over 40 characters is a 400 that quotes 12.
+
+**Why.** The owner agreed to the feature on 2026-11-16. Before it, finding
+one player meant picking the right owner chip, perhaps showing 0-GP players,
+and paging through up to 1,600 rows.
+
+**Alternatives.**
+- **Live search as you type** (htmx, on keyup). Not now: a plain form works
+  without JavaScript and the phone's Go key is one tap (plan, open question 1).
+- **Fuzzy matching.** Rejected: a wrong near-match is worse than "No player
+  matches", and the owner can type less ("mcd").
+- **Clear as `url(params, q=None)`.** Rejected (Codex, plan review): it would
+  keep a chip or team chosen after the search.
+- **Admin's "Find a player" on `name_matches`.** A later small PR, keeping
+  Admin's "an empty query finds nothing" (plan, open question 2).
+
+**mutmut.** `mutmut run "fha.domain.names*"` had not been able to start, on
+`main` too: mutmut 3.8 records a non-ASCII explicit parametrize id (the seed
+aliases in `test_matcher.py`) escaped twice, then can't select it, and stops
+before testing any mutant. Those tests now use ASCII ids. The run then
+reported four mutants as "segfault", which hid that the tests passed with each
+one applied (checked by applying each diff by hand). Two are now killed (a
+two-comma name; "Wing, Left" as a position). Two are equivalent:
+- `normalize_name` mutant 7 (`if comma or True`): with no comma, `first` is
+  "" and the swapped text is `" " + raw`, which normalizes the same;
+- `position_group` mutant 12 (the `/` replacement disabled): `normalize_name`
+  already turns `/` into a space.
+`name_matches`: 5 mutants, all killed. Earlier "all killed" counts for
+`domain/` may have the same blind spot: a full run that treats every status
+other than "killed" as a survivor is a separate task.
+
+Checked at 390 px (headless Chrome in a 390 px frame): the box, Search, Clear
+and a 40-character no-match line fit and wrap.

@@ -373,3 +373,20 @@ async def test_a_storage_failure_after_the_write_still_says_it_was_written(
         "Check the tab, then read the sheet again (Admin)."
     )
     assert "fha-prod" not in result.message
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+async def test_a_dropped_row_with_a_text_salary_is_cleared_and_free_again() -> None:
+    without_cy = replace(ONE, roster=ONE.roster[:4])
+    after = replace(AFTER_ONE, players=[*AFTER_ONE.players[:4], None])  # Cy's "???" gone too
+    result, writer, _ = await confirm(BEFORE, live(after, TAB_TWO), teams=(without_cy, TWO))
+    assert result.ok, result.message
+    [(_, edits)] = writer.writes
+    assert {f"{e.column}{e.row}": e.new for e in edits if e.row == 11} == dict.fromkeys(
+        ("C11", "D11", "E11", "F11")
+    )
+    reread = live(after, TAB_TWO).tab("Pinecone")
+    assert reread is not None
+    assert 11 in reread.blank_rows  # free for the next add

@@ -29,6 +29,7 @@ from fha.domain.sheet_update import (
     TabRow,
     UpdatePlan,
     guard,
+    in_ir_block,
     plan_update,
     row_values,
 )
@@ -107,10 +108,14 @@ def build_update(
         )
     layout = _layout(tab, tab.payroll_range, tab.header_row, tab.name_column, tab.salary_column)
     rows = tuple(_row(m) for m in report.rows)
+    # A named IR row outside the IR block may be a contact line: the plan refuses it by
+    # row number, and it is never offered for review here.
     reviews = tuple(
         ReviewRow(m.row.row, m.row.name, tuple(c.candidate.name for c in m.result.candidates))
         for m in report.rows
-        if m.result is not None and m.result.status in (Status.REVIEW, Status.AMBIGUOUS)
+        if m.result is not None
+        and m.result.status in (Status.REVIEW, Status.AMBIGUOUS)
+        and (m.row.counted or in_ir_block(m.row.row, layout))
     )
     review_rows = {r.row for r in reviews}
     ticks = tuple(sorted(t for t in set(ticked) if t in review_rows))

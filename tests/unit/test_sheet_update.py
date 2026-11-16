@@ -652,3 +652,47 @@ def test_exactly_the_slack_over_the_slot_counts_is_not_doubted() -> None:
     roster = (*ROSTER[:4], *(member(f"i{r}", in_ir=True) for r in range(13, 17)))
     assert not doubted(plan((*ROWS[:4], *irs), roster, layout=layout, ir=1))  # 4 = 1 + SLACK
     assert doubted(plan((*ROWS[:4], *irs), roster, layout=layout, ir=0))
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+def test_a_dropped_row_with_no_salary_number_still_clears_its_salary_cell() -> None:
+    # The cell may hold text ("???"): the parsed None says nothing about blankness, so
+    # the clear is always sent, or the text would outlive the drop and the row would
+    # never be free again.
+    for n in (10, 14):  # a counted row and an IR row
+        dropped = replace(next(r for r in ROWS if r.row == n), salary=None, status="unmatched")
+        rows = tuple(dropped if r.row == n else r for r in ROWS)
+        p = plan(rows, tuple(m for m in ROSTER if m.player_id != dropped.player_id))
+        assert p.ok, p.refusals
+        assert cells(p.edits) == dict.fromkeys((f"C{n}", f"D{n}", f"E{n}", f"F{n}"))
+        assert CellEdit(n, "F", None, None) in p.edits
+
+
+def test_a_freed_row_with_no_salary_number_refilled_by_an_add_writes_the_cap_hit() -> None:
+    dropped = replace(ROWS[3], salary=None, status="unmatched", player_id=None)
+    p = plan((*ROWS[:3], dropped, ROWS[4]), (*ROSTER[:3], ROSTER[4], member("ed")))
+    assert cells(p.edits)["F10"] == 2_000_000
+    assert [e for e in p.edits if (e.row, e.column) == (10, "F")] == [
+        CellEdit(10, "F", None, 2_000_000)
+    ]
+
+
+@pytest.mark.parametrize(
+    "stray",
+    [
+        row(20, "gm@example.com", status="unmatched", player_id=None),
+        row(20, "gm@example.com", status="review", player_id=None),
+        row(20, "gm@example.com", status="matched", player_id="ike"),  # same as a player's
+        row(20, "gm@example.com", status="unmatched", player_id=None, has_formula=True),
+        row(20, "gm@example.com", status="unmatched", player_id=None, negative_salary=True),
+    ],
+)
+def test_a_named_ir_row_outside_the_ir_block_is_never_named(stray: TabRow) -> None:
+    # It may be a contact line: refused by row number, in no change and no message.
+    p = plan((*ROWS, stray), ticked=(20,))
+    assert not p.ok
+    shown = repr((p.changes, p.refusals))
+    assert "gm@example.com" not in shown
+    assert "row 20 is labelled IR outside the IR rows" in shown

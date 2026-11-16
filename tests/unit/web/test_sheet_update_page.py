@@ -313,3 +313,17 @@ def test_without_yahoo_data_the_confirm_writes_nothing(monkeypatch: Any) -> None
     response = c.post("/admin/sheet/update", data={"token": token}, follow_redirects=True)
     assert "Nothing was written: no Yahoo data (RefreshError)." in response.text
     assert sheet.writes == 0
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+def test_a_named_ir_row_outside_the_ir_block_is_never_shown() -> None:
+    # Below a gap, an IR label with a name may be a contact line: refused by row number,
+    # its name in no change, review or message.
+    for stray in ("Zqx Contact Line", f"Zqx {FIRST.name}"):  # unmatched; close to a player
+        tab = mine_tab()
+        tab.below = [*tab.below, s.IRRow("notes"), s.IRRow("IR", s.Player(stray, "C", "TBL", 1))]
+        html = page(seeded(tab), "?tick=" + "&tick=".join(str(r) for r in range(1, 60)))
+        assert "is labelled IR outside the IR rows" in html
+        assert "Zqx" not in html

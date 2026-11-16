@@ -31,6 +31,7 @@ from fha.storage.memory import InMemoryRepository
 from fha.web.context import Services
 from fha.web.format import money, number, percentile, rating_settings, signed, up, url
 from tests.unit.league_sheet import sheets as s
+from tests.unit.services.test_teams import zero_pctl_and_empty_teams
 from tests.unit.web.helpers import FakeClock, logged_in, make_app, make_services
 
 FOOTER = "Fantasy data provided by Yahoo Fantasy"
@@ -1149,6 +1150,15 @@ def test_league_pctl_is_a_dash_when_nobody_is_rated(view: str) -> None:
     for row in league_rows(html):
         cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
         assert cells[1] == '<td class="num">—</td>'
+
+
+@pytest.mark.parametrize("view", ["", "&view=cats"])
+def test_league_shows_a_pctl_of_zero_as_0_and_no_value_as_a_dash(view: str) -> None:
+    html = client(services_for(zero_pctl_and_empty_teams())).get(f"/league?season=last{view}")
+    rows = {team_of(r): r for r in league_rows(html.text)}
+    pctl = lambda row: re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, re.S)[1]  # noqa: E731
+    assert pctl(rows["Zulu"]) == '<td class="num">0</td>'
+    assert pctl(rows["Alpha"]) == '<td class="num">—</td>'
 
 
 def test_league_details_list_each_columns_rank_pctl_and_gap() -> None:

@@ -25,7 +25,7 @@ from fha.services.teams import (
 )
 from fha.sources.league_sheet.models import ParsedTab
 from fha.sources.yahoo.demo import demo_snapshot
-from fha.sources.yahoo.models import LeagueSnapshot, Player, Scoreboard
+from fha.sources.yahoo.models import LeagueSnapshot, Player, RosterEntry, Scoreboard
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.yahoo.fake_league import LK
 
@@ -578,9 +578,45 @@ def test_teams_sharing_a_pctl_sort_by_ttltst_not_by_name(descending: bool) -> No
 
 
 def test_exact_ttltst_ties_sort_by_name_under_pctl(snap: LeagueSnapshot) -> None:
-    """Both synthetic teams last season rate exactly 0: one Pctl, one TTLTST, so names."""
-    view = build_view(snap, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    """Both synthetic teams last season rate exactly 0: one Pctl, one TTLTST, so names.
+    The teams come in reverse name order, so only the name tie-break sorts them."""
+    reversed_teams = replace(snap, teams=tuple(reversed(snap.teams)))
+    assert [t.name for t in reversed_teams.teams] == ["Name 2", "Name 1"]
+    view = build_view(reversed_teams, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
     for descending in (True, False):
         rows = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
         assert rows[0].standing.ttltst.value == rows[1].standing.ttltst.value == 0.0
         assert [r.team.name for r in rows] == sorted(r.team.name for r in rows)
+
+
+def zero_pctl_and_empty_teams() -> LeagueSnapshot:
+    """The demo with "Zulu" holding only the league's lowest-rated skater (a free agent
+    last season, Pctl exactly 0) and "Alpha" only goalies (no value). A sort that took
+    0 for missing would put Alpha first by name."""
+    snap = demo_snapshot()
+    view = build_view(snap, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    rated = sorted((r for r in view.rows if r.ttltst is not None), key=lambda r: r.ttltst or 0.0)
+    low = next(p for p in snap.available if p.player_id == rated[0].player_id)
+    zulu, alpha = snap.teams[0], snap.teams[1]
+    teams = tuple(
+        replace(t, name="Zulu", roster=(RosterEntry(low, "C"),))
+        if t is zulu
+        else replace(t, name="Alpha", roster=tuple(e for e in t.roster if e.player.is_goalie))
+        if t is alpha
+        else t
+        for t in snap.teams
+    )
+    available = tuple(p for p in snap.available if p is not low)
+    return replace(snap, teams=teams, available=available)
+
+
+@pytest.mark.parametrize("descending", [True, False])
+def test_a_genuine_pctl_of_zero_sorts_before_no_value(descending: bool) -> None:
+    snap = zero_pctl_and_empty_teams()
+    view = build_view(snap, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    rows = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
+    by_name = {r.team.name: r for r in rows}
+    assert by_name["Zulu"].standing.ttltst.pctl == 0.0
+    assert by_name["Alpha"].standing.ttltst.pctl is None
+    assert rows[-1].team.name == "Alpha"  # no value: last both ways
+    assert (rows[0].team.name == "Zulu") is (not descending)  # the lowest Pctl

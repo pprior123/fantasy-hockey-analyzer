@@ -2,7 +2,10 @@
 
 Status: draft, 2026-11-16. Owner chose the features (2026-11-16): rank AND
 percentile for each of the 7 categories and overall, sort by any column, heat
-shading, roto points, and the gap to the team above.
+shading, roto points, and the gap to the team above. On 2026-11-16 the owner
+confirmed all four §5 recommendations: heat shading by team rank (not Pctl,
+reversing the original pick), the owner's row not pinned, Roto as the default
+sort, and category gaps in per-82 units. OK'd to implement.
 
 ## 1. The decision
 
@@ -136,7 +139,7 @@ season and view toggles, payroll / room.
 - **Small samples:** a team's mean over few profile players moves a lot.
   Shown as is (the profile already does this); no new rule.
 
-## 5. Open questions (with recommendations)
+## 5. Open questions (with recommendations; all four confirmed by the owner, 2026-11-16)
 
 1. **What the heat shading follows.** Team means cluster high on the players'
    Pctl scale (most teams may sit at 60–90), so shading by Pctl would make

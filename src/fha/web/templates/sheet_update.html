@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% macro money(v) %}{% if v is none %}—{% else %}${{ "{:,}".format(v) }}{% endif %}{% endmacro %}
+{% macro money(v) %}{% if v is none %}—{% else %}{{ "-" if v is number and v < 0 else "" }}${{ "{:,}".format(v|abs if v is number else v) }}{% endif %}{% endmacro %}
 {% macro cell(v) %}{% if v is none %}<span class="muted">(blank)</span>{% elif v is number %}{{ money(v) }}{% else %}{{ v }}{% endif %}{% endmacro %}
 {% block content %}
 {% if flash %}

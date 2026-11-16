@@ -260,6 +260,12 @@ async def write_update(
             f"Nothing was written: the app can still edit {len(open_tabs)} other tab(s) "
             f"({names}). Protect them first (Data → Protect sheets and ranges).",
         )
+    if tab.name not in (sheet.editable_tabs or ()):
+        return WriteResult(
+            False,
+            f"Nothing was written: {tab.name} is protected against the app. Add the app's "
+            f"service account to its protection (Data → Protect sheets and ranges → {tab.name}).",
+        )
     try:
         guard(plan.edits, update.rows, update.layout)
     except GuardError as e:  # a bug: the plan left its own allowed cells

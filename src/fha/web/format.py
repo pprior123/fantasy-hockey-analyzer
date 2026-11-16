@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from urllib.parse import urlencode
 
 from jinja2 import Environment
@@ -44,6 +44,16 @@ def number(value: float | None, digits: int = 2) -> str:
         return DASH
     rounded = _round(value, digits)
     return f"{abs(rounded) if rounded == 0 else rounded:f}"  # no "-0.00"
+
+
+def up(value: float | None, digits: int = 2) -> str:
+    """Rounded away from zero, so a positive gap never shows as 0 ("0.01", not "0.00").
+    Float noise is settled first: 0.1 + 0.2 shows as 0.30, not 0.31."""
+    if value is None or not math.isfinite(value):
+        return DASH
+    settled = _round(value, 9)  # unless that hides a tiny gap
+    base = settled if settled != 0 else Decimal(str(value))
+    return f"{base.quantize(Decimal(1).scaleb(-digits), rounding=ROUND_UP):f}"
 
 
 def signed(value: float | None, digits: int = 2) -> str:
@@ -89,7 +99,7 @@ def url(path: str, params: Mapping[str, str], **changes: str | None) -> str:
 
 
 def install(env: Environment) -> None:
-    env.filters.update(money=money, number=number, signed=signed, pctl=percentile, ago=ago)
+    env.filters.update(money=money, number=number, up=up, signed=signed, pctl=percentile, ago=ago)
     env.globals.update(url=url, rating_settings=rating_settings, DASH=DASH)
 
 

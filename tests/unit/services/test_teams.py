@@ -1,14 +1,20 @@
 """Team views: rosters, league table, matchup, Replace (SPEC §7.2-7.4)."""
 
 from dataclasses import replace
+from itertools import pairwise
+from typing import Any
 
 import pytest
 
-from fha.domain.engine import DEFAULT_CONFIG
+from fha.domain.engine import DEFAULT_CONFIG, EngineConfig
 from fha.domain.models import Category
+from fha.domain.standings import EMPTY
 from fha.services.league_sheet import RosteredSalary, TabReport
-from fha.services.league_view import LeagueView, Salaries, build_view
+from fha.services.league_view import LeagueView, Salaries, Season, build_view
+from fha.services.players_table import QueryError
 from fha.services.teams import (
+    LeagueQuery,
+    LeagueSort,
     discrepancy_flags,
     free_agents_by_need,
     league_table,
@@ -18,6 +24,7 @@ from fha.services.teams import (
     summarize,
 )
 from fha.sources.league_sheet.models import ParsedTab
+from fha.sources.yahoo.demo import demo_snapshot
 from fha.sources.yahoo.models import LeagueSnapshot, Player, Scoreboard
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.yahoo.fake_league import LK
@@ -63,24 +70,6 @@ def test_over_the_cap_and_an_unbound_team(snap: LeagueSnapshot) -> None:
     assert summarize(view, mine).over_cap
     unbound = summarize(view, theirs)
     assert (unbound.payroll, unbound.cap_room, unbound.over_cap) == (None, None, False)
-
-
-def test_the_league_table_puts_my_team_first_and_flags_discrepancies(
-    snap: LeagueSnapshot,
-) -> None:
-    table = league_table(view_of(snap), discrepancies={THEIRS: True})
-    assert [s.team.team_key for s in table] == [MINE, THEIRS]
-    assert [s.has_discrepancies for s in table] == [False, True]
-
-
-async def test_the_league_table_orders_other_teams_by_ttltst_unrated_last() -> None:
-    snap = await synthetic_snapshot()
-    no_mine = replace(snap, teams=tuple(replace(t, is_mine=False) for t in snap.teams))
-    table = league_table(view_of(no_mine))
-    ttl = [s.profile.ttltst for s in table]
-    rated = [t for t in ttl if t is not None]
-    assert rated == sorted(rated, reverse=True)
-    assert ttl[: len(rated)] == rated
 
 
 def test_this_weeks_and_next_weeks_matchup(snap: LeagueSnapshot) -> None:
@@ -354,14 +343,200 @@ def test_exactly_no_room_is_not_over_the_cap(snap: LeagueSnapshot) -> None:
     assert (summary.cap_room, summary.over_cap) == (0, False)
 
 
-async def test_the_league_table_puts_a_team_with_no_rated_player_last() -> None:
-    snap = await synthetic_snapshot()
-    goalies_only = tuple(
-        replace(t, is_mine=False, roster=tuple(e for e in t.roster if e.player.is_goalie))
+# ---------------------------------------------------------------- league table (standings)
+
+
+def demo_view(
+    season: Season, config: EngineConfig = DEFAULT_CONFIG, **salaries: object
+) -> LeagueView:
+    snap = demo_snapshot()
+    return build_view(snap, config, Salaries(**salaries), season=season)  # type: ignore[arg-type]
+
+
+def test_the_league_table_flags_discrepancies_and_does_not_pin_my_team(
+    snap: LeagueSnapshot,
+) -> None:
+    table = league_table(view_of(snap), discrepancies={THEIRS: True})
+    flags = {r.team.team_key: r.summary.has_discrepancies for r in table.rows}
+    assert flags == {MINE: False, THEIRS: True}
+    # Roto: THEIRS leads every category it differs in, so it is first, mine second.
+    assert [r.team.team_key for r in table.rows] == [THEIRS, MINE]
+    assert table.mine is not None
+    assert table.mine.team.team_key == MINE
+
+
+def test_without_my_team_there_is_no_mine(snap: LeagueSnapshot) -> None:
+    no_mine = replace(snap, teams=tuple(replace(t, is_mine=False) for t in snap.teams))
+    assert league_table(view_of(no_mine)).mine is None
+
+
+# Each sort's value, read off the row directly (not through the code under test).
+LEAGUE_COLUMN: dict[LeagueSort | Category, Any] = {
+    LeagueSort.TEAM: lambda r: r.team.name.casefold(),
+    LeagueSort.ROTO: lambda r: r.standing.roto,
+    LeagueSort.TTLTST: lambda r: r.summary.profile.ttltst,
+    LeagueSort.PAYROLL: lambda r: r.summary.payroll,
+    LeagueSort.ROOM: lambda r: r.summary.cap_room,
+    **{c: (lambda r, c=c: r.summary.profile.mean_norm[c]) for c in Category},
+}
+
+
+@pytest.mark.parametrize("descending", [True, False])
+@pytest.mark.parametrize("key", list(LEAGUE_COLUMN))
+def test_every_league_column_sorts_both_ways_with_blanks_last(
+    key: LeagueSort | Category, descending: bool
+) -> None:
+    snap = demo_snapshot()
+    keys = [t.team_key for t in snap.teams]
+    payrolls = {k: 80_000_000 + i * 1_000_000 for i, k in enumerate(keys[:5])}  # 3 unknown
+    view = demo_view(Season.LAST, payrolls=payrolls, cap=84_000_000)
+    rows = league_table(view, LeagueQuery(key, descending)).rows
+    values = [LEAGUE_COLUMN[key](r) for r in rows]
+    known = [v for v in values if v is not None]
+    assert values[: len(known)] == sorted(known, reverse=descending)
+    assert all(v is None for v in values[len(known) :])
+    for a, b in pairwise(rows):  # ties (and blanks) by team name
+        if LEAGUE_COLUMN[key](a) == LEAGUE_COLUMN[key](b):
+            assert a.team.name < b.team.name
+    if key in (LeagueSort.PAYROLL, LeagueSort.ROOM):
+        assert len(known) == 5
+
+
+def test_league_params_parse_with_defaults() -> None:
+    assert LeagueQuery.from_params({}) == LeagueQuery(LeagueSort.ROTO, True)
+    assert LeagueQuery.from_params({"sort": "team"}) == LeagueQuery(LeagueSort.TEAM, False)
+    assert LeagueQuery.from_params({"sort": "HIT"}) == LeagueQuery(Category.HIT, True)
+    assert LeagueQuery.from_params({"sort": "room", "dir": "asc"}) == LeagueQuery(
+        LeagueSort.ROOM, False
+    )
+    assert LeagueQuery.from_params({"sort": " ", "dir": ""}) == LeagueQuery()
+
+
+@pytest.mark.parametrize(
+    ("params", "message"),
+    [
+        ({"sort": "points"}, "unknown sort 'points'"),
+        ({"sort": "x" * 13}, "unknown sort 'xxxxxxxxxxxx…'"),
+        ({"dir": "up"}, "dir must be asc or desc, got 'up'"),
+        ({"dir": "y" * 13}, "unknown dir 'yyyyyyyyyyyy…'"),
+    ],
+)
+def test_bad_league_params_are_refused(params: dict[str, str], message: str) -> None:
+    with pytest.raises(QueryError) as e:
+        LeagueQuery.from_params(params)
+    assert str(e.value) == message
+
+
+def test_a_category_outside_the_league_config_is_refused() -> None:
+    config = replace(DEFAULT_CONFIG, categories=(Category.G, Category.A))
+    view = demo_view(Season.LAST, config)
+    with pytest.raises(QueryError, match="HIT isn't one of this league's categories"):
+        league_table(view, LeagueQuery(Category.HIT))
+    table = league_table(view, LeagueQuery(Category.G))
+    assert table.categories == (Category.G, Category.A)
+    assert all(list(r.standing.categories) == [Category.G, Category.A] for r in table.rows)
+
+
+def pctl_by_hand(view: LeagueView, value: float) -> float:
+    """The players' scale, counted off the rows: 1 + rated skaters above, over the
+    skaters with GP > 0 (rated or not)."""
+    skaters = [r for r in view.rows if not r.is_goalie]
+    above = sum(1 for r in skaters if r.ttltst is not None and r.ttltst > value)
+    pool = sum(1 for r in skaters if r.gp > 0)
+    return (1 - (1 + above) / pool) * 100
+
+
+@pytest.mark.parametrize("season", [Season.LAST, Season.CURRENT])
+def test_the_standings_use_the_season_shown(season: Season) -> None:
+    """Ranks, Pctl, roto points and per-82 gaps from that season's ratings, pool and
+    divisors (the demo's team order and divisors differ between the seasons)."""
+    view = demo_view(season)
+    rows = league_table(view, LeagueQuery(LeagueSort.TTLTST)).rows
+    ttl = [r.summary.profile.ttltst for r in rows]
+    assert [r.standing.ttltst.rank for r in rows] == list(range(1, len(rows) + 1))
+    assert ttl == sorted(ttl, reverse=True)  # type: ignore[type-var]
+    for r in rows:
+        assert r.standing.ttltst.value == r.summary.profile.ttltst
+        assert r.standing.ttltst.pctl == pytest.approx(pctl_by_hand(view, r.standing.ttltst.value))
+        g = r.standing.categories[Category.G]
+        if g.gap is not None:
+            assert g.gap_per82 == pytest.approx(g.gap * view.result.divisors[Category.G])
+    n = len(rows)
+    for cat in view.config.categories:
+        assert sum(r.standing.categories[cat].points or 0 for r in rows) == n * (n + 1) / 2
+
+
+def test_the_demo_seasons_differ_so_the_wiring_test_can_tell_them_apart() -> None:
+    last, current = demo_view(Season.LAST), demo_view(Season.CURRENT)
+    order = [
+        [r.team.team_key for r in league_table(v, LeagueQuery(LeagueSort.TTLTST)).rows]
+        for v in (last, current)
+    ]
+    assert order[0] != order[1]
+    assert last.result.divisors[Category.G] != current.result.divisors[Category.G]
+
+
+def test_the_pctl_pool_counts_unrated_skaters_with_games_not_goalies_or_zero_gp() -> None:
+    view = demo_view(Season.LAST, replace(DEFAULT_CONFIG, gp_floor_fraction=0.3))  # floor 24.6 GP
+    skaters = [r for r in view.rows if not r.is_goalie]
+    assert any(r.gp > 0 and r.ttltst is None for r in skaters)  # below the floor
+    assert any(r.gp == 0 for r in skaters)
+    assert any(r.is_goalie for r in view.rows)
+    for r in league_table(view).rows:
+        value = r.standing.ttltst.value
+        assert value is not None
+        assert r.standing.ttltst.pctl == pytest.approx(pctl_by_hand(view, value))
+
+
+@pytest.mark.parametrize("case", ["no games", "nobody eligible"])
+def test_a_season_with_nobody_rated_has_no_standings_and_no_error(case: str) -> None:
+    snap = demo_snapshot()
+    config = DEFAULT_CONFIG
+    if case == "no games":
+        zero = {k: replace(v, values={**v.values, "0": "0"}) for k, v in snap.stats.items()}
+        snap = replace(snap, stats=zero)
+    else:
+        config = replace(DEFAULT_CONFIG, gp_floor_fraction=1.0)  # nobody above the max GP
+    view = build_view(snap, config, Salaries(), season=Season.CURRENT)
+    table = league_table(view)
+    assert len(table.rows) == len(snap.teams)
+    for r in table.rows:
+        assert r.standing.roto is None
+        assert r.standing.ttltst == EMPTY
+        assert all(c == EMPTY for c in r.standing.categories.values())
+    assert [r.team.name for r in table.rows] == sorted(r.team.name for r in table.rows)
+
+
+def test_the_teams_a_gap_is_to_are_named_in_order() -> None:
+    view = demo_view(Season.LAST)
+    table = league_table(view)
+    last = table.rows[-1]
+    cell = last.standing.categories[Category.G]
+    assert cell.above
+    assert table.above(cell) == ", ".join(sorted(table.names[k] for k in cell.above))
+    assert table.names == {t.team_key: t.name for t in view.teams}
+
+
+@pytest.mark.parametrize("descending", [True, False])
+@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.ROTO])
+def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
+    snap: LeagueSnapshot, key: LeagueSort | Category, descending: bool
+) -> None:
+    """Mine has only a goalie left (no value); theirs is rated with a HIT mean of exactly
+    0 (the synthetic league has no hits). Treating no value as 0 would tie them, and
+    "Name 1" (mine) would sort first by name."""
+    teams = tuple(
+        replace(t, roster=tuple(e for e in t.roster if e.player.is_goalie))
         if t.team_key == MINE
-        else replace(t, is_mine=False)
+        else t
         for t in snap.teams
     )
-    table = league_table(view_of(replace(snap, teams=goalies_only)))
-    assert [s.team.team_key for s in table] == [THEIRS, MINE]
-    assert table[1].profile.ttltst is None
+    view = view_of(replace(snap, teams=teams))
+    rows = league_table(view, LeagueQuery(key, descending)).rows
+    assert [r.team.team_key for r in rows] == [THEIRS, MINE]
+    theirs, mine = rows
+    assert theirs.standing.categories[Category.HIT].value == 0.0
+    assert mine.standing.categories[Category.HIT].value is None
+    assert mine.standing.ttltst.value is None
+    assert mine.standing.roto is None
+    assert theirs.standing.roto == len(view.config.categories)  # alone: 1 point each

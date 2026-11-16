@@ -8,9 +8,9 @@ is unknown, and the filters that use them exclude those rows and count them.
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 
 from fha.domain.cap import CapHit, cap_room, fits, room_after, swap_ok
 from fha.domain.models import Category
@@ -24,8 +24,10 @@ from fha.domain.profiles import (
     need_score,
     team_profile,
 )
+from fha.domain.standings import Cell, TeamStanding, standings
 from fha.services.league_sheet import TabReport
 from fha.services.league_view import LeagueView, PlayerRow, TeamInfo
+from fha.services.players_table import QueryError, _comparable
 
 POSITIONS = frozenset({"C", "LW", "RW", "D", "G"})  # real positions, not BN / Util / IR
 
@@ -68,22 +70,111 @@ def summarize(
     )
 
 
+class LeagueSort(StrEnum):
+    TEAM = "team"
+    ROTO = "roto"
+    TTLTST = "ttltst"
+    PAYROLL = "payroll"
+    ROOM = "room"
+
+
+@dataclass(frozen=True)
+class LeagueQuery:
+    """The League table's sort (SPEC §7.3): a column, or a category; best first by
+    default (the team name A to Z)."""
+
+    sort: LeagueSort | Category = LeagueSort.ROTO
+    descending: bool = True
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, str]) -> LeagueQuery:
+        """From query-string values; blank means the default. Unknown values are refused."""
+        sort_text = (params.get("sort") or "").strip() or LeagueSort.ROTO.value
+        direction = (params.get("dir") or "").strip() or None
+        for name, value in (("sort", sort_text), ("dir", direction or "")):
+            if len(value) > 12:  # the 400 page quotes ≤ 12 chars
+                raise QueryError(f"unknown {name} {value[:12] + '…'!r}")
+        sort: LeagueSort | Category
+        if sort_text in {c.value for c in Category}:
+            sort = Category(sort_text)
+        elif sort_text in {k.value for k in LeagueSort}:
+            sort = LeagueSort(sort_text)
+        else:
+            raise QueryError(f"unknown sort {sort_text!r}")
+        if direction not in (None, "asc", "desc"):
+            raise QueryError(f"dir must be asc or desc, got {direction!r}")
+        descending = direction == "desc" if direction else sort is not LeagueSort.TEAM
+        return cls(sort, descending)
+
+
+@dataclass(frozen=True)
+class LeagueRow:
+    summary: TeamSummary
+    standing: TeamStanding
+
+    @property
+    def team(self) -> TeamInfo:
+        return self.summary.team
+
+
+@dataclass(frozen=True)
+class LeagueTable:
+    rows: tuple[LeagueRow, ...]
+    categories: tuple[Category, ...]
+    names: Mapping[str, str]  # team_key -> name
+
+    @property
+    def mine(self) -> LeagueRow | None:
+        return next((r for r in self.rows if r.team.is_mine), None)
+
+    def above(self, cell: Cell) -> str:
+        """The teams a gap is to, by name."""
+        return ", ".join(sorted(self.names[k] for k in cell.above))
+
+
 def league_table(
     view: LeagueView,
+    query: LeagueQuery | None = None,
     *,
     config: ProfileConfig = DEFAULT_PROFILE_CONFIG,
     discrepancies: Mapping[str, bool] | None = None,
-) -> list[TeamSummary]:
-    """One row per team (SPEC §7.3), the owner's first, then by team TTLTST (unrated last)."""
-    rows = [summarize(view, t, config=config, discrepancies=discrepancies) for t in view.teams]
-    return sorted(
-        rows,
-        key=lambda s: (
-            not s.team.is_mine,
-            -s.profile.ttltst if s.profile.ttltst is not None else math.inf,
-            s.team.name,
-        ),
+) -> LeagueTable:
+    """One row per team with its standing (SPEC §7.3), sorted by ``query`` (default:
+    roto, best first); teams with no value in the sort column last, ties by name.
+    The owner's team is not pinned: the order reads as standings."""
+    query = query or LeagueQuery()
+    categories = view.config.categories
+    if isinstance(query.sort, Category) and query.sort not in categories:
+        raise QueryError(f"{query.sort.value} isn't one of this league's categories")
+    summaries = [summarize(view, t, config=config, discrepancies=discrepancies) for t in view.teams]
+    table = standings(
+        {s.team.team_key: s.profile for s in summaries},
+        list(view.result.ratings.values()),
+        view.result.pool_size,
+        view.result.divisors,
     )
+    rows = [LeagueRow(s, table[s.team.team_key]) for s in summaries]
+    key = _league_sort_value(query.sort)
+    present = [r for r in rows if key(r) is not None]
+    missing = sorted((r for r in rows if key(r) is None), key=lambda r: r.team.name)
+    present.sort(key=lambda r: r.team.name)
+    present.sort(key=lambda r: _comparable(key(r)), reverse=query.descending)
+    return LeagueTable(
+        tuple([*present, *missing]), categories, {t.team_key: t.name for t in view.teams}
+    )
+
+
+def _league_sort_value(sort: LeagueSort | Category) -> Callable[[LeagueRow], object | None]:
+    if isinstance(sort, Category):
+        return lambda r: r.standing.categories[sort].value
+    by: dict[LeagueSort, Callable[[LeagueRow], object | None]] = {
+        LeagueSort.TEAM: lambda r: r.team.name,
+        LeagueSort.ROTO: lambda r: r.standing.roto,
+        LeagueSort.TTLTST: lambda r: r.standing.ttltst.value,
+        LeagueSort.PAYROLL: lambda r: r.summary.payroll,
+        LeagueSort.ROOM: lambda r: r.summary.cap_room,
+    }
+    return by[sort]
 
 
 # ---------------------------------------------------------------- matchup

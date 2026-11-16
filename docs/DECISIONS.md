@@ -2623,3 +2623,62 @@ other than "killed" as a survivor is a separate task.
 
 Checked at 390 px (headless Chrome in a 390 px frame): the box, Search, Clear
 and a 40-character no-match line fit and wrap.
+
+## 2026-11-16 — League: standings (ranks, Pctl, roto, gaps, heat)
+
+**What.** The League table becomes standings (plan: `docs/plans/league-standings.md`,
+PR #26). `domain/standings.py` computes, from the team profiles, each team's
+rank, Pctl on the players' scale, roto points, and gap to tie the next team up
+(per 82 for a category). It covers each category and TTLTST, and gives each cell
+a heat band (SPEC §5, "League standings"). The screen:
+- sorts by any column, Roto best first by default;
+- shades category cells by rank, with the #rank always printed;
+- opens a native `<details>` per team with every column's numbers and the
+  Roster link;
+- lists "My gaps" above the table.
+
+**Owner's choices (2026-11-16).** Rank and Pctl for each category and overall,
+sort by any column, heat shading, roto points, and the gap to the team above.
+Then the plan's four open questions, all confirmed as recommended:
+1. Heat follows the team's **rank**, not Pctl. This reverses the owner's first
+   pick: team means bunch high on the players' Pctl scale, so Pctl shading made
+   most cells alike. The Pctl stays, in the cell's title and the details.
+2. The owner's row is **not pinned**: the order reads as standings. It is bold
+   with a "you" marker.
+3. **Roto** is the default sort.
+4. Category gaps are in **per-82 units** (the gap times the category's
+   divisor), with the norm gap in the details.
+
+**Scope.** These are information views, not recommendations: nothing ranks
+moves, players or trades (SPEC §1 keeps waiver and trade recommendations out
+of Phase 1). My gaps lists every category in category order and does not sort
+by size, since the units differ.
+
+**Details.**
+- A gap is "to tie": tied teams both gap to the next distinct value, all the
+  teams at that value are named, and gaps round up on screen (`format.up`), so
+  a positive gap never shows as 0.
+- A team value's Pctl uses the engine's formula for a player, so a team valued
+  exactly as a player gets that player's percentile (property-tested). It is
+  clamped at 0, since a float mean can land an ulp under its smallest member.
+- The categories come from the profiles (the engine's config, which the
+  stored rating settings can narrow), never a fixed 7. A sort by a category
+  outside them is a 400 (Codex, PR #26).
+- A season with nobody rated (no games, or nobody above the GP floor) shows
+  every cell as "—", sorted by name, with no error.
+- The two-season wiring test uses the demo league. Its team order differs
+  between seasons, though it doesn't fully reverse as the plan suggested, and
+  its divisors differ. Either is enough to catch the wrong season's ratings.
+
+**Alternatives.**
+- **Heat by Pctl.** Rejected (above).
+- **A Pctl column per category.** Rejected: too wide at 390 px. It is in the
+  details and the cell's title.
+- **A tap-to-expand row with a script.** Rejected: the CSP forbids inline
+  handlers, and a native `<details>` needs none.
+
+**mutmut** (`fha.domain.standings*`): 181 killed, 1 equivalent:
+`roto=None` for `roto=False` in the TTLTST column, both falsy.
+
+Checked at 390 px (headless Chrome, a 390 px frame): both views, an open team
+detail, and the category columns scrolled with the Team column fixed.

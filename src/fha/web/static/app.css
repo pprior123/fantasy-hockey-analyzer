@@ -114,3 +114,20 @@ dl.norms dd { margin: 0; font-variant-numeric: tabular-nums; }
 .data td.sd, .data th.sd { color: var(--muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .legend { padding: 0 .3em; }
+
+/* League standings: heat by the team's rank in the column (0 best .. 4 worst), with the
+   rank always printed too; dark text on every shade. */
+table.data td.heat-0 { background: #c9ecd2; }
+table.data td.heat-1 { background: #e4f4e8; }
+table.data td.heat-2 { background: #f6f8fa; }
+table.data td.heat-3 { background: #fbe4e2; }
+table.data td.heat-4 { background: #f6c9c4; }
+table.data small.rank { display: block; font-size: .7rem; color: #4a535c; font-weight: 400; }
+table.data .you { font-size: .7rem; font-weight: 400; color: var(--muted); }
+table.data.league details[open] { white-space: normal; min-width: 14rem; }
+dl.ranks { margin: .3rem 0 0; font-size: .8rem; font-weight: 400; }
+dl.ranks div { display: flex; gap: .3rem; }
+dl.ranks dt { color: var(--muted); min-width: 3.2rem; }
+dl.ranks dd { margin: 0; }
+.my-gaps h2 { font-size: 1rem; margin: .5rem 0 .2rem; }
+.my-gaps ul { margin: 0 0 .5rem; padding-left: 1.1rem; font-size: .85rem; }

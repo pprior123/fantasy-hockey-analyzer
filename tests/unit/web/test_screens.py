@@ -4,7 +4,7 @@ import asyncio
 import re
 from dataclasses import replace
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
@@ -12,12 +12,14 @@ from fastapi.testclient import TestClient
 
 from fha.domain.engine import DEFAULT_CONFIG
 from fha.domain.matcher import NO_ALIASES
+from fha.domain.models import Category
 from fha.domain.names import name_matches
 from fha.services.free_agents import import_free_agent_salaries
 from fha.services.league_sheet import bind_tab, read_league_sheet
 from fha.services.league_view import LeagueView, Salaries, Season, build_view
 from fha.services.players_table import PlayersQuery, select
 from fha.services.refresh import RefreshService
+from fha.services.teams import LeagueQuery, LeagueTable, league_table
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
 from fha.sources.puckpedia import SalaryRow
@@ -26,7 +28,7 @@ from fha.sources.yahoo.fake import FakeYahooSource
 from fha.sources.yahoo.models import LeagueSnapshot, Matchup, Scoreboard
 from fha.storage.memory import InMemoryRepository
 from fha.web.context import Services
-from fha.web.format import money, number, percentile, rating_settings, signed, url
+from fha.web.format import money, number, percentile, rating_settings, signed, up, url
 from tests.unit.league_sheet import sheets as s
 from tests.unit.web.helpers import FakeClock, logged_in, make_app, make_services
 
@@ -132,6 +134,14 @@ def test_numbers_and_urls() -> None:
     assert (number(1.005), number(-0.001), number(float("nan"))) == ("1.01", "0.00", "—")
     assert (signed(None), signed(0.5), signed(-0.25, 1)) == ("—", "+0.50", "-0.3")
     assert (signed(0.0), signed(-0.001), signed(float("inf"))) == ("+0.00", "-0.00", "—")
+    # Gaps round up, so a positive gap never shows as 0; float noise doesn't add a step.
+    assert (up(None), up(float("nan")), up(0.0), up(2.0, 1)) == ("—", "—", "0.00", "2.0")
+    assert (up(1e-12), up(2.001, 1), up(0.1 + 0.2), up(0.7 - 0.4)) == (
+        "0.01",
+        "2.1",
+        "0.30",
+        "0.30",
+    )
     assert (percentile(None), percentile(87.4), percentile(86.5)) == ("—", "87", "87")
     assert url("/p", {"a": "1", "b": ""}, c="2", a=None) == "/p?c=2"
     assert url("/p", {}) == "/p"
@@ -845,11 +855,12 @@ def test_the_categories_toggle_on_rosters_replace_and_league(path: str) -> None:
     assert ">Categories</a>" in money_view
     assert 'class="chip on"' in cats.split('aria-label="Columns"', 1)[1].split("</nav>", 1)[0]
     salary = ("AAV", "Room after") if "replace" in path else ("Payroll", "AAV")
-    assert any(f">{h}</th>" in table(money_view) for h in salary)
-    assert not any(f">{h}</th>" in table(cats) for h in ("AAV", "Payroll", "Room after", "Room"))
+    th = lambda h: rf">{h}(</a>)?\s*</th>"  # noqa: E731 - League's headers sort
+    assert any(re.search(th(h), table(money_view)) for h in salary)
+    assert not any(re.search(th(h), table(cats)) for h in ("AAV", "Payroll", "Room after", "Room"))
     for cat in ("PPP", "HIT", "BLK"):
         assert cat in table(cats)
-        assert f">{cat}</th>" not in table(money_view)
+        assert not re.search(th(cat), table(money_view))
 
 
 def test_links_keep_the_season_and_view() -> None:
@@ -1016,12 +1027,167 @@ def test_without_my_tab_replace_says_the_room_is_unavailable() -> None:
 # ---------------------------------------------------------------- league
 
 
-def test_league_has_a_row_per_team_linking_to_rosters() -> None:
-    html = client().get("/league").text
+def league_rows(html: str) -> list[str]:
+    """Each team row's HTML, in order."""
+    body = html.split('class="data league"', 1)[1].split("</tbody>", 1)[0]
+    return re.findall(r"<tr class=\"[^\"]*\">.*?</tr>", body, flags=re.S)
+
+
+def team_of(row: str) -> str:
+    found = re.search(r"<summary>(.*?)(?: <span class=\"you\">you</span>)?</summary>", row, re.S)
+    assert found
+    return found[1]
+
+
+def demo_table(query: LeagueQuery | None = None) -> LeagueTable:
+    """The service's table for the demo's default season (last)."""
+    return league_table(build_view_for_test(), query)
+
+
+def test_league_has_a_row_per_team_with_a_roster_link_in_its_details() -> None:
+    html = client().get("/league?view=cats&season=last").text
+    rows = league_rows(html)
+    assert len(rows) == len(SNAP.teams)
     for team in SNAP.teams:
-        assert f'team={team.team_key}">{team.name}</a>' in html
-    assert html.count('href="/rosters?team=') == len(SNAP.teams)
+        (row,) = [r for r in rows if team_of(r) == team.name]
+        link = f'href="/rosters?season=last&amp;view=cats&amp;team={team.team_key}">Roster →</a>'
+        assert link in row.split("<details>", 1)[1].split("</details>", 1)[0]
+    assert html.count("Roster →</a>") == len(SNAP.teams)
     assert "Profiles compare rates" in html
+    assert "a guide, not the league's standings" in html
+
+
+def test_league_is_in_roto_order_by_default_and_my_team_is_not_pinned() -> None:
+    html = client().get("/league").text
+    expected = demo_table().rows
+    assert [team_of(r) for r in league_rows(html)] == [r.team.name for r in expected]
+    roto = [r.standing.roto for r in expected]
+    assert roto == sorted(roto, reverse=True)  # type: ignore[type-var]
+    mine = [i for i, r in enumerate(expected) if r.team.is_mine]
+    assert mine != [0]  # the demo's own team is not first in roto: so no pinning shows
+    row = league_rows(html)[mine[0]]
+    assert row.startswith('<tr class="mine">')
+    assert '<span class="you">you</span>' in row
+
+
+@pytest.mark.parametrize(
+    ("key", "label"), [("team", "Team"), ("roto", "Roto"), ("ttltst", "TTLTST"), ("G", "G")]
+)
+def test_league_headers_sort_and_carry_the_view_and_season(key: str, label: str) -> None:
+    c = client()
+    html = c.get("/league?view=cats&season=last").text
+    head = html.split('class="data league"', 1)[1].split("</thead>", 1)[0]
+    found = re.search(rf'<a href="([^"]*)">{label}( [▼▲])?</a>', head)
+    assert found
+    link = found[1].replace("&amp;", "&")
+    assert "view=cats" in link
+    assert "season=last" in link
+    assert f"sort={key}" in link
+    sorted_html = c.get(link).text
+    query = LeagueQuery.from_params(dict(parse_qsl(urlsplit(link).query)))
+    assert query.sort.value == key
+    expected = [r.team.name for r in demo_table(query).rows]
+    assert [team_of(r) for r in league_rows(sorted_html)] == expected
+    flip = re.search(rf'<th class="[^"]*sorted">\s*<a href="([^"]*)">{label} ', sorted_html)
+    assert flip
+    flipped = c.get(flip[1].replace("&amp;", "&")).text
+    reverse = LeagueQuery(query.sort, not query.descending)
+    assert [team_of(r) for r in league_rows(flipped)] == [
+        r.team.name for r in demo_table(reverse).rows
+    ]
+
+
+def test_league_payroll_and_room_sort() -> None:
+    svc = make_services()
+    seed(svc)  # only my tab is bound: one payroll known, the rest last
+    c = client(svc)
+    for key in ("payroll", "room"):
+        rows = league_rows(c.get(f"/league?sort={key}").text)
+        assert rows[0].startswith('<tr class="mine">')
+
+
+def test_league_category_cells_show_rank_heat_and_pctl() -> None:
+    html = client().get("/league?view=cats").text
+    table = demo_table()
+    rows = league_rows(html)
+    for r, row in zip(table.rows, rows, strict=True):
+        cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
+        g = r.standing.categories[Category.G]
+        g_cell = cells[2]  # Roto, TTLTST, then G
+        assert f'heat-{g.heat}"' in g_cell
+        assert f'title="Pctl {percentile(g.pctl)}"' in g_cell
+        assert f'{number(g.value)}<small class="rank">#{g.rank}</small>' in g_cell
+        assert f">{number(r.standing.roto, 1)}</td>" in cells[0]
+    heats = {
+        re.search(r"heat-(\d)", c)[1]  # type: ignore[index]
+        for row in rows
+        for c in re.findall(r'<td class="num heat-\d"', row)
+    }
+    assert heats == {"0", "1", "2", "3", "4"}  # 8 teams span every band
+
+
+def test_league_details_list_each_columns_rank_pctl_and_gap() -> None:
+    html = client().get("/league?view=cats").text
+    table = demo_table()
+    last = table.rows[-1]
+    row = league_rows(html)[-1]
+    details = row.split('<dl class="ranks">', 1)[1].split("</dl>", 1)[0]
+    g = last.standing.categories[Category.G]
+    assert g.gap is not None
+    line = (
+        f"<dt>G</dt><dd>{number(g.value)} · #{g.rank} · Pctl {percentile(g.pctl)} · "
+        f"{up(g.gap)} ({up(g.gap_per82, 1)} per 82) to tie {table.above(g)}</dd>"
+    )
+    assert line in details
+    first = league_rows(html)[0]
+    assert "to tie" not in first.split("<dt>TTLTST</dt>", 1)[1].split("</div>", 1)[0]
+
+
+def test_my_gaps_list_each_category_in_order() -> None:
+    html = client().get("/league").text
+    section = html.split('class="my-gaps"', 1)[1].split("</section>", 1)[0]
+    mine = demo_table().mine
+    assert mine is not None
+    items = re.findall(r"<li><b>(\w+)</b> (.*?)</li>", section, flags=re.S)
+    assert [cat for cat, _ in items] == [c.value for c in DEFAULT_CONFIG.categories]
+    for cat, text in items:
+        cell = mine.standing.categories[Category(cat)]
+        if cell.gap is None:
+            assert text == f"#{cell.rank}"
+        else:
+            above = demo_table().above(cell)
+            assert text == f"#{cell.rank} · {up(cell.gap_per82, 1)} per 82 to tie {above}"
+    assert any("to tie" in t for _, t in items)
+
+
+def test_no_my_gaps_without_my_team() -> None:
+    no_mine = replace(SNAP, teams=tuple(replace(t, is_mine=False) for t in SNAP.teams))
+    html = client(services_for(no_mine)).get("/league").text
+    assert "my-gaps" not in html
+    assert '<tr class="mine">' not in html
+
+
+def test_team_names_are_escaped_in_the_table_and_the_gaps() -> None:
+    odd = '<b>Bad & "Co"</b>'
+    teams = tuple(replace(t, name=odd) if i == 0 else t for i, t in enumerate(SNAP.teams))
+    html = client(services_for(replace(SNAP, teams=teams))).get("/league?view=cats").text
+    assert "<b>Bad" not in html
+    assert "&lt;b&gt;Bad &amp; &#34;Co&#34;&lt;/b&gt;" in html
+
+
+@pytest.mark.parametrize(
+    ("query", "quoted"),
+    [
+        ("sort=points", "&#39;points&#39;"),
+        ("sort=" + "x" * 13, "&#39;xxxxxxxxxxxx…&#39;"),
+        ("dir=up", "&#39;up&#39;"),
+    ],
+)
+def test_bad_league_sorts_are_a_400_page(query: str, quoted: str) -> None:
+    response = client().get(f"/league?{query}")
+    assert response.status_code == 400
+    assert quoted in response.text
+    assert "x" * 13 not in response.text
 
 
 def test_league_shows_my_payroll_once_bound() -> None:

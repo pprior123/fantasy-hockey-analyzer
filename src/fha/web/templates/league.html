@@ -7,26 +7,66 @@
   {{ m.refresh_button(here) }}
 </div>
 {{ m.rates_note() }}
+
+{# One column's numbers for a team: value, rank, Pctl, and the gap to tie the next team up. #}
+{% macro cell_line(table, label, cell, digits, per82) -%}
+<div><dt>{{ label }}</dt><dd>{{ cell.value|number(digits) }}{% if cell.rank %} · #{{ cell.rank }} · Pctl {{ cell.pctl|pctl }}{% if cell.gap is not none %} · {{ cell.gap|up(digits) }}{% if per82 %} ({{ cell.gap_per82|up(1) }} per 82){% endif %} to tie {{ table.above(cell) }}{% endif %}{% endif %}</dd></div>
+{%- endmacro %}
+
+{% set mine = table.mine %}
+{% if mine %}
+<section class="my-gaps">
+  <h2>My gaps</h2>
+  <ul>
+  {% for cat in categories %}{% set c = mine.standing.categories[cat] %}
+    <li><b>{{ cat.value }}</b> {% if c.rank %}#{{ c.rank }}{% if c.gap is not none %} · {{ c.gap_per82|up(1) }} per 82 to tie {{ table.above(c) }}{% endif %}{% else %}{{ DASH }}{% endif %}</li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 {{ m.view_toggle("/league", params, mode) }}
+
+{% macro header(key, label, first=False) -%}
+<th class="{{ 'first' if first else 'num' }}{{ ' sorted' if sort == key else '' }}">
+  <a href="{{ url('/league', params, sort=key, dir=('asc' if sort == key and query.descending else ('desc' if sort == key else None))) }}">{{ label }}{% if sort == key %} {{ '▼' if query.descending else '▲' }}{% endif %}</a>
+</th>
+{%- endmacro %}
+
 <div class="table-wrap">
 <table class="data league">
-  <thead><tr><th class="first">Team</th><th class="num">TTLTST</th>
-    {% if mode == 'money' %}<th class="num">Payroll</th><th class="num">Room</th>{% else %}{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}{% endif %}</tr></thead>
+  <thead><tr>
+    {{ header('team', 'Team', first=True) }}{{ header('roto', 'Roto') }}{{ header('ttltst', 'TTLTST') }}
+    {% if mode == 'money' %}{{ header('payroll', 'Payroll') }}{{ header('room', 'Room') }}{% else %}{% for cat in categories %}{{ header(cat.value, cat.value) }}{% endfor %}{% endif %}
+  </tr></thead>
   <tbody>
-  {% for s in table %}
-  <tr class="{{ 'mine' if s.team.is_mine else '' }}">
-    <td class="first"><a href="{{ url('/rosters', {'season': params.get('season', ''), 'view': params.get('view', '')}, team=s.team.team_key) }}">{{ s.team.name }}</a>{% if s.has_discrepancies %} <span class="badge">sheet</span>{% endif %}</td>
-    <td class="num">{{ s.profile.ttltst|number(3) }}</td>
+  {% for r in table.rows %}{% set st = r.standing %}
+  <tr class="{{ 'mine' if r.team.is_mine else '' }}">
+    <td class="first">
+      <details><summary>{{ r.team.name }}{% if r.team.is_mine %} <span class="you">you</span>{% endif %}</summary>
+        <a href="{{ url('/rosters', {'season': params.get('season', ''), 'view': params.get('view', '')}, team=r.team.team_key) }}">Roster →</a>
+        <dl class="ranks">
+          {{ cell_line(table, 'TTLTST', st.ttltst, 3, False) }}
+          {% for cat in categories %}{{ cell_line(table, cat.value, st.categories[cat], 2, True) }}{% endfor %}
+        </dl>
+      </details>
+      {% if r.summary.has_discrepancies %}<span class="badge">sheet</span>{% endif %}
+    </td>
+    <td class="num">{{ st.roto|number(1) }}</td>
+    <td class="num"{% if st.ttltst.pctl is not none %} title="Pctl {{ st.ttltst.pctl|pctl }}"{% endif %}>{{ st.ttltst.value|number(3) }}{% if st.ttltst.rank %}<small class="rank">#{{ st.ttltst.rank }}</small>{% endif %}</td>
     {% if mode == 'money' %}
-    <td class="num">{{ s.payroll|money }}</td>
-    <td class="num {{ 'over' if s.over_cap else '' }}">{{ s.cap_room|money }}</td>
+    <td class="num">{{ r.summary.payroll|money }}</td>
+    <td class="num {{ 'over' if r.summary.over_cap else '' }}">{{ r.summary.cap_room|money }}</td>
     {% else %}
-    {% for cat in categories %}<td class="num">{{ s.profile.mean_norm.get(cat)|number }}</td>{% endfor %}
+    {% for cat in categories %}{% set c = st.categories[cat] %}
+    <td class="num{% if c.heat is not none %} heat-{{ c.heat }}{% endif %}"{% if c.pctl is not none %} title="Pctl {{ c.pctl|pctl }}"{% endif %}>{{ c.value|number }}{% if c.rank %}<small class="rank">#{{ c.rank }}</small>{% endif %}</td>
+    {% endfor %}
     {% endif %}
   </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
+<p class="muted">Roto (rates): each category's team ranks as points (best = {{ table.rows|length }}), summed. From per-82 rates of each team's skaters outside IR: a guide, not the league's standings. Shading and #rank: each team's place in that column. Tap a team for its ranks, percentiles and gaps.</p>
 <p class="muted">Payroll and room show "{{ DASH }}" until the team's sheet tab is bound and recognized (Admin); room also needs the cap (the sheet's, or <code>SALARY_CAP</code>).</p>
 {% endblock %}

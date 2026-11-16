@@ -378,6 +378,24 @@ A team with no profile players has mean, std dev and TTLTST of None (shown
 "—"), and no category counts as trailing against or for it. With one player,
 std dev is 0.
 
+**League standings** (`domain/standings.py`), for each team and each column
+(the configured categories, and TTLTST), over the teams with a value:
+
+```
+rank(T, X)      = 1 + #teams whose value(X) > value(T, X)   # ties share the best
+pctl(T, X)      = (1 - (1 + #rated players whose X > value(T, X)) / pool_size) × 100
+                  # the players' scale (as for a player), never below 0
+points(T, cat)  = n - rank + 1 - (ties - 1) / 2   # n teams with a value: 1st = n
+roto(T)         = sum of points over the categories; None if any has no value
+gap(T, X)       = next distinct value above value(T, X), minus it   # "to tie"
+gap_per82(T, c) = gap(T, c) × divisor(c)   # the mean skater's per-82 rate
+heat(T, X)      = min(4, floor((rank - 1) × 5 / (n - 1)))   # 0 best; none if n = 1
+```
+
+value is `mean_norm` for a category, `team_ttltst` for TTLTST; a team with no
+value has none of these. Roto is from rates, a guide, not the league's
+standings; the screen says so.
+
 Goalies are shown with raw W / GAA / SV% only (no model; out of scope).
 These compare team *profiles* (rates), not projected weekly totals, which
 depend on games played that week (schedule weighting is out of scope). The
@@ -553,9 +571,15 @@ A season label and toggle per §5.
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:
      only swaps where `swap_ok` holds.
-3. **League** — one row per team: mean norm per category, mean TTLTST,
-   payroll and cap room (replaces the workbook's manager comparison,
-   `Table10`). Tap a team to open it in Rosters.
+3. **League** — one row per team: Roto (rates), mean TTLTST, and the mean norm
+   per category or payroll and cap room (replaces the workbook's manager
+   comparison, `Table10`). Each value shows its rank among the teams; category
+   cells are shaded by that rank (§5, "League standings"). Sorted by any
+   column, Roto best first by default; the owner's row is bold, not pinned.
+   Tap a team for its ranks, percentiles, gaps to tie the next team up, and a
+   link to it in Rosters. "My gaps" above the table lists the owner's rank and
+   per-82 gap in each category. These are information, not recommendations
+   (§1).
 4. **Matchup** — the owner's opponent for the current week and next week
    (week switch). Side-by-side team profiles per category with the
    difference; trailing categories (§5) highlighted. Goalies raw. A "Free

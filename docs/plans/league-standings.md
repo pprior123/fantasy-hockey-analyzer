@@ -1,6 +1,6 @@
 # Plan: League screen ranks, percentiles, roto points, gaps
 
-Status: draft, 2026-11-16. Owner chose the features (2026-11-16): rank AND
+Status: implemented, 2026-11-16 (PR #26). Owner chose the features (2026-11-16): rank AND
 percentile for each of the 7 categories and overall, sort by any column, heat
 shading, roto points, and the gap to the team above. On 2026-11-16 the owner
 confirmed all four §5 recommendations: heat shading by team rank (not Pctl,

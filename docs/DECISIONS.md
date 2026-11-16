@@ -2626,6 +2626,9 @@ and a 40-character no-match line fit and wrap.
 
 ## 2026-11-16 — League: standings (ranks, Pctl, roto, gaps, heat)
 
+*Superseded in part the same day: Roto was removed in favour of the Pctl of
+each team's average TTLTST. See "League: Pctl instead of Roto" below.*
+
 **What.** The League table becomes standings (plan: `docs/plans/league-standings.md`,
 PR #26). `domain/standings.py` computes, from the team profiles, each team's
 rank, Pctl on the players' scale, roto points, and gap to tie the next team up
@@ -2682,3 +2685,33 @@ by size, since the units differ.
 
 Checked at 390 px (headless Chrome, a 390 px frame): both views, an open team
 detail, and the category columns scrolled with the Team column fixed.
+
+## 2026-11-16 — League: Pctl instead of Roto
+
+**What.** League drops Roto (column, sort, note, and the domain's points and
+total). A visible **Pctl** column follows TTLTST: the Pctl of the team's
+average TTLTST on the Players scale, which the standings already computed. It
+is the default sort, best first. Category cells, team details and My gaps are
+unchanged. `sort=roto` is now an unknown sort (a 400). Plan:
+`docs/plans/league-pctl.md`, PR #27.
+
+**Why.** The owner tried the standings: "I don't really understand the roto
+ranking … I'd prefer the existing percentile method that converts avg ttltst to
+percentile value, so I can see that my average is 90th percentile or
+something". They chose the scope "overall only", and the Pctl of the average
+over the mean of the players' own Pctls. On the demo, that mean runs 5 to 10
+points lower, and it can order teams differently from TTLTST.
+
+**Details.** Pctl is a step function of TTLTST (`1 + #players above`). Two teams
+whose averages have no player's TTLTST between them share one Pctl: last
+season, the demo's Teams 1 (0.7807) and 3 (0.7805) both show 79.8. The sort
+breaks Pctl ties by TTLTST, then by name, so the Pctl order is exactly TTLTST's
+(Codex, plan review: High).
+
+**Alternatives.**
+- **Keep Roto, explained better** (points per category, "46 / 56").
+  Offered; the owner preferred the Pctl.
+- **The mean of the players' Pctls.** Rejected by the owner (above).
+
+**mutmut** (`fha.domain.standings*`): 150 killed, none survived. The equivalent
+`roto` flag mutant went with the flag.

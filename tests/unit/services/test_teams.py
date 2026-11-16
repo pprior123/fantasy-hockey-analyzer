@@ -25,7 +25,7 @@ from fha.services.teams import (
 )
 from fha.sources.league_sheet.models import ParsedTab
 from fha.sources.yahoo.demo import demo_snapshot
-from fha.sources.yahoo.models import LeagueSnapshot, Player, Scoreboard
+from fha.sources.yahoo.models import LeagueSnapshot, Player, RosterEntry, Scoreboard
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.yahoo.fake_league import LK
 
@@ -359,7 +359,7 @@ def test_the_league_table_flags_discrepancies_and_does_not_pin_my_team(
     table = league_table(view_of(snap), discrepancies={THEIRS: True})
     flags = {r.team.team_key: r.summary.has_discrepancies for r in table.rows}
     assert flags == {MINE: False, THEIRS: True}
-    # Roto: THEIRS leads every category it differs in, so it is first, mine second.
+    # By Pctl (the default): THEIRS's average TTLTST is higher, so it is first.
     assert [r.team.team_key for r in table.rows] == [THEIRS, MINE]
     assert table.mine is not None
     assert table.mine.team.team_key == MINE
@@ -373,8 +373,8 @@ def test_without_my_team_there_is_no_mine(snap: LeagueSnapshot) -> None:
 # Each sort's value, read off the row directly (not through the code under test).
 LEAGUE_COLUMN: dict[LeagueSort | Category, Any] = {
     LeagueSort.TEAM: lambda r: r.team.name.casefold(),
-    LeagueSort.ROTO: lambda r: r.standing.roto,
     LeagueSort.TTLTST: lambda r: r.summary.profile.ttltst,
+    LeagueSort.PCTL: lambda r: r.standing.ttltst.pctl,
     LeagueSort.PAYROLL: lambda r: r.summary.payroll,
     LeagueSort.ROOM: lambda r: r.summary.cap_room,
     **{c: (lambda r, c=c: r.summary.profile.mean_norm[c]) for c in Category},
@@ -395,15 +395,22 @@ def test_every_league_column_sorts_both_ways_with_blanks_last(
     known = [v for v in values if v is not None]
     assert values[: len(known)] == sorted(known, reverse=descending)
     assert all(v is None for v in values[len(known) :])
-    for a, b in pairwise(rows):  # ties (and blanks) by team name
+    for a, b in pairwise(rows):  # ties (and blanks) by team name; Pctl ties by TTLTST first
         if LEAGUE_COLUMN[key](a) == LEAGUE_COLUMN[key](b):
-            assert a.team.name < b.team.name
+            ttl_a, ttl_b = a.summary.profile.ttltst, b.summary.profile.ttltst
+            if key is LeagueSort.PCTL and ttl_a != ttl_b:
+                assert ttl_a is not None
+                assert ttl_b is not None
+                assert (ttl_a > ttl_b) == descending
+            else:
+                assert a.team.name < b.team.name
     if key in (LeagueSort.PAYROLL, LeagueSort.ROOM):
         assert len(known) == 5
 
 
 def test_league_params_parse_with_defaults() -> None:
-    assert LeagueQuery.from_params({}) == LeagueQuery(LeagueSort.ROTO, True)
+    assert LeagueQuery.from_params({}) == LeagueQuery(LeagueSort.PCTL, True)
+    assert LeagueQuery.from_params({"sort": "pctl"}) == LeagueQuery(LeagueSort.PCTL, True)
     assert LeagueQuery.from_params({"sort": "team"}) == LeagueQuery(LeagueSort.TEAM, False)
     assert LeagueQuery.from_params({"sort": "HIT"}) == LeagueQuery(Category.HIT, True)
     assert LeagueQuery.from_params({"sort": "room", "dir": "asc"}) == LeagueQuery(
@@ -416,6 +423,7 @@ def test_league_params_parse_with_defaults() -> None:
     ("params", "message"),
     [
         ({"sort": "points"}, "unknown sort 'points'"),
+        ({"sort": "roto"}, "unknown sort 'roto'"),  # removed (plans/league-pctl.md)
         ({"sort": "x" * 13}, "unknown sort 'xxxxxxxxxxxx…'"),
         ({"dir": "up"}, "dir must be asc or desc, got 'up'"),
         ({"dir": "y" * 13}, "unknown dir 'yyyyyyyyyyyy…'"),
@@ -448,7 +456,7 @@ def pctl_by_hand(view: LeagueView, value: float) -> float:
 
 @pytest.mark.parametrize("season", [Season.LAST, Season.CURRENT])
 def test_the_standings_use_the_season_shown(season: Season) -> None:
-    """Ranks, Pctl, roto points and per-82 gaps from that season's ratings, pool and
+    """Ranks, Pctl and per-82 gaps from that season's ratings, pool and
     divisors (the demo's team order and divisors differ between the seasons)."""
     view = demo_view(season)
     rows = league_table(view, LeagueQuery(LeagueSort.TTLTST)).rows
@@ -461,9 +469,9 @@ def test_the_standings_use_the_season_shown(season: Season) -> None:
         g = r.standing.categories[Category.G]
         if g.gap is not None:
             assert g.gap_per82 == pytest.approx(g.gap * view.result.divisors[Category.G])
-    n = len(rows)
     for cat in view.config.categories:
-        assert sum(r.standing.categories[cat].points or 0 for r in rows) == n * (n + 1) / 2
+        best = max(rows, key=lambda r: r.summary.profile.mean_norm[cat] or 0.0)
+        assert best.standing.categories[cat].rank == 1
 
 
 def test_the_demo_seasons_differ_so_the_wiring_test_can_tell_them_apart() -> None:
@@ -501,7 +509,6 @@ def test_a_season_with_nobody_rated_has_no_standings_and_no_error(case: str) -> 
     table = league_table(view)
     assert len(table.rows) == len(snap.teams)
     for r in table.rows:
-        assert r.standing.roto is None
         assert r.standing.ttltst == EMPTY
         assert all(c == EMPTY for c in r.standing.categories.values())
     assert [r.team.name for r in table.rows] == sorted(r.team.name for r in table.rows)
@@ -518,7 +525,7 @@ def test_the_teams_a_gap_is_to_are_named_in_order() -> None:
 
 
 @pytest.mark.parametrize("descending", [True, False])
-@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.ROTO])
+@pytest.mark.parametrize("key", [Category.HIT, LeagueSort.TTLTST, LeagueSort.PCTL])
 def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
     snap: LeagueSnapshot, key: LeagueSort | Category, descending: bool
 ) -> None:
@@ -538,5 +545,78 @@ def test_a_team_with_no_value_sorts_after_a_genuine_zero_both_ways(
     assert theirs.standing.categories[Category.HIT].value == 0.0
     assert mine.standing.categories[Category.HIT].value is None
     assert mine.standing.ttltst.value is None
-    assert mine.standing.roto is None
-    assert theirs.standing.roto == len(view.config.categories)  # alone: 1 point each
+    assert mine.standing.ttltst.pctl is None
+    assert theirs.standing.ttltst.pctl is not None
+
+
+@pytest.mark.parametrize("season", [Season.LAST, Season.CURRENT])
+def test_pctl_order_is_ttltst_order(season: Season) -> None:
+    view = demo_view(season)
+    for descending in (True, False):
+        by_pctl = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
+        by_ttl = league_table(view, LeagueQuery(LeagueSort.TTLTST, descending)).rows
+        assert [r.team.team_key for r in by_pctl] == [r.team.team_key for r in by_ttl]
+
+
+@pytest.mark.parametrize("descending", [True, False])
+def test_teams_sharing_a_pctl_sort_by_ttltst_not_by_name(descending: bool) -> None:
+    """Pctl is a step function: last season, Teams 1 and 3 share one Pctl (no player's
+    TTLTST lies between their averages) though Team 1's average is higher. Renamed so
+    the lower average sorts first by name, a name tie-break would get it wrong."""
+    snap = demo_snapshot()
+    renamed = tuple(replace(t, name="Team 0") if t.name == "Team 3" else t for t in snap.teams)
+    view = build_view(replace(snap, teams=renamed), DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    rows = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
+    pair = [r for r in rows if r.team.name in ("Team 1", "Team 0")]
+    one, zero = sorted(pair, key=lambda r: r.team.name, reverse=True)
+    assert one.standing.ttltst.pctl == zero.standing.ttltst.pctl
+    assert one.standing.ttltst.value is not None
+    assert zero.standing.ttltst.value is not None
+    assert one.standing.ttltst.value > zero.standing.ttltst.value
+    expected = ["Team 1", "Team 0"] if descending else ["Team 0", "Team 1"]
+    assert [r.team.name for r in pair] == expected
+
+
+def test_exact_ttltst_ties_sort_by_name_under_pctl(snap: LeagueSnapshot) -> None:
+    """Both synthetic teams last season rate exactly 0: one Pctl, one TTLTST, so names.
+    The teams come in reverse name order, so only the name tie-break sorts them."""
+    reversed_teams = replace(snap, teams=tuple(reversed(snap.teams)))
+    assert [t.name for t in reversed_teams.teams] == ["Name 2", "Name 1"]
+    view = build_view(reversed_teams, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    for descending in (True, False):
+        rows = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
+        assert rows[0].standing.ttltst.value == rows[1].standing.ttltst.value == 0.0
+        assert [r.team.name for r in rows] == sorted(r.team.name for r in rows)
+
+
+def zero_pctl_and_empty_teams() -> LeagueSnapshot:
+    """The demo with "Zulu" holding only the league's lowest-rated skater (a free agent
+    last season, Pctl exactly 0) and "Alpha" only goalies (no value). A sort that took
+    0 for missing would put Alpha first by name."""
+    snap = demo_snapshot()
+    view = build_view(snap, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    rated = sorted((r for r in view.rows if r.ttltst is not None), key=lambda r: r.ttltst or 0.0)
+    low = next(p for p in snap.available if p.player_id == rated[0].player_id)
+    zulu, alpha = snap.teams[0], snap.teams[1]
+    teams = tuple(
+        replace(t, name="Zulu", roster=(RosterEntry(low, "C"),))
+        if t is zulu
+        else replace(t, name="Alpha", roster=tuple(e for e in t.roster if e.player.is_goalie))
+        if t is alpha
+        else t
+        for t in snap.teams
+    )
+    available = tuple(p for p in snap.available if p is not low)
+    return replace(snap, teams=teams, available=available)
+
+
+@pytest.mark.parametrize("descending", [True, False])
+def test_a_genuine_pctl_of_zero_sorts_before_no_value(descending: bool) -> None:
+    snap = zero_pctl_and_empty_teams()
+    view = build_view(snap, DEFAULT_CONFIG, Salaries(), season=Season.LAST)
+    rows = league_table(view, LeagueQuery(LeagueSort.PCTL, descending)).rows
+    by_name = {r.team.name: r for r in rows}
+    assert by_name["Zulu"].standing.ttltst.pctl == 0.0
+    assert by_name["Alpha"].standing.ttltst.pctl is None
+    assert rows[-1].team.name == "Alpha"  # no value: last both ways
+    assert (rows[0].team.name == "Zulu") is (not descending)  # the lowest Pctl

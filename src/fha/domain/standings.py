@@ -6,9 +6,6 @@ For each team and each column (the profiles' categories, and TTLTST):
 - the **Pctl** on the Players scale: where the team's value would sit among the
   league's rated players, by the engine's own formula for a player
   (``1 + #players above``, over the pool's skaters with GP > 0);
-- **roto points** (categories only): n teams with a value, rank 1 scores n,
-  tied teams share the points of the places they span; the roto total is the
-  sum, None if any category has no value;
 - the **gap to tie** the next distinct value up, and the teams there; for a
   category also in per-82 units (the gap times the category's divisor);
 - a **heat band**, 0 (best) to 4 (worst), from the rank's position among the
@@ -34,21 +31,19 @@ class Cell:
     value: float | None
     rank: int | None
     pctl: float | None
-    points: float | None  # roto points; None for TTLTST
     gap: float | None  # to tie the next distinct value up; None for the best value
     gap_per82: float | None  # a category's gap as a per-82 rate; None for TTLTST
     above: tuple[str, ...]  # the team keys at that value, sorted
     heat: int | None  # 0 (best) .. HEAT_BANDS - 1 (worst)
 
 
-EMPTY = Cell(None, None, None, None, None, None, (), None)
+EMPTY = Cell(None, None, None, None, None, (), None)
 
 
 @dataclass(frozen=True)
 class TeamStanding:
     categories: Mapping[Category, Cell]
     ttltst: Cell
-    roto: float | None
 
 
 def standings(
@@ -72,7 +67,6 @@ def standings(
             [n for p in rated if (n := p.norms.get(cat)) is not None],
             pool_size,
             divisor=divisors.get(cat),
-            roto=True,
         )
         for cat in categories
     }
@@ -81,14 +75,10 @@ def standings(
         [p.ttltst for p in rated if p.ttltst is not None],
         pool_size,
         divisor=None,
-        roto=False,
     )
     out = {}
     for key in teams:
-        cells = {cat: by_cat[cat][key] for cat in categories}
-        points = [c.points for c in cells.values()]
-        roto = None if None in points else sum(p for p in points if p is not None)
-        out[key] = TeamStanding(cells, by_ttltst[key], roto)
+        out[key] = TeamStanding({cat: by_cat[cat][key] for cat in categories}, by_ttltst[key])
     return out
 
 
@@ -98,7 +88,6 @@ def _column(
     pool_size: int,
     *,
     divisor: float | None,
-    roto: bool,
 ) -> dict[str, Cell]:
     valued = {k: v for k, v in values.items() if v is not None}
     n = len(valued)
@@ -111,7 +100,6 @@ def _column(
             out[key] = EMPTY
             continue
         rank = rank_of[value]
-        ties = sum(1 for v in valued.values() if v == value)
         position = distinct.index(value)
         above_value = distinct[position - 1] if position > 0 else None
         gap = None if above_value is None else above_value - value
@@ -119,7 +107,6 @@ def _column(
             value=value,
             rank=rank,
             pctl=pctl(value),
-            points=(n - rank + 1 - (ties - 1) / 2) if roto else None,
             gap=gap,
             gap_per82=None if gap is None or divisor is None else gap * divisor,
             above=tuple(sorted(k for k, v in valued.items() if v == above_value)),

@@ -72,8 +72,8 @@ def summarize(
 
 class LeagueSort(StrEnum):
     TEAM = "team"
-    ROTO = "roto"
     TTLTST = "ttltst"
+    PCTL = "pctl"  # the Pctl of the team's average TTLTST
     PAYROLL = "payroll"
     ROOM = "room"
 
@@ -83,13 +83,13 @@ class LeagueQuery:
     """The League table's sort (SPEC §7.3): a column, or a category; best first by
     default (the team name A to Z)."""
 
-    sort: LeagueSort | Category = LeagueSort.ROTO
+    sort: LeagueSort | Category = LeagueSort.PCTL
     descending: bool = True
 
     @classmethod
     def from_params(cls, params: Mapping[str, str]) -> LeagueQuery:
         """From query-string values; blank means the default. Unknown values are refused."""
-        sort_text = (params.get("sort") or "").strip() or LeagueSort.ROTO.value
+        sort_text = (params.get("sort") or "").strip() or LeagueSort.PCTL.value
         direction = (params.get("dir") or "").strip() or None
         for name, value in (("sort", sort_text), ("dir", direction or "")):
             if len(value) > 12:  # the 400 page quotes ≤ 12 chars
@@ -140,8 +140,10 @@ def league_table(
     discrepancies: Mapping[str, bool] | None = None,
 ) -> LeagueTable:
     """One row per team with its standing (SPEC §7.3), sorted by ``query`` (default:
-    roto, best first); teams with no value in the sort column last, ties by name.
-    The owner's team is not pinned: the order reads as standings."""
+    Pctl, best first); teams with no value in the sort column last, ties by name.
+    Pctl is a step function of TTLTST (``1 + #players above``), so equal Pctls are
+    ordered by TTLTST first: the Pctl order is exactly TTLTST's. The owner's team is
+    not pinned: the order reads as standings."""
     query = query or LeagueQuery()
     categories = view.config.categories
     if isinstance(query.sort, Category) and query.sort not in categories:
@@ -158,6 +160,8 @@ def league_table(
     present = [r for r in rows if key(r) is not None]
     missing = sorted((r for r in rows if key(r) is None), key=lambda r: r.team.name)
     present.sort(key=lambda r: r.team.name)
+    if query.sort is LeagueSort.PCTL:  # then TTLTST; a Pctl implies a TTLTST
+        present.sort(key=lambda r: r.standing.ttltst.value or 0.0, reverse=query.descending)
     present.sort(key=lambda r: _comparable(key(r)), reverse=query.descending)
     return LeagueTable(
         tuple([*present, *missing]), categories, {t.team_key: t.name for t in view.teams}
@@ -169,8 +173,8 @@ def _league_sort_value(sort: LeagueSort | Category) -> Callable[[LeagueRow], obj
         return lambda r: r.standing.categories[sort].value
     by: dict[LeagueSort, Callable[[LeagueRow], object | None]] = {
         LeagueSort.TEAM: lambda r: r.team.name,
-        LeagueSort.ROTO: lambda r: r.standing.roto,
         LeagueSort.TTLTST: lambda r: r.standing.ttltst.value,
+        LeagueSort.PCTL: lambda r: r.standing.ttltst.pctl,
         LeagueSort.PAYROLL: lambda r: r.summary.payroll,
         LeagueSort.ROOM: lambda r: r.summary.cap_room,
     }

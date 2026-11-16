@@ -36,7 +36,7 @@
 <div class="table-wrap">
 <table class="data league">
   <thead><tr>
-    {{ header('team', 'Team', first=True) }}{{ header('roto', 'Roto') }}{{ header('ttltst', 'TTLTST') }}
+    {{ header('team', 'Team', first=True) }}{{ header('ttltst', 'TTLTST') }}{{ header('pctl', 'Pctl') }}
     {% if mode == 'money' %}{{ header('payroll', 'Payroll') }}{{ header('room', 'Room') }}{% else %}{% for cat in categories %}{{ header(cat.value, cat.value) }}{% endfor %}{% endif %}
   </tr></thead>
   <tbody>
@@ -52,8 +52,8 @@
       </details>
       {% if r.summary.has_discrepancies %}<span class="badge">sheet</span>{% endif %}
     </td>
-    <td class="num">{{ st.roto|number(1) }}</td>
     <td class="num"{% if st.ttltst.pctl is not none %} title="Pctl {{ st.ttltst.pctl|pctl }}"{% endif %}>{{ st.ttltst.value|number(3) }}{% if st.ttltst.rank %}<small class="rank">#{{ st.ttltst.rank }}</small>{% endif %}</td>
+    <td class="num">{{ st.ttltst.pctl|pctl }}</td>
     {% if mode == 'money' %}
     <td class="num">{{ r.summary.payroll|money }}</td>
     <td class="num {{ 'over' if r.summary.over_cap else '' }}">{{ r.summary.cap_room|money }}</td>
@@ -67,6 +67,6 @@
   </tbody>
 </table>
 </div>
-<p class="muted">Roto (rates): in each category, of the n teams with a value the best scores n points and the worst 1 (tied teams share the points of their places), summed. From per-82 rates of each team's skaters outside IR: a guide, not the league's standings. Shading and #rank: each team's place in that column. Tap a team for its ranks, percentiles and gaps.</p>
+<p class="muted">Pctl: where a player rated at the team's average TTLTST would rank among the league's players (the Players scale), over each team's rated skaters outside IR. From per-82 rates: a guide, not the league's standings. Shading and #rank: each team's place in that column. Tap a team for its ranks, percentiles and gaps.</p>
 <p class="muted">Payroll and room show "{{ DASH }}" until the team's sheet tab is bound and recognized (Admin); room also needs the cap (the sheet's, or <code>SALARY_CAP</code>).</p>
 {% endblock %}

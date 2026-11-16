@@ -108,6 +108,17 @@ def surname(raw: str) -> str:
     return normalize_name(words[-1]) if words else ""
 
 
+def name_matches(query: str, name: str) -> bool:
+    """Every word of ``query`` is inside ``name``, in any order (the Players search).
+
+    Both sides are normalized ("Stützle" finds "Tim Stutzle", "mcdavid connor" finds
+    "McDavid, Connor"). Not fuzzy: a misspelling finds nothing. A query with no words
+    matches every name; whether that is a search at all is the caller's call.
+    """
+    normalized = normalize_name(name)
+    return all(word in normalized for word in normalize_name(query).split())
+
+
 def name_keys(raw: str) -> set[str]:
     """Comparable forms of a name: one per nickname group its first name is in."""
     normalized = normalize_name(raw)

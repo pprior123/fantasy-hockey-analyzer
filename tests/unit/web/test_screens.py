@@ -1058,21 +1058,22 @@ def test_league_has_a_row_per_team_with_a_roster_link_in_its_details() -> None:
     assert "a guide, not the league's standings" in html
 
 
-def test_league_is_in_roto_order_by_default_and_my_team_is_not_pinned() -> None:
+def test_league_is_in_pctl_order_by_default_and_my_team_is_not_pinned() -> None:
     html = client().get("/league").text
     expected = demo_table().rows
     assert [team_of(r) for r in league_rows(html)] == [r.team.name for r in expected]
-    roto = [r.standing.roto for r in expected]
-    assert roto == sorted(roto, reverse=True)  # type: ignore[type-var]
+    ttl = [r.standing.ttltst.value for r in expected]
+    assert ttl == sorted(ttl, reverse=True)  # type: ignore[type-var]
     mine = [i for i, r in enumerate(expected) if r.team.is_mine]
-    assert mine != [0]  # the demo's own team is not first in roto: so no pinning shows
+    assert mine != [0]  # the demo's own team is not first: so no pinning shows
     row = league_rows(html)[mine[0]]
     assert row.startswith('<tr class="mine">')
     assert '<span class="you">you</span>' in row
 
 
 @pytest.mark.parametrize(
-    ("key", "label"), [("team", "Team"), ("roto", "Roto"), ("ttltst", "TTLTST"), ("G", "G")]
+    ("key", "label"),
+    [("team", "Team"), ("roto", "Roto"), ("ttltst", "TTLTST"), ("pctl", "Pctl"), ("G", "G")],
 )
 def test_league_headers_sort_and_carry_the_view_and_season(key: str, label: str) -> None:
     c = client()
@@ -1114,7 +1115,7 @@ def test_league_category_cells_show_rank_heat_and_pctl() -> None:
     for r, row in zip(table.rows, rows, strict=True):
         cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
         g = r.standing.categories[Category.G]
-        g_cell = cells[2]  # Roto, TTLTST, then G
+        g_cell = cells[3]  # Roto, TTLTST, Pctl, then G
         assert f'heat-{g.heat}"' in g_cell
         assert f'title="Pctl {percentile(g.pctl)}"' in g_cell
         assert f'{number(g.value)}<small class="rank">#{g.rank}</small>' in g_cell
@@ -1125,6 +1126,28 @@ def test_league_category_cells_show_rank_heat_and_pctl() -> None:
         for c in re.findall(r'<td class="num heat-\d"', row)
     }
     assert heats == {"0", "1", "2", "3", "4"}  # 8 teams span every band
+
+
+@pytest.mark.parametrize("view", ["", "?view=cats"])
+def test_league_shows_each_teams_pctl_in_both_views(view: str) -> None:
+    html = client().get(f"/league{view}").text
+    head = html.split('class="data league"', 1)[1].split("</thead>", 1)[0]
+    labels = re.findall(r'<a href="[^"]*">(\w+)', head)
+    assert labels[:4] == ["Team", "Roto", "TTLTST", "Pctl"]
+    for r, row in zip(demo_table().rows, league_rows(html), strict=True):
+        cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
+        assert cells[2] == f'<td class="num">{percentile(r.standing.ttltst.pctl)}</td>'
+
+
+@pytest.mark.parametrize("view", ["", "&view=cats"])
+def test_league_pctl_is_a_dash_when_nobody_is_rated(view: str) -> None:
+    """This season with no games: no ratings, so no Pctl ("—", not 0)."""
+    zero = {k: replace(v, values={**v.values, "0": "0"}) for k, v in SNAP.stats.items()}
+    svc = services_for(replace(SNAP, stats=zero))
+    html = client(svc).get(f"/league?season=current{view}").text
+    for row in league_rows(html):
+        cells = re.findall(r'<td class="num[^"]*"[^>]*>.*?</td>', row, flags=re.S)
+        assert cells[2] == '<td class="num">—</td>'
 
 
 def test_league_details_list_each_columns_rank_pctl_and_gap() -> None:

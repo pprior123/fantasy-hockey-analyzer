@@ -11,7 +11,7 @@ from fha.services.sheet_update import build_update, prepare_update, write_update
 from fha.sources.league_sheet.grid import Grid, Tab
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.parse import parse_sheet
-from fha.sources.league_sheet.writer import FakeLeagueSheetWriter
+from fha.sources.league_sheet.writer import FakeLeagueSheetWriter, UncertainWriteError
 from fha.sources.yahoo.models import RosterSlot
 from fha.storage.memory import InMemoryRepository
 from tests.unit.league_sheet import sheets as s
@@ -390,3 +390,46 @@ async def test_a_dropped_row_with_a_text_salary_is_cleared_and_free_again() -> N
     reread = live(after, TAB_TWO).tab("Pinecone")
     assert reread is not None
     assert 11 in reread.blank_rows  # free for the next add
+
+
+LOST = UncertainWriteError("Sheets API write: no answer (ReadTimeout)")
+
+
+async def test_a_lost_answer_with_the_change_on_the_tab_is_a_write() -> None:
+    result, _, repo = await confirm(BEFORE, AFTER, writer=FakeLeagueSheetWriter(LOST))
+    assert result.ok, result.message
+    assert result.message == (
+        "Google's answer was lost, but the write went through. "
+        "Written: 7 cells on Pinecone. PAYROLL is now $16,400,000, as expected."
+    )
+    assert result.written == 7
+    bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {})["entries"]["Pinecone"]
+    assert {"player_id": "3", "how": "written"} in bindings.values()
+
+
+async def test_a_lost_answer_with_the_tab_unchanged_is_no_write() -> None:
+    result, _, repo = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
+    assert (result.ok, result.written) == (False, 0)
+    assert result.message == (
+        "Nothing was written: Google's answer was lost "
+        "(Sheets API write: no answer (ReadTimeout)), and the tab is unchanged."
+    )
+    bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {}).get("entries", {})
+    assert "written" not in repr(bindings)
+
+
+async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown() -> None:
+    down = LeagueSheetError("HTTP 503")
+    result, _, _ = await confirm(BEFORE, down, writer=FakeLeagueSheetWriter(LOST))
+    assert not result.ok
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)), and "
+        "the tab couldn't be read to check (HTTP 503). Check the tab before writing again."
+    )
+    # Row 9 new, row 10 (Zed) old: neither state (someone edited the tab meanwhile).
+    half = replace(AFTER_ONE, players=[*AFTER_ONE.players[:3], *TAB_ONE.players[3:]])
+    result, _, _ = await confirm(BEFORE, live(half, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
+    assert result.message == (
+        "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)): the "
+        "tab holds neither the old cells nor the new ones. Check the tab."
+    )

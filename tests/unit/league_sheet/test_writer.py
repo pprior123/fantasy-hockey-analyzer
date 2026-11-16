@@ -15,6 +15,7 @@ from fha.sources.league_sheet.writer import (
     WRITE_SCOPE,
     FakeLeagueSheetWriter,
     SheetsApiLeagueSheetWriter,
+    UncertainWriteError,
     update_request,
 )
 
@@ -205,3 +206,60 @@ async def test_the_fake_records_writes_or_fails_as_told() -> None:
     failing = FakeLeagueSheetWriter(LeagueSheetError("boom"))
     with pytest.raises(LeagueSheetError, match="boom"):
         await failing.write(TAB, EDITS)
+
+
+# ---------------------------------------------------------------- Codex review (PR #22 + #23)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("no route"),
+        httpx.ConnectTimeout("slow connect"),
+        httpx.PoolTimeout("no connection free"),
+    ],
+)
+async def test_a_failure_before_the_request_left_is_a_definite_no(error: Exception) -> None:
+    def down(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    with pytest.raises(LeagueSheetError) as info:
+        await writer(down).write(TAB, EDITS)
+    assert not isinstance(info.value, UncertainWriteError)
+    assert str(info.value) == f"Sheets API write failed ({type(error).__name__})"
+
+
+@pytest.mark.parametrize(
+    ("error", "said"),
+    [
+        (httpx.ReadTimeout("no answer"), "Sheets API write: no answer (ReadTimeout)"),
+        (httpx.ReadError("reset"), "Sheets API write: no answer (ReadError)"),
+        (httpx.RemoteProtocolError("closed"), "Sheets API write: no answer (RemoteProtocolError)"),
+        (httpx.WriteTimeout("stalled"), "Sheets API write: no answer (WriteTimeout)"),
+    ],
+)
+async def test_a_failure_after_the_request_left_is_an_unknown_outcome(
+    error: Exception, said: str
+) -> None:
+    # Google may have applied the batch before the answer was lost.
+    def lost(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    with pytest.raises(UncertainWriteError) as info:
+        await writer(lost).write(TAB, EDITS)
+    assert str(info.value) == said
+    assert SHEET_ID not in str(info.value)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503])
+async def test_a_server_error_is_an_unknown_outcome(status: int) -> None:
+    with pytest.raises(UncertainWriteError) as info:
+        await writer(Google(status)).write(TAB, EDITS)
+    assert str(info.value) == f"Sheets API write: HTTP {status}, outcome unknown"
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 429])
+async def test_a_client_error_is_a_definite_no(status: int) -> None:
+    with pytest.raises(LeagueSheetError) as info:
+        await writer(Google(status)).write(TAB, EDITS)
+    assert not isinstance(info.value, UncertainWriteError)

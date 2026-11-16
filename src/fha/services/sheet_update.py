@@ -46,7 +46,7 @@ from fha.services.league_sheet import (
 from fha.sources.league_sheet.grid import parse_a1
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet, ParsedTab
 from fha.sources.league_sheet.source import LeagueSheetSource
-from fha.sources.league_sheet.writer import LeagueSheetWriter
+from fha.sources.league_sheet.writer import LeagueSheetWriter, UncertainWriteError
 from fha.sources.yahoo.models import IR_SLOTS, LeagueSnapshot, Player
 from fha.storage.repository import Repository, RepositoryError
 
@@ -276,19 +276,51 @@ async def write_update(
     except GuardError as e:  # a bug: the plan left its own allowed cells
         log.error("sheet update refused by the guard: %s", e)
         return WriteResult(False, f"Nothing was written: {e}.")
+    lost: UncertainWriteError | None = None
     try:
         await writer.write(tab, plan.edits)
+    except UncertainWriteError as e:  # Google may have applied it: look before saying
+        lost = e
     except LeagueSheetError as e:
         return WriteResult(False, f"The write failed and nothing was changed ({e}).")
     written = len(plan.edits)
-    log.info(
-        "sheet update written to %s: %s",
-        tab.name,
-        "; ".join(f"{c.action} {c.name}" for c in plan.changes),
-    )
-    try:  # Google has the change now: from here on, say so whatever fails
+    try:
+        after: ParsedSheet | None = None
+        if lost is not None:
+            log.warning("sheet update: %s; checking the tab", lost)
+            try:
+                after = await read_league_sheet(repo, source, clock)
+            except LeagueSheetError as e:
+                return WriteResult(
+                    False,
+                    f"The write's outcome is unknown ({lost}), and the tab couldn't be read "
+                    f"to check ({e}). Check the tab before writing again.",
+                )
+            landed = await _landed(repo, snapshot, after, plan)
+            if landed is False:
+                return WriteResult(
+                    False,
+                    f"Nothing was written: Google's answer was lost ({lost}), "
+                    "and the tab is unchanged.",
+                )
+            if landed is None:
+                return WriteResult(
+                    False,
+                    f"The write's outcome is unknown ({lost}): the tab holds neither the old "
+                    "cells nor the new ones. Check the tab.",
+                )
+        log.info(
+            "sheet update written to %s: %s",
+            tab.name,
+            "; ".join(f"{c.action} {c.name}" for c in plan.changes),
+        )
+        # Google has the change now: from here on, say so whatever fails
         await bind_written_rows(repo, tab.name, _added_keys(plan, update.rows, update.layout))
-        return await _read_back(repo, clock, source, snapshot, plan, written)
+        result = await _read_back(repo, clock, source, snapshot, plan, written, after)
+        if lost is not None:
+            lead = "Google's answer was lost, but the write went through. "
+            return WriteResult(result.ok, lead + result.message, result.written)
+        return result
     except RepositoryError as e:
         log.warning("after the sheet write, the app's storage failed (%s)", e.summary)
         return WriteResult(
@@ -323,6 +355,26 @@ def _added_keys(plan: UpdatePlan, rows: Sequence[TabRow], layout: TabLayout) -> 
     }
 
 
+async def _landed(
+    repo: Repository, snapshot: LeagueSnapshot, sheet: ParsedSheet, plan: UpdatePlan
+) -> bool | None:
+    """After a lost answer: True if the tab holds every new cell, False if it holds
+    every old one (Google applies a batch all or nothing), None if neither."""
+    after = await prepare_update(repo, snapshot, sheet)
+    if after.layout is None:
+        return None
+    values = {r.row: row_values(r, after.layout) for r in after.rows}
+
+    def holds(row: int, column: str, value: object) -> bool:
+        return values.get(row, {}).get(column) == value
+
+    if all(holds(e.row, e.column, e.new) for e in plan.edits):
+        return True
+    if all(holds(e.row, e.column, e.old) for e in plan.edits):
+        return False
+    return None
+
+
 async def _read_back(
     repo: Repository,
     clock: Clock,
@@ -330,14 +382,18 @@ async def _read_back(
     snapshot: LeagueSnapshot,
     plan: UpdatePlan,
     written: int,
+    sheet: ParsedSheet | None = None,
 ) -> WriteResult:
+    """Read the tab back (or use ``sheet``, already read after the write) and check it."""
+
     def failed(why: str) -> WriteResult:
         return WriteResult(False, f"Written ({written} cells), but {why}. Check the tab.", written)
 
-    try:
-        sheet = await read_league_sheet(repo, source, clock)
-    except LeagueSheetError as e:
-        return failed(f"the tab couldn't be read back ({e})")
+    if sheet is None:
+        try:
+            sheet = await read_league_sheet(repo, source, clock)
+        except LeagueSheetError as e:
+            return failed(f"the tab couldn't be read back ({e})")
     after = await prepare_update(repo, snapshot, sheet)
     if after.tab is None or after.plan is None or after.layout is None:
         return failed(f"the tab can't be planned now ({after.problem})")

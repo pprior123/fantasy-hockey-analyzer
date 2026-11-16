@@ -11,6 +11,11 @@
 The caller plans and guards the edits (``domain.sheet_update.guard``); the
 writer checks only what it needs to address a cell. As on the read path, an
 error never carries the spreadsheet ID or Google's response body.
+
+A failure before the request left (no connection) or a 4xx is a definite "not
+written": ``LeagueSheetError``. A lost answer (a read timeout, a dropped
+connection) or a 5xx is ``UncertainWriteError``: Google may have applied the
+batch, so the caller must look at the tab before saying either way.
 """
 
 from __future__ import annotations
@@ -31,9 +36,19 @@ WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 COLUMN = re.compile(r"[B-Z]|[A-Z]{2,3}")  # never column A (the IR labels)
 
 
+# The request never reached Google: nothing can have been written.
+NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol)
+
+
+class UncertainWriteError(LeagueSheetError):
+    """The request was sent but its answer was lost or a server error: the batch
+    may or may not have been applied."""
+
+
 class LeagueSheetWriter(Protocol):
     async def write(self, tab: ParsedTab, edits: Sequence[CellEdit]) -> None:
-        """Write ``edits`` to ``tab`` all at once (raises ``LeagueSheetError``)."""
+        """Write ``edits`` to ``tab`` all at once (raises ``LeagueSheetError``, or
+        ``UncertainWriteError`` when it can't tell whether Google applied them)."""
         ...
 
 
@@ -103,8 +118,13 @@ class SheetsApiLeagueSheetWriter:
             response = await self._http.post(
                 url, json=body, headers={"Authorization": f"Bearer {bearer}"}
             )
-        except (httpx.HTTPError, httpx.InvalidURL) as e:
+        except (*NOT_SENT, httpx.InvalidURL) as e:
             raise LeagueSheetError(f"Sheets API write failed ({type(e).__name__})") from None
+        except httpx.HTTPError as e:
+            raise UncertainWriteError(f"Sheets API write: no answer ({type(e).__name__})") from None
+        if response.status_code >= httpx.codes.INTERNAL_SERVER_ERROR:
+            status = response.status_code
+            raise UncertainWriteError(f"Sheets API write: HTTP {status}, outcome unknown")
         if response.status_code != httpx.codes.OK:
             why = " (a cell to change is protected against the app)" if _protected(response) else ""
             status = response.status_code

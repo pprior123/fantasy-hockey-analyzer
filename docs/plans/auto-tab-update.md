@@ -1,8 +1,8 @@
 # Plan: update the owner's tab automatically
 
-Status: revised after quality-mgr's plan review (AU-P1, not ready, 12 findings: 10 accepted in
-full or in part, 2 rejected in part; triage in §6), 2026-11-27. Second review: AU-P2. The owner
-needs no review of plans (2026-11-27); team-lead approves after the review's triage.
+Status: revised twice, 2026-11-27: after AU-P1 (not ready, 12 findings) and AU-P2 (not ready, 8
+findings; all accepted in full or in part). Triage in §6. Third review: AU-P3, on the changes. The
+owner needs no review of plans (2026-11-27); team-lead approves after the review's triage.
 
 The owner's request (2026-11-27, relayed by the operator): update the owner's tab in the league
 sheet automatically, instead of only on a tap on Admin → Update my tab.
@@ -27,8 +27,8 @@ The operator proposed, and team-lead decides (the owner asked that design choice
 | Question | Decision |
 |---|---|
 | Where it runs | In a separate request the page makes after it shows (htmx, `hx-trigger="load"`), with its own 60 s budget (Vercel `maxDuration`), never inside the page request that fetched Yahoo. The result is a banner on that page. |
-| Cost when nothing changed | A pre-check against the **stored** sheet first (no Google call). Google is read only when the stored tab differs from the Yahoo roster. Deliberate: a live edit to the tab since the app last read it is not seen until the next read (§2, step 6). |
-| What it writes | Only a clean plan: no refusals, at least one edit, no ticks, and **every drop identified**: the row is bound to a player (a stored row binding) who is no longer on the roster. Anything else (over the cap, a row awaiting review, an unidentified row, a locked tab, other tabs unprotected, an unknown cap hit, ...) is skipped with a warning banner, logged, and left to the manual Update page, which stays. |
+| Cost when nothing changed | A pre-check against the **stored** sheet first (no Google call). Google is read when the stored tab differs from the Yahoo roster, when the stored sheet is over 24 h old (the league's window), or after an attempt whose outcome isn't known (§2). A live edit to the tab since the app last read it is seen within 24 h. |
+| What it writes | Only a clean plan: no refusals, at least one edit, no ticks, and **every drop identified**: the row's own stored binding names a player no longer on the roster, and no two drops share a binding. A plan with something to change but anything else (a refusal such as over the cap, a row awaiting review or an unknown cap hit; an unidentified drop; a locked tab; other tabs unprotected) is skipped with a warning banner, logged, and left to the manual Update page, which stays. A plan with refusals and nothing to change is silent: nothing to write. |
 | Settle delay | None. It writes what Yahoo shows; a mid-move state (a drop before its add) is written as it is, and the next fetch writes the rest. The league asks for the tab within 24 h; a half-done move costs nothing and a delay would need a timer the app doesn't have. |
 | Log contents | Every automatic write, skip and failure, not the no-ops. A skip repeated with the same reason right after the same skip is not logged again. Shown on Admin. |
 | Log storage and retention | Firestore, one document per entry in collection `sheet_auto_log`; the newest 50 are kept (older ones deleted after each new entry). |
@@ -58,280 +58,274 @@ much of the time limit, and a sheet read, write and read-back (10–20 s locally
 **D. Run on every page view (no per-fetch key).** Rejected: the owner said not on every page view,
 and each would cost a stored-sheet check and a POST.
 
-**Not done: cross-instance serialization of writes** (AU-P1 finding 1). `Repository` has no atomic
-create or transaction; adding one to three backends (Firestore REST, the dev file, the in-memory
-store) for a single-user app buys little: two runs on one snapshot compute the same edits from the
-same tab and write the same values, and the overlap of runs on two snapshots is narrowed to the
-batch itself by the pre-write check (§2, step 9) and corrected by the next fetch. Recorded as a
-residual risk (§4).
+**Not done: a cross-instance lock** (AU-P1 finding 1, AU-P2 finding 1). `Repository` has no atomic
+create or conditional write; a lease with safe expiry needs both, in three backends (Firestore REST,
+the dev file, the in-memory store), for a single-user app. Instead, **every divergence is detected
+and repaired** (§2 "Attempts"): each batch is announced by its own attempt record before it is sent
+and removed only when its outcome is definite. A lost answer or a killed request keeps its record,
+and any kept record makes the next run read Google afresh instead of trusting the stored sheet.
+Two answered overlapping batches are usually caught by a read-back (the cells hold the other's
+values: kept as unknown); the remaining orders (each read-back passes, and the stored copy ends up
+newer than the tab) are caught by the 24-hour fresh read. Two runs on one snapshot write the same
+values. Bounded at 24 h, for an overlap that needs two fetches seconds apart: accepted (§4).
 
 ## 2. What it means precisely
 
 ### Trigger ("unchecked snapshot")
 
+The contract: **the first full page served after a Yahoo fetch, while that snapshot is the saved
+one and within the TTL, runs the update for it.** In practice that is every fetch: a Refresh tap
+redirects to a full page, and opening the app after the TTL renders one. Not covered (AU-P2
+finding 4, accepted as a narrowed contract): a fetch made by a fragment (`/players/rows`, "Show
+more") or a Refresh from the Update page, when no other full page follows within the TTL; the next
+fetch runs it.
+
 `page_data` decides whether the page carries the trigger, for full pages only: every rated page
-and Admin. **Not** the Update page (`/admin/sheet/update`, GET and the confirm's redirect): the
-owner is updating by hand there. **Not** fragments (`/players/rows`): a fetch made by "Show more"
-is picked up by the next full page while that snapshot is within the TTL. The page carries it when
-all hold:
+and Admin; not the Update page (`/admin/sheet/update`; the owner is updating by hand there) and not
+fragments. The page carries it when all hold:
 
 - writing is on (`svc.sheet_writer` and `svc.sheet` are set; never in the demo, which refuses
   `FHA_SHEET_WRITE=1`);
 - the switch is on (`config/sheet_auto`, field `enabled`; a missing document is on);
-- the served snapshot is within the TTL (`RefreshService.is_fresh`) and has no `refresh_error`
-  (no failed refresh, no "not saved");
+- the served snapshot is within the TTL and has no `refresh_error`;
 - its `fetched_at` is not the one stored as checked (`sheet_auto_state/last`, field `fetched_at`).
 
-The manual confirm marks its forced snapshot as checked (it writes `sheet_auto_state/last` with
-that `fetched_at` before it writes), so a manual update never hands a fetch to the automatic one.
+The manual confirm marks its forced snapshot as checked before it writes, so a manual update never
+hands a fetch to the automatic one.
 
 Cost per full page view while writing is on: two small Firestore reads (the switch and
 `sheet_auto_state/last`). While writing is off: none.
 
 **First activation and re-enabling:** a snapshot fetched before the deploy, or while the switch
-was off, is unchecked; if it is still within the TTL, the next full page runs the update for it.
-That is a successful Yahoo read under 30 minutes old, the same data every page shows; the
-freshness rule below holds for it.
+was off, is unchecked; if it is still the saved one within the TTL, the next full page runs the
+update for it.
 
 The trigger is one element in `base.html`, above `<main>`: an empty `div` with
 `hx-post="/sheet/auto-update"`, `hx-trigger="load"`, `hx-vals` holding the snapshot's `fetched_at`,
-and `hx-swap="outerHTML"`. `render()` passes it from `request.state`, where `page_data` set it, so
-no route changes except the Update page opting out.
+and `hx-swap="outerHTML"`. `render()` passes it from `request.state`, where `page_data` set it.
+
+### Freshness (`eligible`)
+
+A snapshot is **eligible** when the saved generation is that snapshot: the stored cache's meta
+document (`stats_cache/meta`, read directly, not the process's memory) has `fetched_at` equal to
+the posted value, that value is within the TTL, and this process knows no failed refresh after it
+(`_recent_failure`). Reading the saved meta, not `_stored()`, rules out the two cases AU-P2 finding
+3 names: a newer generation that failed to decode (the meta names the newer one: mismatch) and a
+fetch whose save hasn't finished (the meta still names the older one: mismatch). The snapshot
+itself comes from `RefreshService.current()` without force only after `eligible` holds, so no
+Yahoo call can follow (it is fresh). A new `RefreshService.saved_generation()` returns the meta's
+`fetched_at`; `eligible(posted)` combines it with the TTL and the failure check.
+
+### Attempts (write-ahead records)
+
+Collection `sheet_write_attempts`, one document per attempt, ID a random 16-hex token, holding
+`at`, `deadline` (`at` + 600 s), `source` (`auto` | `manual`), `cells` (the batch size). No other
+content. Each attempt:
+
+- **puts** its record right before the batch (the last step before `writer.write`);
+- **deletes** its own record when the outcome is definite: verified written, or definitely not
+  applied (nothing left the process, or Google answered 4xx);
+- **keeps** it otherwise: a lost answer, a 5xx, written but the read-back or storage afterwards
+  failed, or the request killed.
+
+No read-modify-write on a shared document, so one attempt can't erase another's record. Both
+routes use it: the automatic path through the hook, the manual confirm around its `write_update`
+call (in its route).
 
 ### The request (`POST /sheet/auto-update`)
 
-404 while writing is off or in the demo. The session is required as on every route (an expired
-session answers htmx with 401 and `HX-Redirect`, `app.py`). Otherwise, with the posted
-`fetched_at`, and the request's start time from the clock:
+404 while writing is off or in the demo; 403 unless the request is same-origin (`Origin` equal to
+the app's own origin, or, without `Origin`, `Sec-Fetch-Site: same-origin`; finding 8). The session
+is required as on every route (an expired session answers htmx with 401 and `HX-Redirect`). The
+whole request body below runs inside one `try` that turns any `RepositoryError` into **failed**
+("the app's storage failed"), never a 500. With the posted `fetched_at` and the request's start time:
 
-1. **Freshness.** Re-resolve the snapshot without fetching Yahoo (a new `RefreshService.peek()`:
-   `_stored()` plus `_with_recent_failure()`, never a Yahoo call). Silent (no banner, no log)
-   unless it is within the TTL, has no `refresh_error`, and its `fetched_at` equals the posted one.
-   So a write follows a successful Yahoo read within the TTL. The posted value needs no signature:
-   it is only compared, never trusted. A failed refresh known only to another instance doesn't make
-   that read wrong; it is the data every page shows. Rechecked before the batch (step 9).
-2. **Switch.** Off: silent.
-3. **Claim.** `sheet_auto_state/last` already holds this `fetched_at`: silent. Else store it, keeping
-   the document's other fields (step 9's marker). Best-effort (no atomic create): safety rests on
-   the re-read, the digest and step 9, not on the claim.
-4. **Unresolved earlier write.** If `sheet_auto_state/last` holds `uncertain_until` later than now
-   (step 9): skip with "an earlier write's outcome isn't known yet". Nothing is sent while a batch
-   may still land.
-5. **Pre-check (stored sheet, no Google).** `load_league_sheet`; none stored: skip ("no league
-   sheet has been read yet"). `prepare_update(repo, snapshot, stored)`: a `problem` (no tab bound,
-   an unreadable tab, ...): skip with it, since the owner turned the update on and it can't work.
-   A plan with no `changes`: silent (nothing to write; a row awaiting review with nothing to change
-   shows on Admin as today). Else go on.
-6. **Fresh read.** `read_league_sheet` (stores it, as every read does). A `LeagueSheetError` or a
-   `RepositoryError`: failed, with a fixed sentence (§2 "Reasons"). The stored check in step 5 can
-   miss a live edit to the tab since the app last read it (only the owner, or a commissioner, can
-   edit it); the next manual preview or Admin read shows it. Deliberate, for the cost.
-7. **Plan.** `prepare_update` on the fresh sheet, no ticks. A `problem`: skip with it. No changes:
-   silent (the tab was already updated by hand). Refusals: skip with the first refusal.
-8. **Identified drops.** Load the row bindings (`row_bindings`, this tab). Every row the plan
-   drops must have a stored binding to a `player_id` not on the snapshot's roster. Any other drop
-   (a row never matched, e.g. a misspelled name the matcher left unmatched): skip with "row N isn't
-   matched to a player who left your roster: check it on Update my tab" (row number only).
-   Changes that move a row into or out of IR, or fill rows, are identified by the plan already
-   (matched rows, Yahoo players).
-9. **Write.** `write_update(repo, clock, source, writer, snapshot, expected=update.digest,
-   before_write=check)`. `before_write` is a new optional hook (default none: the manual confirm
-   is unchanged), awaited after the guard and right before `writer.write`; when it returns a
-   reason, `write_update` returns `refused` with it and nothing is sent. The auto path's `check`:
-   - re-runs step 1 (still the newest snapshot, within the TTL, no error) and step 2 (switch on);
-   - refuses when more than 40 s have passed since the request started ("ran out of time before
-     writing"), leaving 20 s for the batch, read-back and log;
-   - then stores `uncertain_until = now + 600 s` in `sheet_auto_state/last` and returns none.
-   After the write, `uncertain_until` is cleared when the outcome is known (`written`, or
-   `failed`: nothing sent or a 4xx), and kept when it is `unknown` (it expires after 10 minutes,
-   as Google's "may still apply it" message suggests). A request killed after sending leaves the
-   marker set, so the next run waits. The manual confirm sets and clears the same marker around its
-   batch (in its route, not through the hook, so `write_update`'s manual behaviour is unchanged),
-   so an automatic run never sends while a manual batch is unresolved.
-   Cost: three sheet reads (steps 6, `write_update`'s own, the read-back), one write, no Yahoo
-   call; each preparation loads aliases, bindings and free-agent salaries from Firestore.
-10. **Log and banner** from the outcome.
+1. **Eligible** (above), else silent (no banner, no log).
+2. **Switch** off: silent.
+3. **Claim.** `sheet_auto_state/last` already holds this `fetched_at`: silent. Else store it.
+   Best-effort; safety rests on the attempts, the re-read, the digest and the hook.
+4. **Earlier attempts.** `all(sheet_write_attempts)`. A record whose `deadline` is in the future:
+   skip with "an earlier write's outcome isn't known yet". Records past their deadline: each is
+   logged once as **unknown** ("an earlier write's outcome is unknown: check the tab", with its
+   `source` and `cells`), deleted, and this run **forces a fresh read** (skips step 5).
+5. **Pre-check (stored sheet, no Google)**, unless forced (step 4) or the stored sheet is over 24 h
+   old. None stored: skip ("no league sheet has been read yet"). `prepare_update(repo, snapshot,
+   stored)`: a `problem`: skip with its code; no `changes`: silent; else go on.
+6. **Fresh read.** `read_league_sheet`. A `LeagueSheetError`: **failed** ("the sheet couldn't be
+   read").
+7. **Plan.** `prepare_update` on the fresh sheet, no ticks. A `problem`: skip. No changes: silent.
+   Refusals: skip with the first refusal.
+8. **Write.** `write_update(repo, clock, source, writer, snapshot, expected=update.digest,
+   before_write=hook)`. `before_write` is a new optional parameter (default none: the manual
+   confirm's behaviour is unchanged), awaited after the guard, given the **final** recomputed
+   `SheetUpdate` and the row bindings it loads, returning `None` (go) or a reason code (nothing is
+   sent, result `refused` with that code). The automatic hook, in order:
+   - **identified drops** on the final plan (finding 2): load `row_bindings` for this tab; every
+     dropped row's own key must have a binding whose `player_id` is not on the snapshot's roster,
+     and no two dropped rows may share a key or a bound `player_id`; else `unidentified_drop`
+     (row number only);
+   - `eligible(posted)` again and the switch again (`superseded`, `switched_off`);
+   - attempts again: any record with a future deadline: `earlier_unknown`;
+   - the deadline: more than 25 s since the request started: `out_of_time`;
+   - then **put the attempt record** and return `None`.
+   The send itself has the writer's own limits (token and post, 10 s each, `httpx` client), so the
+   worst case before an answer is about 45 s, leaving the read-back and log 15 s. A request killed
+   after the put keeps its record (step 4 reconciles it next time).
+9. **Log and banner** from the outcome; delete the attempt record if the outcome is definite.
 
 ### Outcomes
 
-`WriteResult` gains three fields, set where each result is made, so callers can tell outcomes
-apart without parsing text:
+`WriteResult` gains, set where each result is made (finding 6):
 
-- `kind`:
+- `kind`: `written` | `up_to_date` | `refused` | `unreadable` | `rejected` | `unknown`;
+- `code`: a reason code from the allowlist below (none for `written`, `up_to_date`);
+- `attempted`: cells in a batch that left the process (0 if none left);
+- `applied`: `"yes"` (verified, or found written after a lost answer), `"no"` (nothing left, or
+  Google answered 4xx), `"maybe"` (lost answer or 5xx, unresolved, or applied but not verified);
+- `payroll`: the PAYROLL read back when verified, else none.
 
-  | `kind` | When |
-  |---|---|
-  | `written` | Written and read back as expected |
-  | `up_to_date` | Nothing to write |
-  | `refused` | Nothing sent, by a check: the digest changed, a refusal, protections, a locked tab, the guard, the `before_write` hook |
-  | `unreadable` | Nothing sent: the sheet couldn't be read before writing |
-  | `failed` | Google refused the batch or it failed before leaving: nothing written |
-  | `unknown` | A lost answer not resolved; or sent (acknowledged, or found written after a lost answer) but the read-back, the storage afterwards, or the check failed |
+| `kind` | `applied` | When |
+|---|---|---|
+| `written` | yes | Written and read back as expected |
+| `up_to_date` | no | Nothing to write |
+| `refused` | no | Nothing sent, by a check: the digest changed (`tab_changed`), a refusal (`refusal`), protections (`others_unprotected`, `protections_unknown`), own tab locked (`own_tab_locked`), the guard (`guard`), a problem after the final read (`problem_*`), the hook (its code) |
+| `unreadable` | no | The sheet couldn't be read before writing (`sheet_unreadable`), including a `RepositoryError` while storing it, and a `RepositoryError` while preparing (`storage_failed`) |
+| `rejected` | no | Google answered 4xx (`google_refused`), or the batch never left (`not_sent`) |
+| `unknown` | maybe / yes | A lost answer unresolved (`lost_answer`); found written after a lost answer, or acknowledged, but the read-back or the storage afterwards failed (`unverified`) |
 
-- `sent`: true when the batch left (`written`, `unknown`);
-- `payroll`: the PAYROLL read back when verified (`written`), else none.
+Every lost-answer branch sets `attempted` to the batch size (today they omit the count). The manual
+confirm keeps using `ok` and `message`; its tests gain `kind`, `code`, `attempted`, `applied`
+assertions.
 
-`written` (cell count) keeps its meaning: the batch size when sent. The manual confirm keeps using
-`ok` and `message`; its behaviour and its tests don't change (they gain `kind` assertions).
-
-Auto outcomes: **written**, **skipped** (steps 4, 5, 7, 8; `refused`), **failed** (step 6;
-`unreadable`; `failed`), **unknown** (`unknown`). Silent: steps 1–3, nothing to change.
+Auto outcomes: **written**, **skipped** (steps 4–5, 7; `refused`), **failed** (step 6; `unreadable`;
+`rejected`; storage), **unknown** (`unknown`; a reconciled attempt). Silent: steps 1–3, nothing to
+change.
 
 ### Reasons (hygiene, SPEC §4a)
 
-What the log stores and the banner shows comes only from an allowlist:
+The log stores and the banner shows **only** a fixed sentence per reason code, in one table in
+`services/sheet_auto.py` (finding 5), plus, for `refusal`, the plan's first refusal (the domain's
+own wording: parsed rows inside the ranges; out-of-block IR rows by number only). `problem_*` codes
+(`problem_no_team`, `problem_unbound`, `problem_unreadable_tab`, `problem_old_sheet`) map to fixed
+sentences: the unreadable-tab sentence never quotes the parser's `reason`, which can hold the
+PAYROLL formula as written. Never a `message`, never an exception's text.
 
-- a fixed sentence per case: steps 4, 6, 8 and the hook's reasons above; `unreadable` → "the
-  sheet couldn't be read"; `failed` → "Google refused the write, or it didn't leave; nothing was
-  written"; `unknown` → "the write's outcome is unknown: check the tab"; a `refused` result from
-  the digest → "the tab changed while updating; the next fetch tries again"; from protections or a
-  locked tab → the same sentences as the manual page minus any exception text;
-- a `problem` from `build_update` (the service's own sentences; the unreadable-tab one quotes the
-  parser's `reason`, which names no cell);
-- the plan's first refusal (the domain's wording: parsed rows within the ranges, out-of-block IR
-  rows by number only, DECISIONS 2026-10-30 round 3).
-
-Never a `LeagueSheetError`'s or `RepositoryError`'s text, which can quote Google, Firestore or sheet
-metadata. Each `WriteResult` kind maps to its sentence, so the auto path never forwards
-`result.message`.
-
-**Changes** in a written entry: `"<action> <name>"` from the plan's changes. Drop and IR-move
-names are parsed rows inside the payroll range or the IR block (the parsed ranges SPEC §4a allows
-the app to persist and render; the stored sheet holds them already); a named IR row outside the
-block never appears in changes (DECISIONS 2026-11-16, finding 3). Adds are Yahoo names.
+**Changes** in a written entry: `"<action> <name>"` from the plan's changes (parsed rows inside the
+payroll range or IR block, which SPEC §4a lets the app persist and render; Yahoo names for adds).
 
 ### Log entry
 
-One document per entry in `sheet_auto_log`, ID `<at in ms, 13 digits>-<8 random hex>` (sortable,
-collision-safe), holding only `at` (epoch seconds), `outcome` (`written` | `skipped` | `failed` |
-`unknown`), `changes` (list, written only), `cells` (`written`, the batch size when sent, else 0),
-`payroll_after` (verified only, else none), `reason` (allowlisted, none for written). Listed by ID
-descending. A skip whose `reason` equals the newest entry's, when that entry is also a skip, is not
-logged again (its banner still shows). After each new entry, entries beyond the newest 50 are
-deleted. A Firestore failure while logging is logged by type only and doesn't change the banner.
+One document per entry in `sheet_auto_log`, ID `<at in ms, 13 digits>-<8 random hex>`, holding only
+`at`, `outcome` (`written` | `skipped` | `failed` | `unknown`), `code`, `source` (`auto`, or the
+reconciled attempt's), `changes` (written only), `cells` (`attempted`), `payroll_after` (verified
+only), `reason` (the fixed sentence, or the refusal). Listed by ID descending. A skip with the same
+`code` and `reason` as the newest entry, when that entry is a skip, is not logged again (the banner
+still shows). After each new entry, entries beyond the newest 50 are deleted. A Firestore failure
+while logging is logged by type only.
 
 ### Banner
 
-The fragment that replaces the trigger, in the page's existing flash styles (`ok`, `error`),
-escaped by Jinja, with allowlisted text only:
+The fragment that replaces the trigger, in the existing flash styles, escaped, fixed text only:
 
 - **written** (ok): "Your tab was updated: drop A, add B (8 cells). PAYROLL is now $X." with a link
   "Log" to Admin's log.
 - **skipped** / **failed** (error): "Your tab wasn't updated automatically: <reason>." with a link
-  "Update my tab" (`/admin/sheet/update`).
+  "Update my tab".
 - **unknown** (error): "The automatic update of your tab may not have gone through: <reason>.
   Check it on Update my tab." with the link.
 - silent: an empty fragment.
 
 ### Admin
 
-- In the League sheet card, next to the "Update my tab" link, shown only while writing is on: a
-  form with a checkbox "Auto-update my tab" and Save (`POST /admin/sheet/auto`), flash as Admin's
-  other forms.
-- Below it, "Automatic updates": the log, newest first (time ago, outcome, changes or reason), or
-  "None yet." Only while writing is on (one small collection read).
-
-### Request origin
-
-The new POSTs are protected as every POST in the app: the session cookie is `SameSite=Lax`, so a
-cross-site form post carries no session and gets the login redirect. No CSRF token is added
-(AU-P1 finding 10, rejected in part: §6). The automatic endpoint takes no content from the request
-except the compared `fetched_at`; it writes only what the server computes.
+- In the League sheet card, next to "Update my tab", only while writing is on: a checkbox
+  "Auto-update my tab" and Save (`POST /admin/sheet/auto`, same-origin check as above; flash as
+  Admin's other forms).
+- "Automatic updates": the log, newest first, or "None yet." Only while writing is on.
 
 ### What doesn't change
 
-The manual Update page's preview and confirm (apart from the checked-snapshot and uncertain marks
-around its batch), the domain planner, the protections, the digest, the 10-minute confirm, the
-forced Yahoo refresh on the manual confirm, Yahoo read-only, own tab only, values only.
+The manual Update page's preview and confirm (apart from the checked-snapshot mark and the attempt
+record around its batch), the domain planner, the protections, the digest, the 10-minute confirm,
+the forced Yahoo refresh on the manual confirm, Yahoo read-only, own tab only, values only.
 
 ## 3. Phases
 
 Each phase one commit, gates green. No `domain/` module changes, so no mutmut run (if one turns out
 to be needed, stop and ask team-lead).
 
-1. **Service.** `RefreshService.peek()`; `WriteResult.kind`, `sent`, `payroll` in every return of
-   `write_update`, and its `before_write` hook; a new `services/sheet_auto.py` with the switch
-   (load/save), the state document (checked snapshot, `uncertain_until`), the log (append with
-   dedupe and pruning, load newest first) and `auto_update(...)` returning an outcome (kind,
-   banner text, log entry or none). Tests first, with the existing fakes (in-memory repository,
-   fake sheet source, recording writer, fixed clock):
-   - `write_update`: each return's `kind`, `sent` and `payroll`, including the lost-answer
-     wrapper (found written; then storage fails, and read-back mismatch), an acknowledged batch
-     whose read-back fails, and a `RepositoryError` while reading before the write (now
-     `unreadable`, not an exception); the hook refusing sends nothing; no hook, unchanged
-     behaviour;
-   - `peek()` never calls the Yahoo source; it returns the recent-failure note;
-   - each silent case writes nothing and logs nothing: outside the TTL, `refresh_error` (failed
-     refresh and "not saved"), posted `fetched_at` not the served one, an unreadable newer stored
-     snapshot (the older one is served: mismatch), switch off, already claimed, stored tab
-     already matches, fresh tab already matches;
-   - the stored tab matches: the sheet source is never called;
-   - a clean, identified plan is written (the recording writer gets exactly the plan's edits),
-     logged with its changes, cells and PAYROLL; `uncertain_until` is cleared;
-   - each skip writes nothing and is logged with its reason: a `problem` on the stored sheet (no
-     tab bound), over the cap, a row awaiting review, an unknown cap hit, other tabs unprotected,
-     own tab locked, `uncertain_until` in the future;
-   - **an unidentified drop**: a synthetic tab where a rostered player's row is misspelled past
-     the matcher (unmatched, no binding) and the roster is unchanged: the writer receives no
-     edits, the skip names the row by number; a bound row whose player left: written;
-   - the hook: the snapshot superseded during preparation, the TTL passed during preparation, the
-     switch turned off, more than 40 s elapsed (a clock the fake source advances): nothing sent;
-   - a lost answer: `unknown`, `uncertain_until` kept; the next run within 10 minutes skips, after
-     it runs;
-   - hygiene: a sentinel string in the fake `LeagueSheetError` (on the step-6 read, on
-     `write_update`'s own read, on a lost answer) and in a `RepositoryError` appears neither in the
-     stored log entry nor in the banner text; an out-of-block IR row's name appears in neither;
-   - the log: the same skip twice is one entry; a skip after a failed with the same sentence is
-     logged; equal timestamps keep both entries in a stable order; the 51st entry deletes the
-     oldest;
-   - two runs on one snapshot (the claim bypassed): the second writes nothing (digest or no
-     changes).
-2. **Web.** `page_data` sets the trigger in `request.state` (full pages only); `render` passes
-   it; `base.html` emits the element; the Update page opts out; the manual confirm marks the
-   checked snapshot and sets and clears `uncertain_until` around its batch; `POST
-   /sheet/auto-update` returns the banner fragment; Admin's switch form and log. Tests:
-   - a page with an unchecked snapshot within the TTL carries the trigger with its `fetched_at`; a
-     checked one, a stale one, one with `refresh_error`, the switch off, writing off and the demo
-     carry none; the Update page and `/players/rows` never do;
-   - after `/refresh` (POST, redirect), the page carries the trigger for the new snapshot;
-   - a pre-existing unchecked snapshot within the TTL (first activation) carries it;
-   - the manual confirm: its redirect carries no trigger, its snapshot is marked checked, and a
-     lost answer there makes the next automatic POST skip with the earlier-write sentence (the
-     writer's batch count stays 1);
-   - the endpoint answers 404 with writing off and in the demo; without a session it redirects to
-     login, and with `HX-Request` it answers 401 with `HX-Redirect`;
-   - each banner's text and link; a skip links to Update my tab; a silent run returns an empty
-     fragment;
-   - Admin: the switch shows only while writing is on, saves, and the log lists entries newest
-     first.
-3. **Docs.** SPEC: §1 "Added after Phase 1" (writes on a tap, or automatically when the app fetches
-   Yahoo, if the switch is on); §2 "Refresh model" ("no background jobs: nothing runs except in a
-   request; the automatic tab update is a request the page makes after it loads"); §4a "Writing":
-   the existing sentences "Before writing, ..." and "the one the owner saw" qualified as the manual
-   path, and a paragraph "Automatic update" (§2 of this plan, short: trigger, freshness, identified
-   drops, the hook, the marker, the log); §7.5 Admin (the switch and the log). DECISIONS: a dated
-   entry recording the reversal of the 2026-10-30 answer, the owner's three decisions,
-   team-lead's decisions with alternatives (including the rejected cross-instance lock and CSRF
+1. **Service.** `RefreshService.saved_generation()` and `eligible()`; `WriteResult`'s new fields in
+   every return of `write_update`, and `before_write`; `services/sheet_auto.py` (switch, state,
+   attempts, log, reason table, `auto_update`). Tests first, with the existing fakes:
+   - `write_update`: every return's `kind`, `code`, `attempted`, `applied`, `payroll`, including
+     each lost-answer branch, an acknowledged batch whose read-back fails, a `RepositoryError` while
+     storing the pre-write read and while preparing (no exception escapes); the hook gets the final
+     update; a hook code sends nothing; no hook: unchanged behaviour;
+   - `eligible`: true for the saved generation within the TTL; false for a mismatch, outside the
+     TTL, a recent failure in this process, an already-rendered trigger for A after a newer B is
+     saved but undecodable, and B while B's save is stalled (the meta still names A); it never
+     calls the Yahoo source;
+   - each silent case writes and logs nothing; the stored tab matching means the sheet source is
+     never called; a stored sheet over 24 h old is read afresh;
+   - a clean, identified plan is written exactly, logged, its attempt record deleted;
+   - each skip writes nothing and is logged with its code: a stored `problem`, over the cap, a
+     review row, an unknown cap hit, unprotected tabs, own tab locked, an unexpired attempt;
+   - identified drops on the final plan: a synthetic misspelled current player's row (no binding):
+     no edits; two rows sharing a departed player's key or bound id: no edits; a binding removed
+     between the preview plan and the final plan: no edits; a bound row whose player left: written;
+   - the hook: superseded, switched off, out of time (a slow fake marker write or token), an
+     attempt appearing during preparation: nothing sent, no record left;
+   - attempts: a lost answer keeps the record; the next run within the deadline skips; after it,
+     logs one unknown, deletes it and reads Google even though the stored sheet matches; a killed
+     request (the record put, no outcome) is reconciled the same way; two attempts: one's success
+     deletes only its own record; a manual attempt with a lost answer makes the automatic one skip;
+   - hygiene: sentinel strings in a `LeagueSheetError` (each read, the write, the lost answer), a
+     `RepositoryError`, and a synthetic unreadable PAYROLL formula containing a literal appear in
+     neither the stored entry nor the banner; an out-of-block IR row's name appears in neither;
+   - the log: dedupe only after the same skip; equal timestamps keep both; the 51st deletes the
+     oldest.
+2. **Web.** The trigger (`request.state`, `render`, `base.html`; the Update page and fragments opt
+   out); the manual confirm's checked mark and attempt record; the endpoint; Admin's switch and log;
+   the same-origin check. Tests:
+   - the trigger on an unchecked eligible snapshot; none for checked, stale, errored, switch off,
+     writing off, the demo, the Update page and `/players/rows`;
+   - after `/refresh` with `next` a rated page: the trigger for the new snapshot; with `next` the
+     Update page: none (the narrowed contract, pinned);
+   - first activation: a pre-existing unchecked eligible snapshot carries it;
+   - the manual confirm: no trigger after its redirect, its snapshot marked checked, a lost answer
+     there makes the next automatic POST skip (batch count stays 1);
+   - the endpoint: 404 with writing off and in the demo; 403 for a cross-origin `Origin`, and for a
+     same-site but different origin; allowed for the app's own origin; login redirect without a
+     session, 401 with `HX-Redirect` for htmx; a `RepositoryError` anywhere gives a failed banner,
+     not a 500;
+   - each banner's text and link; a silent run returns an empty fragment;
+   - Admin: the switch only while writing is on, saves, 403 cross-origin; the log newest first.
+3. **Docs.** SPEC: §1 "Added after Phase 1"; §2 "Refresh model" ("no background jobs: nothing runs
+   except in a request; the automatic tab update is a request the page makes after it loads"); §4a
+   "Writing": the sentences "Before writing, ..." and "the one the owner saw" qualified as the manual
+   path, and a paragraph "Automatic update" (trigger contract, eligibility, identified drops, the
+   hook, attempts, the 24-hour read, the log); §7.5 Admin. DECISIONS: a dated entry recording the
+   reversal of the 2026-10-30 answer, the owner's three decisions, team-lead's decisions with
+   alternatives (the rejected lock with its 24-hour bound; the same-origin check instead of a
    token), and what replaces the owner's tap as the check on a silent mistake: identified drops,
-   the same guards and read-back, the banner on the page that triggered it, and the log on Admin.
-   `docs/plans/league-sheet-update.md`: a dated note at its top ("writes only after the owner
-   taps" is historical since 2026-11-27), under the answers table and on the risk row "A silent
-   mistake", each pointing to the new entry (the history stays as written). This plan's status.
+   the same guards and read-back, attempt records, the banner and the log.
+   `docs/plans/league-sheet-update.md`: a dated note at its top, under the answers table and on the
+   risk row "A silent mistake", each pointing to the new entry. This plan's status.
 
 ## 4. Risks
 
 | Risk | Mitigation |
 |---|---|
-| A write the owner didn't look at | Only a clean plan whose drops are identified is written, through the same checks as a tap (digest, protections, guard, read-back); the banner says what was written; the log keeps it; Sheets version history allows copying old cells back. The switch turns it off. |
-| A misspelled row dropped and its player re-added | Identified drops only (§2 step 8); an unidentified row goes to the manual page. |
-| A write from an old roster | Freshness at admission and again right before the batch (§2 steps 1, 9). |
-| Two runs on two snapshots overlapping (two Refresh taps seconds apart, two instances) | Residual. The hook narrows it to the batch itself (a superseded snapshot sends nothing); if the older batch still lands last, the next fetch corrects the tab. Two runs on one snapshot write the same values. No cross-instance lock (§1). |
-| A second batch while one may still land | `uncertain_until`, set before every batch (manual and automatic), kept on an unknown outcome, 10 minutes. |
+| A write the owner didn't look at | Only a clean plan whose drops are identified on the final plan is written, through the same checks as a tap; banner and log; Sheets version history; the switch. |
+| A misspelled row dropped and its player re-added | Identified drops on the final plan (§2 step 8). |
+| A write from an old roster | `eligible` (the saved generation, within the TTL) at admission and in the hook. |
+| Overlapping batches (two fetches seconds apart, two instances, manual and automatic) | Attempt records: an unresolved batch blocks the next and forces a fresh read once it expires; read-backs catch most orders; the 24-hour fresh read bounds the rest. No lock (§1). |
+| A request killed after sending | Its attempt record stays; the next run logs it as unknown and reads Google afresh. |
 | A half-done Yahoo move written | Accepted (no settle delay); the next fetch completes it. |
-| A live edit to the tab missed by the stored pre-check | Accepted for the cost; the manual page and Admin's read show it. |
-| The time limit | The hook refuses after 40 s, before sending; three reads, one write, no Yahoo call. A kill after sending leaves the marker. |
-| The log or banner leaks a Google or Firestore error's text | Allowlisted reasons; sentinel tests on every read and the lost answer. |
-| Merge turns it on in production | On by default, by the owner's decision: if `FHA_SHEET_WRITE=1` is set there, the first full page while a fetched snapshot is unchecked and within the TTL (possibly the snapshot already cached at deploy) writes a clean, identified difference. Said in the PR, so the owner knows when he OKs the merge. |
+| A live edit to the tab missed by the stored pre-check | Seen within 24 h (fresh read), or at once on the manual page. |
+| A fetch with no full page after it | The narrowed trigger contract (§2); the next fetch runs it. |
+| The log or banner leaks a Google, Firestore or formula text | Reason codes with fixed sentences; sentinel tests. |
+| A same-site page posting to the app | Same-origin check on both new POSTs. |
+| Merge turns it on in production | On by default, by the owner's decision: if `FHA_SHEET_WRITE=1` is set there, the first full page while the saved snapshot is unchecked and within the TTL (possibly the one cached at deploy) writes a clean, identified difference. Said in the PR. |
 
 ## 5. Open questions
 
@@ -357,3 +351,21 @@ The report is posted verbatim on PR #29. Each finding was checked against the co
 | 10 | Medium | The new POSTs need a request-origin rule | **Accepted in part.** The htmx 401 + `HX-Redirect` and login-redirect tests are added. **Rejected:** a CSRF token. Checked: every POST in the app relies on the `SameSite=Lax` session cookie (`app.py:257`), which a cross-site POST doesn't carry; the automatic endpoint takes no content but a compared timestamp and writes only what the server computes. Recorded in DECISIONS |
 | 11 | Low | Time-only log IDs collide; dedupe can hide a skip after a failure | **Accepted.** ID with a random suffix; dedupe only against a previous skip; tests |
 | 12 | Low | Docs must qualify the manual-only sentences | **Accepted.** SPEC §4a's "Before writing" and "the one the owner saw" qualified; a dated note at the top of the old plan (Phase 3) |
+
+### AU-P2 (quality-mgr, gpt-6.2-sol, at `b4f08ba`): not ready, 8 findings (1 High, 7 Medium)
+
+The report is posted verbatim on PR #29. Each finding was checked against the code. quality-mgr
+accepted AU-P1's answers to findings 4 (the TTL contract), 7 (change names), 11 and 12.
+
+| # | Sev | Finding | Triage |
+|---|---|---|---|
+| 1 | High | The shared marker permits overlapping batches, can be cleared by another attempt, and a late older batch after a newer stored read-back makes the pre-check skip Google indefinitely | **Accepted.** Checked: `put` is create-or-replace (`repository.py:59`); the read-back stores the sheet (`league_sheet.py:49`); the pre-check is silent on no changes. Replaced the marker with write-ahead attempt records, one document per attempt, deleted only by their own attempt and only on a definite outcome; an expired record is logged as unknown and forces a fresh read; a 24-hour fresh read bounds the remaining orders (§1, §2 "Attempts"). **Rejected in part:** a conditional-acquisition lock (no atomic primitive in `Repository`; the divergence it prevents is now detected and repaired, bounded at 24 h) |
+| 2 | Medium | The drop proof uses a reusable key and applies only to the preliminary plan | **Accepted.** Checked: `row_key` is name + position group (`free_agents.py:45`); bindings persist after a row stops matching (`league_sheet.py:355`). The check moves into the hook, on the final recomputed plan; no two drops may share a key or a bound player; tests for reuse and a binding removed between plans |
+| 3 | Medium | A matching posted timestamp doesn't prove the saved generation | **Accepted.** Checked: `_stored()` serves memory when the newer stored generation is unreadable (`refresh.py:197-201`), and memory is set before the save (`refresh.py:145-147`). `eligible` reads the saved meta directly; tests for both cases |
+| 4 | Medium | A Refresh on the Update page, or a fragment fetch, has no follow-up | **Accepted as a narrowed contract.** Checked: `/refresh` redirects to `safe_next(next)` (`players.py:133-134`). The contract is now "the first full page after a fetch, while it is the saved one within the TTL"; both gaps are stated and the Update-page case is pinned by a test; the next fetch runs it |
+| 5 | Medium | `problem` text can carry the PAYROLL formula; `refused` has no reason discriminator | **Accepted.** Checked: `parse.py:175` quotes the formula; `sheet_update.py:104` interpolates `tab.reason`. Reason codes with fixed sentences for every kind; the unreadable-tab sentence never quotes the reason; a sentinel formula test |
+| 6 | Medium | Transmission and application are conflated; preparation storage failures escape | **Accepted.** Checked: a 4xx is raised after the post (`writer.py:118-131`); the lost-answer returns omit the count (`sheet_update.py:295-315`). `WriteResult` gains `attempted` and `applied` (yes/no/maybe) with a table; `RepositoryError` during preparation becomes `unreadable`/`storage_failed`; the endpoint turns any `RepositoryError` into a failed banner |
+| 7 | Medium | The cutoff precedes awaited work; a killed request leaves no record | **Accepted.** Checked: `writer.write` awaits `_token()` before posting (`writer.py:113`). The cutoff is 25 s and comes before the record's put; the writer's own 10 s limits bound the rest (about 45 s worst case); a killed request leaves its attempt record, which the next run reconciles into the log |
+| 8 | Medium | The Admin switch has no same-site origin protection | **Accepted.** A same-origin check (`Origin`, else `Sec-Fetch-Site`) on both new POSTs; tests for cross-origin and same-site different-origin requests |
+
+AU-P1's finding 6 note (§0's "anything else" against the silent refusal-only plan) is fixed in §0.

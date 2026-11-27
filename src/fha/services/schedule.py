@@ -17,6 +17,7 @@ from fha.sources.nhl.schedule import SCHEDULE_TIMEOUT, ScheduleError, ScheduleSo
 from fha.storage.repository import Document, Repository, RepositoryError
 
 COLLECTION = "schedule"
+FAILURES = "schedule_failures"
 EASTERN = ZoneInfo("America/New_York")
 FRESH_SECONDS = 6 * 3600
 RETRY_SECONDS = 5 * 60
@@ -76,14 +77,16 @@ async def _cached_or_fresh(
     age = _age(now, cached.get("fetched_at"))
     if age is not None and age < FRESH_SECONDS:
         return Tonight(day, tonight_games(_games(cached)), "fresh")
-    failed_ago = _age(now, cached.get("failed_at"))
+    failure = await repo.get(FAILURES, key)
+    # Older cache documents kept the failure timestamp beside the games.
+    failed_ago = _age(now, (cached if failure is None else failure).get("failed_at"))
     if failed_ago is None or failed_ago >= RETRY_SECONDS:
         try:
             async with asyncio.timeout(SCHEDULE_TIMEOUT):
                 games = await source.games_on(day)
         except (ScheduleError, TimeoutError):
             now = clock.now()
-            await repo.put(COLLECTION, key, {**cached, "failed_at": now})
+            await repo.put(FAILURES, key, {"failed_at": now})
             age = _age(now, cached.get("fetched_at"))
         else:
             await repo.put(

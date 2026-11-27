@@ -47,6 +47,23 @@ def test_an_explicitly_empty_date_is_an_off_day() -> None:
     assert parse_schedule(slate(), DAY) == ()
 
 
+def test_a_nonempty_slate_with_no_usable_records_is_unavailable() -> None:
+    malformed = {
+        "awayTeam": {"abbreviation": "BOS"},
+        "homeTeam": {"abbreviation": "TBL"},
+        "gameType": 2,
+    }
+    with pytest.raises(ScheduleError, match="no usable games"):
+        parse_schedule(slate(malformed, {"homeTeam": {"abbrev": "TOR"}}, None), DAY)
+
+
+def test_a_valid_slate_with_only_excluded_types_is_usable_but_yields_no_tonight_teams() -> None:
+    preseason = {"awayTeam": {"abbrev": "BOS"}, "homeTeam": {"abbrev": "TBL"}, "gameType": 1}
+    parsed = parse_schedule(slate({}, preseason), DAY)
+    assert parsed == (Game("BOS", "TBL", None, 1),)
+    assert tonight_games(parsed) == {}
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -27,7 +27,7 @@
 {% endfor %}
 {% if next_start is not none %}
 <tr class="more"><td colspan="{{ colspan }}">
-  <a class="btn secondary" href="{{ url('/players', params, start=next_start|string, night=paging_night) }}"
-     hx-get="{{ url('/players/rows', params, start=next_start|string, night=paging_night) }}" hx-target="closest tr" hx-swap="outerHTML">Show {{ [left, page_size]|min }} more <span class="muted">({{ left }} left)</span></a>
+  <a class="btn secondary" href="{{ url('/players', params, start=next_start|string, night=paging_night, slate=paging_slate) }}"
+     hx-get="{{ url('/players/rows', params, start=next_start|string, night=paging_night, slate=paging_slate) }}" hx-target="closest tr" hx-swap="outerHTML">Show {{ [left, page_size]|min }} more <span class="muted">({{ left }} left)</span></a>
 </td></tr>
 {% endif %}

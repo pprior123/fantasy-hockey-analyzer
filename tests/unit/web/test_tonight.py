@@ -122,6 +122,8 @@ def test_today_filter_keeps_counts_and_order_across_both_paging_paths() -> None:
     for start in range(PAGE_SIZE, len(expected), PAGE_SIZE):
         links = show_more(page)
         assert links is not None
+        slate = params(links[0])["slate"]
+        assert re.fullmatch(r"[0-9a-f]{12}", slate)
         for href in links:
             assert params(href) == {
                 "tonight": "1",
@@ -129,6 +131,7 @@ def test_today_filter_keeps_counts_and_order_across_both_paging_paths() -> None:
                 "season": "last",
                 "start": str(start),
                 "night": DAY.isoformat(),
+                "slate": slate,
             }
         page = c.get(links[0]).text
         part = c.get(links[1]).text
@@ -278,6 +281,67 @@ def test_show_more_after_eastern_midnight_asks_for_a_reload_without_appending_ro
     next_link = show_more(new_page)
     assert next_link is not None
     assert params(next_link[1])["night"] == "2026-11-28"
+
+
+@pytest.mark.parametrize("change", ["recovered", "unavailable", "different-teams"])
+def test_same_night_slate_changes_reload_the_table_before_appending(change: str) -> None:
+    clock = FakeClock(NOW)
+    svc = make_services(clock)
+    source = Source(GAMES, fail=change == "recovered")
+    svc.schedule_source = source
+    c = client(svc)
+    original = c.get("/players?owner=all&tonight=1&sort=name").text
+    links = show_more(original)
+    assert links is not None
+    assert tonight_lit(original) == (change != "recovered")
+
+    if change == "recovered":
+        clock.t += 300
+        source.fail = False
+    elif change == "unavailable":
+        asyncio.run(svc.repo.delete(COLLECTION, DAY.isoformat()))
+        source.fail = True
+    else:
+        clock.t += 6 * 3600
+        source.games = GAMES[1:]
+
+    plain, htmx = links
+    response = c.get(htmx)
+    assert response.status_code == 200
+    assert "Tonight's schedule changed" in unescape(response.text)
+    assert response.text.count("<tr>") == 1
+    assert partial_names(response.text) == []
+    original_slate = params(htmx)["slate"]
+    assert params(plain)["slate"] == original_slate
+    assert (original_slate == "off") == (change == "recovered")
+    reload = player_link(response.text, "Reload the list.")
+    assert params(reload) == {"owner": "all", "tonight": "1", "sort": "name", "start": "100"}
+    reloaded = c.get(reload).text
+    assert names_in(reloaded, "players") == names_in(c.get(plain).text, "players")
+    updated = show_more(reloaded)
+    assert updated is not None
+    updated_params = params(updated[1])
+    assert updated_params["night"] == DAY.isoformat()
+    assert updated_params["slate"] != original_slate
+    assert (updated_params["slate"] == "off") == (change == "unavailable")
+
+
+def test_same_playing_teams_can_append_if_game_times_or_provider_order_change() -> None:
+    clock = FakeClock(NOW)
+    svc = make_services(clock)
+    source = Source(GAMES)
+    svc.schedule_source = source
+    c = client(svc)
+    old = show_more(c.get("/players?owner=all&tonight=1&sort=name").text)
+    assert old is not None
+    clock.t += 6 * 3600
+    source.games = tuple(replace(game, start_utc=NOW) for game in reversed(GAMES))
+    partial = c.get(old[1])
+    assert partial.status_code == 200
+    assert len(partial_names(partial.text)) == PAGE_SIZE
+    next_links = show_more(partial.text)
+    assert next_links is not None
+    assert params(next_links[1])["slate"] == params(old[1])["slate"]
 
 
 def test_roster_marks_goalies_and_ir_but_counts_only_players_outside_ir() -> None:

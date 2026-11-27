@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Any
 
 from fastapi import APIRouter, Form, Request
@@ -59,6 +60,18 @@ def bad_request(request: Request, message: str, back: str, active: str) -> HTMLR
     )
 
 
+def _reload_list(
+    request: Request, params: dict[str, str], colspan: int, *, new_night: bool
+) -> HTMLResponse:
+    return render(
+        request,
+        "_players_reload.html",
+        colspan=colspan,
+        reload_url=url("/players", params),
+        new_night=new_night,
+    )
+
+
 @router.get("/players", response_class=HTMLResponse)
 async def players(request: Request) -> HTMLResponse:
     """The page: rows up to ``start`` + one page (``start`` is the no-JS "Show more")."""
@@ -88,13 +101,17 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
     colspan = len(COLUMNS) + (len(MONEY_COLUMNS) if mode == "money" else len(categories))
     svc = services(request)
     page_night = params.pop("night", None)
+    page_slate = params.pop("slate", None)
     day = eastern_date(svc.clock)
     if partial and page_night is not None and page_night != day.isoformat():
-        return render(
-            request, "_players_reload.html", colspan=colspan, reload_url=url("/players", params)
-        )
+        return _reload_list(request, params, colspan, new_night=True)
     slate = await tonight(svc.repo, svc.schedule_source, svc.clock, night=day)
     playing = None if slate.state == "unavailable" else slate.games
+    fingerprint = (
+        "off" if playing is None else sha256(",".join(sorted(playing)).encode()).hexdigest()[:12]
+    )
+    if partial and page_slate is not None and page_slate != fingerprint:
+        return _reload_list(request, params, colspan, new_night=False)
     rows = select(view, query, totals=mode == "totals", playing=playing)
     end = query.start + PAGE_SIZE
     shown = rows[query.start if partial else 0 : end]
@@ -114,6 +131,7 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         "team_names": {t.team_key: t.name for t in view.teams},
         "game_labels": {r.player_id: game_label(slate.matchup(r.nhl_team)) for r in shown},
         "paging_night": slate.date.isoformat() if svc.schedule_source is not None else None,
+        "paging_slate": fingerprint if svc.schedule_source is not None else None,
     }
     if partial:
         return render(request, "_player_rows.html", **context)

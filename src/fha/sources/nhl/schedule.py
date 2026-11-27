@@ -58,7 +58,10 @@ def parse_schedule(payload: object, day: date) -> tuple[Game, ...]:
             games = entry.get("games")
             if not isinstance(games, list):
                 raise ScheduleError("NHL schedule response is missing the day's games")
-            return tuple(game for raw in games if (game := _game(raw)) is not None)
+            parsed = tuple(game for raw in games if (game := _game(raw)) is not None)
+            if games and not parsed:
+                raise ScheduleError("NHL schedule response has no usable games")
+            return parsed
     raise ScheduleError(f"NHL schedule response has no entry for {requested}")
 
 

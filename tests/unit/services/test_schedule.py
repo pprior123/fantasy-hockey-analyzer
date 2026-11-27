@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from fha.domain.schedule import Game
-from fha.services.schedule import COLLECTION, eastern_date, tonight
+from fha.services.schedule import COLLECTION, FAILURES, eastern_date, tonight
 from fha.sources.nhl.schedule import ScheduleError
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import RepositoryError
@@ -89,7 +89,7 @@ async def test_failure_backoff_is_shared_by_instances_and_expires(cached: bool) 
     assert first.state == ("stale" if cached else "unavailable")
     assert first.age == (6 * 3600 if cached else None)
     assert first.games == ({"TBL": GAME, "BOS": GAME} if cached else {})
-    stored = await repo.get(COLLECTION, DAY.isoformat())
+    stored = await repo.get(FAILURES, DAY.isoformat())
     assert stored is not None
     assert stored["failed_at"] == clock.now()
     clock.t += 299
@@ -102,6 +102,52 @@ async def test_failure_backoff_is_shared_by_instances_and_expires(cached: bool) 
     assert other.calls == [DAY]
     saved = await repo.get(COLLECTION, DAY.isoformat())
     assert saved == {"games": [], "fetched_at": clock.now()}
+    assert await repo.get(FAILURES, DAY.isoformat()) == stored
+
+
+async def test_an_older_cache_record_still_observes_its_failure_backoff() -> None:
+    repo, clock, source = InMemoryRepository(), FakeClock(NOW), Source()
+    await repo.put(COLLECTION, DAY.isoformat(), {"failed_at": NOW})
+    assert (await tonight(repo, source, clock)).state == "unavailable"
+    assert source.calls == []
+    clock.t += 300
+    assert (await tonight(repo, source, clock)).state == "fresh"
+    assert source.calls == [DAY]
+
+
+@pytest.mark.parametrize("warm", [False, True], ids=["missing-slate", "expired-slate"])
+async def test_a_late_failure_cannot_overwrite_a_slate_saved_by_another_instance(
+    warm: bool,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class SlowFailure(Source):
+        async def games_on(self, day: date) -> tuple[Game, ...]:
+            self.calls.append(day)
+            entered.set()
+            await release.wait()
+            raise ScheduleError("late provider failure")
+
+    repo_a, repo_b, clock = InMemoryRepository(), InMemoryRepository(), FakeClock(NOW)
+    repo_b.collections = repo_a.collections  # separate clients for the same backing store
+    if warm:
+        await tonight(repo_a, Source((Game("EDM", "VAN", None, 2),)), clock)
+        clock.t += 6 * 3600
+    pending = asyncio.create_task(tonight(repo_a, SlowFailure(), clock))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        fresh = await tonight(repo_b, Source(), clock)
+        assert fresh.state == "fresh"
+        saved = await repo_b.get(COLLECTION, DAY.isoformat())
+        clock.t += 1
+    finally:
+        release.set()
+        await pending
+    assert await repo_a.get(COLLECTION, DAY.isoformat()) == saved
+    assert await repo_a.get(FAILURES, DAY.isoformat()) == {"failed_at": clock.now()}
+    source = Source(fail=True)
+    assert await tonight(repo_a, source, clock) == fresh
+    assert source.calls == []
 
 
 async def test_an_explicit_date_only_uses_that_dates_games() -> None:
@@ -162,4 +208,5 @@ async def test_service_budget_cancels_a_slow_source() -> None:
     assert (await tonight(repo, source, FakeClock(NOW))).state == "unavailable"
     assert source.cancelled
     assert source.calls == [DAY]
-    assert await repo.get(COLLECTION, DAY.isoformat()) == {"failed_at": NOW}
+    assert await repo.get(COLLECTION, DAY.isoformat()) is None
+    assert await repo.get(FAILURES, DAY.isoformat()) == {"failed_at": NOW}

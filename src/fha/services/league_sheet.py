@@ -384,6 +384,12 @@ async def bind_written_rows(repo: Repository, tab: str, rows: Mapping[str, str])
     await repo.put(COLLECTION, ROW_BINDINGS, {"entries": entries})
 
 
+async def load_row_bindings(repo: Repository, tab: str) -> dict[str, str]:
+    """The stored player ID for each bound row key on this tab."""
+    rows = (await _entries(repo, ROW_BINDINGS)).get(tab, {})
+    return {key: entry["player_id"] for key, entry in rows.items()}
+
+
 # ---------------------------------------------------------------- salaries for the app
 
 

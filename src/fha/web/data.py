@@ -22,7 +22,10 @@ from fha.services.league_sheet import TabReport
 from fha.services.league_view import LeagueView, Season, ViewError, build_view, load_salaries
 from fha.services.refresh import Cached, RefreshError
 from fha.services.settings import load_rating_settings
+from fha.services.sheet_auto import checked_generation, enabled
+from fha.storage.repository import RepositoryError
 from fha.web.app import services
+from fha.web.context import Services
 from fha.web.format import ago
 
 NO_DATA = (RefreshError, ViewError)
@@ -116,7 +119,10 @@ def _shown(raw: str | None) -> str | None:
 
 
 async def page_data(
-    request: Request, *, season: Season | None = None, force: bool = False
+    request: Request,
+    *,
+    season: Season | None = None,
+    force: bool = False,
 ) -> PageData:
     svc = services(request)
     settings = request.app.state.context.settings
@@ -135,4 +141,27 @@ async def page_data(
     view = build_view(
         cached.snapshot, config, salaries, season=season, baseline_min_gp=settings.baseline_min_gp
     )
+    if (
+        auto_writing_available(request, svc)
+        and request.method == "GET"
+        and not getattr(request.state, "suppress_sheet_auto", False)
+    ):
+        await _maybe_trigger_auto_update(request, svc, cached)
     return PageData(view, cached, reports, config, svc.clock.now())
+
+
+def auto_writing_available(request: Request, svc: Services) -> bool:
+    settings = request.app.state.context.settings
+    return not settings.demo and svc.sheet_writer is not None and svc.sheet is not None
+
+
+async def _maybe_trigger_auto_update(request: Request, svc: Services, cached: Cached) -> None:
+    if cached.refresh_error is not None or not svc.refresh.is_fresh(cached):
+        return
+    try:
+        switched_on = await enabled(svc.repo)
+        request.state.sheet_auto_enabled = switched_on
+        if switched_on and await checked_generation(svc.repo) != cached.fetched_at:
+            request.state.sheet_auto_trigger = cached.fetched_at
+    except RepositoryError as error:
+        log.warning("Automatic sheet update trigger unavailable (%s)", type(error).__name__)

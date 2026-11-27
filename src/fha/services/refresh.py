@@ -108,8 +108,30 @@ class RefreshService:
         self._failure: tuple[float, str] | None = None  # (when, what) of the last failure
 
     def is_fresh(self, cached: Cached) -> bool:
-        age = self._clock.now() - cached.fetched_at
+        return self._within_ttl(cached.fetched_at)
+
+    def _within_ttl(self, fetched_at: float) -> bool:
+        age = self._clock.now() - fetched_at
         return 0 <= age < self._ttl  # a timestamp from the future is not trusted
+
+    async def saved_generation(self) -> float | None:
+        """The generation named by the stored meta document."""
+        meta = await self._repo.get(CACHE, META)
+        return None if meta is None else _timestamp(meta.get("fetched_at"))
+
+    async def eligible(self, fetched_at: float) -> bool:
+        """Whether the posted generation is saved, fresh and has no recent failure."""
+        if await self.saved_generation() != fetched_at or not self._within_ttl(fetched_at):
+            return False
+        failure = self._recent_failure()
+        return failure is None or failure[0] < fetched_at
+
+    async def load_saved(self, fetched_at: float) -> Cached | None:
+        """Read exactly this fresh generation from storage, without fetching Yahoo."""
+        cached = await load_cached(self._repo)
+        if cached is not None and cached.fetched_at == fetched_at and self.is_fresh(cached):
+            return cached
+        return None
 
     async def current(self, *, force: bool = False) -> Cached:
         """The snapshot to serve: cached if fresh (and not forced), else refreshed.
@@ -178,8 +200,7 @@ class RefreshService:
     async def _stored(self) -> Cached | None:
         """The newest snapshot: from memory unless the store holds a newer fetch, so a
         warm request reads one small document instead of the whole cache."""
-        meta = await self._repo.get(CACHE, META)
-        fetched_at = None if meta is None else _timestamp(meta.get("fetched_at"))
+        fetched_at = await self.saved_generation()
         memory = self._memory
         if memory is not None and self._keep(memory, fetched_at):
             if memory.refresh_error and memory.fetched_at == fetched_at:

@@ -26,7 +26,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
@@ -56,12 +56,14 @@ from fha.services.league_sheet import (
     suggest_bindings,
 )
 from fha.services.settings import SettingsError, load_rating_settings, save_rating_settings
+from fha.services.sheet_auto import enabled, log_entries, set_enabled
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.source import XlsxLeagueSheet
 from fha.sources.puckpedia import SalaryCsvError, parse_salary_csv
 from fha.storage.repository import Repository, RepositoryError
 from fha.web.app import render, services
-from fha.web.data import NO_DATA, PageData, page_data
+from fha.web.auth import same_origin
+from fha.web.data import NO_DATA, PageData, auto_writing_available, page_data
 from fha.web.format import ago
 
 router = APIRouter()
@@ -235,6 +237,16 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         config = None
     found = await _search(svc.repo, data, q) if q else []
     team_names = {t.team_key: t.name for t in teams}
+    auto_writing = auto_writing_available(request, svc)
+    auto_enabled = getattr(request.state, "sheet_auto_enabled", None)
+    if auto_writing and auto_enabled is None:
+        auto_enabled = await enabled(svc.repo)
+    auto_log = None
+    if auto_writing:
+        try:
+            auto_log = await log_entries(svc.repo)
+        except RepositoryError as error:
+            log.warning("Automatic update log unavailable (%s)", type(error).__name__)
     return render(
         request,
         "admin.html",
@@ -268,6 +280,10 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         found=found,
         settings=settings,
         repo_kind=type(svc.repo).__name__,
+        auto_writing=auto_writing,
+        auto_enabled=auto_enabled,
+        auto_log=auto_log,
+        auto_now=svc.clock.now(),
     )
 
 
@@ -316,6 +332,32 @@ async def _search(repo: Repository, data: PageData | None, q: str) -> list[Found
 
 
 # ---------------------------------------------------------------- league sheet
+
+
+@router.post("/admin/sheet/auto")
+async def sheet_auto_switch(
+    request: Request, checked: str | None = Form(None, alias="enabled")
+) -> RedirectResponse:
+    svc = services(request)
+    if not auto_writing_available(request, svc):
+        raise HTTPException(404)
+    if not same_origin(request):
+        raise HTTPException(403)
+    if checked not in (None, "1"):
+        raise HTTPException(400)
+    value = checked == "1"
+    try:
+        await set_enabled(svc.repo, value)
+    except RepositoryError as error:
+        return _back(
+            request,
+            "error",
+            f"Auto-update my tab couldn't be saved. {_why(error)}.",
+            anchor="sheet",
+        )
+    return _back(
+        request, "ok", f"Auto-update my tab is {'on' if value else 'off'}.", anchor="sheet"
+    )
 
 
 @router.post("/admin/sheet/read")

@@ -52,11 +52,36 @@
     {% endif %}
     {# Here, not in the discrepancy report: a tab that matches has its details closed. #}
     {% if sheet and my_team_key %}<a class="btn secondary" href="/admin/sheet/update">Update my tab →</a>{% endif %}
+    {% if auto_writing %}
+    <form method="post" action="/admin/sheet/auto" class="toolbar">
+      <label><input type="checkbox" name="enabled" value="1"{% if auto_enabled %} checked{% endif %}> Auto-update my tab</label>
+      <button class="btn secondary" type="submit">Save</button>
+    </form>
+    {% endif %}
     <form method="post" action="/admin/sheet/upload" enctype="multipart/form-data" class="admin-upload">
       <label>Or upload a download (.xlsx) <input type="file" name="file" accept=".xlsx"></label>
       <button class="btn secondary" type="submit">Upload</button>
     </form>
   </div>
+  {% if auto_writing %}
+  <h3 id="automatic-updates">Automatic updates</h3>
+  {% if auto_log is none %}
+  <p class="warn">The log couldn't be read just now.</p>
+  {% elif auto_log %}
+  <ul>
+    {% for entry in auto_log %}
+    <li><strong>{{ entry.outcome|capitalize }}</strong> <span class="muted">{{ (auto_now - entry.at)|ago }}{% if entry.source == 'manual' %} · manual write{% endif %}</span>
+      {% if entry.reason %} · {{ entry.reason }}{% endif %}
+      {% if entry.changes %} · {{ entry.changes|join(", ") }}{% endif %}
+      {% if entry.cells %} ({{ entry.cells }} {{ 'cell' if entry.cells == 1 else 'cells' }}){% endif %}
+      {% if entry.payroll_after is not none %} · PAYROLL {{ money(entry.payroll_after) }}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None yet.</p>
+  {% endif %}
+  {% endif %}
 </section>
 
 <section id="bindings" class="card">

@@ -17,8 +17,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import asdict, dataclass
+import secrets
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import asdict, dataclass, replace
+from typing import Literal
 
 from fha.domain.matcher import Status
 from fha.domain.sheet_update import (
@@ -40,13 +42,20 @@ from fha.services.league_sheet import (
     RowMatch,
     TabReport,
     bind_written_rows,
+    load_row_bindings,
     read_league_sheet,
     tab_reports,
 )
 from fha.sources.league_sheet.grid import parse_a1
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet, ParsedTab
 from fha.sources.league_sheet.source import LeagueSheetSource
-from fha.sources.league_sheet.writer import LeagueSheetWriter, UncertainWriteError
+from fha.sources.league_sheet.writer import (
+    BeforePost,
+    LeagueSheetWriter,
+    NotSentError,
+    RejectedWriteError,
+    UncertainWriteError,
+)
 from fha.sources.yahoo.models import IR_SLOTS, LeagueSnapshot, Player
 from fha.storage.repository import Repository, RepositoryError
 
@@ -72,6 +81,7 @@ class SheetUpdate:
     reviews: tuple[ReviewRow, ...] = ()
     ticked: tuple[int, ...] = ()
     digest: str = ""
+    problem_code: str | None = None
 
 
 async def prepare_update(
@@ -93,18 +103,31 @@ def build_update(
 ) -> SheetUpdate:
     mine = snapshot.my_team
     if mine is None:
-        return SheetUpdate(None, "Your team isn't in the Yahoo data.", None)
+        return SheetUpdate(
+            None, "Your team isn't in the Yahoo data.", None, problem_code="problem_no_team"
+        )
     report = next((r for r in reports if r.team_key == mine.team_key), None)
     if report is None:
         return SheetUpdate(
-            None, "No tab is bound to your team yet (Admin, Tabs and Yahoo teams).", None
+            None,
+            "No tab is bound to your team yet (Admin, Tabs and Yahoo teams).",
+            None,
+            problem_code="problem_unbound",
         )
     tab = report.tab
     if tab.status != "ok" or tab.payroll is None or tab.payroll_range is None:
-        return SheetUpdate(tab, f"Your tab {tab.name!r} can't be read: {tab.reason}", None)
+        return SheetUpdate(
+            tab,
+            f"Your tab {tab.name!r} can't be read: {tab.reason}",
+            None,
+            problem_code="problem_unreadable_tab",
+        )
     if tab.name_column is None or tab.salary_column is None or tab.header_row is None:
         return SheetUpdate(
-            tab, "The stored sheet predates this feature: read the sheet again.", None
+            tab,
+            "The stored sheet predates this feature: read the sheet again.",
+            None,
+            problem_code="problem_old_sheet",
         )
     layout = _layout(tab, tab.payroll_range, tab.header_row, tab.name_column, tab.salary_column)
     rows = tuple(_row(m) for m in report.rows)
@@ -216,11 +239,54 @@ def _slots(snapshot: LeagueSnapshot) -> tuple[int, int]:
 # ---------------------------------------------------------------- the write
 
 
+WriteKind = Literal["written", "up_to_date", "refused", "unreadable", "rejected", "unknown"]
+BeforeWrite = Callable[[SheetUpdate, Mapping[str, str]], Awaitable[str | None]]
+AttemptSource = Literal["auto", "manual"]
+WRITE_ATTEMPTS = "sheet_write_attempts"
+ATTEMPT_SECONDS = 600
+
+
+@dataclass(frozen=True)
+class WriteJournal:
+    repo: Repository
+    source: AttemptSource
+
+    async def record(self, attempt_id: str, at: float, cells: int) -> None:
+        await self.repo.put(
+            WRITE_ATTEMPTS,
+            attempt_id,
+            {"at": at, "deadline": at + ATTEMPT_SECONDS, "source": self.source, "cells": cells},
+        )
+
+    async def clear(self, attempt_id: str) -> bool:
+        try:
+            await self.repo.delete(WRITE_ATTEMPTS, attempt_id)
+        except RepositoryError as error:
+            log.warning("Sheet write attempt could not be cleared (%s)", type(error).__name__)
+            return False
+        return True
+
+
 @dataclass(frozen=True)
 class WriteResult:
-    ok: bool
+    kind: WriteKind
     message: str
-    written: int = 0  # cells written (0: nothing was written)
+    code: str | None = None
+    attempted: int = 0
+    applied: Literal["yes", "no", "maybe"] = "no"
+    payroll: int | None = None
+    refusal: str | None = None
+    changes: tuple[str, ...] = ()
+    attempt_id: str | None = None
+    attempt_cleanup_failed: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.kind in ("written", "up_to_date")
+
+    @property
+    def written(self) -> int:
+        return self.attempted if self.applied == "yes" else 0
 
 
 async def write_update(
@@ -231,6 +297,11 @@ async def write_update(
     snapshot: LeagueSnapshot,
     expected: str,
     ticked: Collection[int] = (),
+    *,
+    before_write: BeforeWrite | None = None,
+    before_post: BeforePost | None = None,
+    journal: WriteJournal | None = None,
+    deadline: float | None = None,
 ) -> WriteResult:
     """Re-read the sheet, recompute the plan, and write it only if it is the one the
     owner saw (``expected`` is the preview's digest) and every other tab is protected
@@ -238,51 +309,173 @@ async def write_update(
     try:
         sheet = await read_league_sheet(repo, source, clock)
     except LeagueSheetError as e:
-        return WriteResult(False, f"Nothing was written: the sheet couldn't be read ({e}).")
-    update = await prepare_update(repo, snapshot, sheet, ticked)
+        return WriteResult(
+            "unreadable",
+            f"Nothing was written: the sheet couldn't be read ({e}).",
+            "sheet_unreadable",
+        )
+    except RepositoryError:
+        return WriteResult(
+            "unreadable", "Nothing was written: the sheet couldn't be stored.", "sheet_unreadable"
+        )
+    try:
+        update = await prepare_update(repo, snapshot, sheet, ticked)
+    except RepositoryError:
+        return _storage_failed()
     plan, tab = update.plan, update.tab
     if update.problem or plan is None or tab is None or update.layout is None:
-        return WriteResult(False, f"Nothing was written: {update.problem}")
+        return WriteResult("refused", f"Nothing was written: {update.problem}", update.problem_code)
     if plan.up_to_date:
-        return WriteResult(True, f"Nothing to write: {tab.name} already matches your roster.")
+        return WriteResult(
+            "up_to_date", f"Nothing to write: {tab.name} already matches your roster."
+        )
     if update.digest != expected:
         return WriteResult(
-            False,
+            "refused",
             "Nothing was written: the tab or your roster changed since the preview. "
             "Check the new preview.",
+            "tab_changed",
         )
     if not plan.ok:
-        return WriteResult(False, f"Nothing was written: {plan.refusals[0]}")
+        refusal = plan.refusals[0]
+        return WriteResult("refused", f"Nothing was written: {refusal}", "refusal", refusal=refusal)
     open_tabs = _unprotected(sheet, tab.name)
     if open_tabs is None:
         return WriteResult(
-            False, "Nothing was written: the sheet's protections couldn't be checked."
+            "refused",
+            "Nothing was written: the sheet's protections couldn't be checked.",
+            "protections_unknown",
         )
     if open_tabs:
         names = ", ".join(open_tabs[:4]) + (" …" if len(open_tabs) > 4 else "")
         return WriteResult(
-            False,
+            "refused",
             f"Nothing was written: the app can still edit {len(open_tabs)} other tab(s) "
             f"({names}). Protect them first (Data → Protect sheets and ranges).",
+            "others_unprotected",
         )
     if tab.name not in (sheet.editable_tabs or ()):
         return WriteResult(
-            False,
+            "refused",
             f"Nothing was written: {tab.name} is protected against the app. Add the app's "
             f"service account to its protection (Data → Protect sheets and ranges → {tab.name}).",
+            "own_tab_locked",
         )
     try:
         guard(plan.edits, update.rows, update.layout)
     except GuardError as e:  # a bug: the plan left its own allowed cells
         log.error("sheet update refused by the guard: %s", e)
-        return WriteResult(False, f"Nothing was written: {e}.")
+        return WriteResult("refused", f"Nothing was written: {e}.", "guard")
+    if before_write is not None:
+        try:
+            code = await before_write(update, await load_row_bindings(repo, tab.name))
+        except RepositoryError:
+            return _storage_failed()
+        if code is not None:
+            return WriteResult("refused", "Nothing was written: the automatic check refused.", code)
+    if journal is None:
+        return await _write_and_verify(
+            repo,
+            clock,
+            source,
+            writer,
+            snapshot,
+            tab,
+            plan,
+            update.rows,
+            update.layout,
+            deadline=deadline,
+            before_post=before_post,
+        )
+
+    attempt_id = secrets.token_hex(8)
+    post_started = False
+    recorded = False
+    cleared = True
+    result: WriteResult | None = None
+
+    def posting() -> None:
+        nonlocal post_started
+        post_started = True
+
+    try:
+        try:
+            await journal.record(attempt_id, clock.now(), len(plan.edits))
+        except RepositoryError:
+            result = _storage_failed()
+        else:
+            recorded = True
+            result = await _write_and_verify(
+                repo,
+                clock,
+                source,
+                writer,
+                snapshot,
+                tab,
+                plan,
+                update.rows,
+                update.layout,
+                deadline=deadline,
+                before_post=before_post,
+                on_send=posting,
+            )
+    finally:
+        if not post_started or (result is not None and result.kind != "unknown"):
+            cleared = await journal.clear(attempt_id)
+    return replace(
+        result,
+        attempt_id=attempt_id if recorded or not cleared else None,
+        attempt_cleanup_failed=not cleared,
+    )
+
+
+def _storage_failed() -> WriteResult:
+    return WriteResult(
+        "unreadable", "Nothing was written: the app's storage failed.", "storage_failed"
+    )
+
+
+async def _write_and_verify(
+    repo: Repository,
+    clock: Clock,
+    source: LeagueSheetSource,
+    writer: LeagueSheetWriter,
+    snapshot: LeagueSnapshot,
+    tab: ParsedTab,
+    plan: UpdatePlan,
+    rows: Sequence[TabRow],
+    layout: TabLayout,
+    *,
+    deadline: float | None = None,
+    before_post: BeforePost | None = None,
+    on_send: Callable[[], None] | None = None,
+) -> WriteResult:
     lost: UncertainWriteError | None = None
     try:
-        await writer.write(tab, plan.edits)
+        if deadline is None and before_post is None and on_send is None:
+            await writer.write(tab, plan.edits)
+        else:
+            await writer.write(
+                tab, plan.edits, deadline=deadline, before_post=before_post, on_send=on_send
+            )
     except UncertainWriteError as e:  # Google may have applied it: look before saying
         lost = e
+    except RejectedWriteError as e:
+        return WriteResult(
+            "rejected",
+            f"The write failed and nothing was changed ({e}).",
+            "google_refused",
+            attempted=len(plan.edits),
+        )
+    except NotSentError as e:
+        if e.code == "storage_failed":
+            return _storage_failed()
+        kind: WriteKind = "refused" if e.code in ("superseded", "switched_off") else "rejected"
+        return WriteResult(kind, f"The write failed and nothing was changed ({e}).", e.code)
     except LeagueSheetError as e:
-        return WriteResult(False, f"The write failed and nothing was changed ({e}).")
+        return WriteResult(
+            "rejected", f"The write failed and nothing was changed ({e}).", "not_sent"
+        )
     written = len(plan.edits)
     try:
         after: ParsedSheet | None = None
@@ -293,29 +486,41 @@ async def write_update(
                 landed = await _landed(repo, snapshot, after, plan)
             except LeagueSheetError as e:
                 return WriteResult(
-                    False,
+                    "unknown",
                     f"The write's outcome is unknown ({lost}), and the tab couldn't be read "
                     f"to check ({e}). Check the tab before writing again.",
+                    "lost_answer",
+                    attempted=written,
+                    applied="maybe",
                 )
             except RepositoryError as e:  # not "Written": nothing is known yet
                 log.warning("checking a lost write, the app's storage failed (%s)", e.summary)
                 return WriteResult(
-                    False,
+                    "unknown",
                     f"The write's outcome is unknown ({lost}), and the app's storage failed "
                     "while checking. Check the tab before writing again.",
+                    "lost_answer",
+                    attempted=written,
+                    applied="maybe",
                 )
             if landed is False:  # Google may still be applying it: not a "no"
                 return WriteResult(
-                    False,
+                    "unknown",
                     f"Google's answer was lost ({lost}) and the tab shows no change yet, but "
                     "Google may still apply it. Open this page again in a minute before "
                     "writing again.",
+                    "lost_answer",
+                    attempted=written,
+                    applied="maybe",
                 )
             if landed is None:
                 return WriteResult(
-                    False,
+                    "unknown",
                     f"The write's outcome is unknown ({lost}): the tab holds neither the old "
                     "cells nor the new ones. Check the tab.",
+                    "lost_answer",
+                    attempted=written,
+                    applied="maybe",
                 )
         log.info(
             "sheet update written to %s: %s",
@@ -323,19 +528,23 @@ async def write_update(
             "; ".join(f"{c.action} {c.name}" for c in plan.changes),
         )
         # Google has the change now: from here on, say so whatever fails
-        await bind_written_rows(repo, tab.name, _added_keys(plan, update.rows, update.layout))
+        await bind_written_rows(repo, tab.name, _added_keys(plan, rows, layout))
         result = await _read_back(repo, clock, source, snapshot, plan, written, after)
+        if result.kind == "written":
+            result = replace(result, changes=tuple(f"{c.action} {c.name}" for c in plan.changes))
         if lost is not None:
             lead = "Google's answer was lost, but the write went through. "
-            return WriteResult(result.ok, lead + result.message, result.written)
+            return replace(result, message=lead + result.message)
         return result
     except RepositoryError as e:
         log.warning("after the sheet write, the app's storage failed (%s)", e.summary)
         return WriteResult(
-            False,
+            "unknown",
             f"Written ({written} cells), but the app's storage failed afterwards. "
             "Check the tab, then read the sheet again (Admin).",
-            written,
+            "unverified",
+            attempted=written,
+            applied="yes",
         )
 
 
@@ -411,7 +620,13 @@ async def _read_back(
     """Read the tab back (or use ``sheet``, already read after the write) and check it."""
 
     def failed(why: str) -> WriteResult:
-        return WriteResult(False, f"Written ({written} cells), but {why}. Check the tab.", written)
+        return WriteResult(
+            "unknown",
+            f"Written ({written} cells), but {why}. Check the tab.",
+            "unverified",
+            attempted=written,
+            applied="yes",
+        )
 
     if sheet is None:
         try:
@@ -437,10 +652,12 @@ async def _read_back(
     if after.plan.changes:
         return failed("the tab still differs from your roster")
     return WriteResult(
-        True,
+        "written",
         f"Written: {written} cells on {after.tab.name}. PAYROLL is now {_money(payroll)}, "
         "as expected.",
-        written,
+        attempted=written,
+        applied="yes",
+        payroll=payroll,
     )
 
 

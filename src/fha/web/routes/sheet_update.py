@@ -18,6 +18,8 @@ Hygiene (SPEC §4a): only parsed fields reach the page.
 from __future__ import annotations
 
 import logging
+import math
+import time
 from typing import Any
 from urllib.parse import urlencode
 
@@ -27,10 +29,17 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from fha.services.league_sheet import load_league_sheet, read_league_sheet
 from fha.services.settings import SettingsError
-from fha.services.sheet_update import prepare_update, write_update
+from fha.services.sheet_auto import (
+    auto_update,
+    has_unresolved_attempt,
+    mark_checked,
+    record_manual_attempt_outcome,
+)
+from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal, prepare_update, write_update
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.storage.repository import RepositoryError
 from fha.web.app import render, services
+from fha.web.auth import same_origin
 from fha.web.data import NO_DATA, page_data
 from fha.web.format import ago
 from fha.web.routes.admin import MAX_FLASH, _flash, _short, _signer
@@ -77,6 +86,7 @@ async def fresh_sheet(request: Request) -> tuple[ParsedSheet | None, float | Non
 @router.get("/admin/sheet/update", response_class=HTMLResponse)
 async def sheet_update_page(request: Request) -> HTMLResponse:
     svc = services(request)
+    request.state.suppress_sheet_auto = True
     try:
         data = await page_data(request)
     except NO_DATA as e:
@@ -91,6 +101,16 @@ async def sheet_update_page(request: Request) -> HTMLResponse:
     )
     writing = svc.sheet_writer is not None
     ready = writing and update.plan is not None and update.plan.ok and update.plan.edits
+    attempt_warning = None
+    if writing:
+        try:
+            if has_unresolved_attempt(await svc.repo.all(WRITE_ATTEMPTS), svc.clock.now()):
+                attempt_warning = (
+                    "An earlier write's outcome isn't known yet: check the tab before confirming."
+                )
+        except RepositoryError as error:
+            log.warning("Earlier sheet writes could not be checked (%s)", type(error).__name__)
+            attempt_warning = "Earlier writes couldn't be checked just now."
     return _page(
         request,
         update=update,
@@ -99,6 +119,7 @@ async def sheet_update_page(request: Request) -> HTMLResponse:
         note=note,
         read_ago=ago(svc.clock.now() - read_at) if read_at is not None else None,
         yahoo_ago=data.refreshed_label,
+        attempt_warning=attempt_warning,
     )
 
 
@@ -129,6 +150,15 @@ async def sheet_update_confirm(request: Request, token: str = Form()) -> Redirec
             f"({data.cached.refresh_error}). Try again in a minute.",
             ticked,
         )
+    try:
+        await mark_checked(svc.repo, data.cached.fetched_at)
+    except RepositoryError as error:
+        log.warning(
+            "Manual update could not mark the saved roster checked (%s)", type(error).__name__
+        )
+        return _back(
+            request, "error", "Nothing was written: the app's storage failed. Try again.", ticked
+        )
     result = await write_update(
         svc.repo,
         svc.clock,
@@ -137,10 +167,43 @@ async def sheet_update_confirm(request: Request, token: str = Form()) -> Redirec
         data.view.snapshot,
         expected,
         ticked,
+        journal=WriteJournal(svc.repo, "manual"),
     )
+    await record_manual_attempt_outcome(svc.repo, svc.clock, result)
     return _back(
         request, "ok" if result.ok else "error", result.message, () if result.ok else ticked
     )
+
+
+@router.post("/sheet/auto-update", response_class=HTMLResponse)
+async def sheet_auto_update(request: Request) -> HTMLResponse:
+    started = time.monotonic()
+    svc = services(request)
+    if request.app.state.context.settings.demo or svc.sheet_writer is None or svc.sheet is None:
+        raise HTTPException(404)
+    if not same_origin(request):
+        raise HTTPException(403)
+    posted = (await request.form()).get("fetched_at")
+    if not isinstance(posted, str):
+        return HTMLResponse("")
+    try:
+        fetched_at = float(posted)
+    except ValueError:
+        return HTMLResponse("")
+    if not math.isfinite(fetched_at):
+        return HTMLResponse("")
+    result = await auto_update(
+        svc.repo,
+        svc.clock,
+        svc.refresh,
+        svc.sheet,
+        svc.sheet_writer,
+        fetched_at=fetched_at,
+        started=started,
+    )
+    if result is None:
+        return HTMLResponse("")
+    return render(request, "_sheet_auto_result.html", result=result)
 
 
 def _confirmer(request: Request) -> URLSafeTimedSerializer:

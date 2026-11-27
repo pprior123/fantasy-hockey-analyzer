@@ -619,3 +619,91 @@ async def test_a_newer_cache_that_cant_be_decoded_is_downloaded_once(
     for _ in range(5):
         assert (await refresh.current()).fetched_at == T0 + 10
     assert repo.alls == 1
+
+
+async def test_only_the_saved_generation_within_the_ttl_is_eligible(snap: LeagueSnapshot) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 10)
+    source = FakeYahooSource(snap)
+    refresh = service(source, repo, clock)
+    assert await refresh.saved_generation() is None
+    assert not await refresh.eligible(T0)
+    assert await refresh.load_saved(T0) is None
+
+    await save_cached(repo, Cached(snap, T0))
+    assert await refresh.saved_generation() == T0
+    assert await refresh.eligible(T0)
+    assert not await refresh.eligible(T0 - 1)
+    assert await refresh.load_saved(T0) == Cached(snap, T0)
+    assert await refresh.load_saved(T0 - 1) is None
+
+    clock.t = T0 + DEFAULT_TTL_SECONDS
+    assert not await refresh.eligible(T0)
+    assert await refresh.load_saved(T0) is None
+    assert source.calls == []
+
+
+async def test_a_recent_forced_refresh_failure_blocks_eligibility(snap: LeagueSnapshot) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(snap, T0))
+    source = FailingSource()
+    refresh = service(source, repo, clock)
+    assert await refresh.eligible(T0)
+    assert (await refresh.current(force=True)).refresh_error is not None
+    assert not await refresh.eligible(T0)
+    await save_cached(repo, Cached(snap, T0 + 11))
+    assert not await refresh.eligible(T0 + 11)  # the generation is in this clock's future
+    clock.t = T0 + 12
+    assert await refresh.eligible(T0 + 11)  # another instance saved after this failure
+    assert source.calls == 1
+
+
+async def test_undecodable_newer_cache_supersedes_the_generation_in_memory(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = InMemoryRepository(), FakeClock(T0 + 10)
+    await save_cached(repo, Cached(snap, T0))
+    source = FakeYahooSource(snap)
+    refresh = service(source, repo, clock)
+    assert await refresh.current() == Cached(snap, T0)
+
+    meta = await repo.get(CACHE, "meta")
+    assert meta is not None
+    await repo.put(CACHE, "meta", {**meta, "fetched_at": T0 + 5, "format": 999})
+    assert await refresh.saved_generation() == T0 + 5
+    assert not await refresh.eligible(T0)
+    assert await refresh.load_saved(T0) is None
+    assert await refresh.load_saved(T0 + 5) is None
+    assert source.calls == []
+
+
+async def test_cache_only_load_uses_the_old_generation_while_a_new_save_is_stalled(
+    snap: LeagueSnapshot,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class StalledSave(InMemoryRepository):
+        async def replace_all(self, collection: str, docs: Any) -> None:
+            if docs["meta"]["fetched_at"] == T0 + 10:
+                entered.set()
+                await release.wait()
+            await super().replace_all(collection, docs)
+
+    repo, clock = StalledSave(), FakeClock(T0 + 10)
+    old = Cached(replace(snap, available=()), T0)
+    await save_cached(repo, old)
+    source = FakeYahooSource(snap)
+    refresh = service(source, repo, clock)
+    saving = asyncio.create_task(refresh.current(force=True))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert await refresh.saved_generation() == T0
+        assert await refresh.eligible(T0)
+        assert not await refresh.eligible(T0 + 10)
+        assert await refresh.load_saved(T0) == old
+        assert await refresh.load_saved(T0 + 10) is None
+    finally:
+        release.set()
+        await saving
+    assert not await refresh.eligible(T0)
+    assert await refresh.load_saved(T0 + 10) == Cached(snap, T0 + 10)
+    assert source.calls == [True]

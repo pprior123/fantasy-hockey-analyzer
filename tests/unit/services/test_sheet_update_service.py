@@ -1,19 +1,29 @@
 """The owner's-tab update from the stored pieces (SPEC §4a "Writing"): which tab,
 which rows, which cap hits, and the digest the confirm checks."""
 
+import asyncio
 from dataclasses import replace
 from typing import Any
 
+import httpx
+import pytest
+import respx
+
 from fha.domain.sheet_update import Change
-from fha.services.free_agents import set_aav_override
+from fha.services.free_agents import row_key, set_aav_override
 from fha.services.league_sheet import COLLECTION, ROW_BINDINGS, bind_tab, tab_reports
 from fha.services.sheet_update import build_update, prepare_update, write_update
 from fha.sources.league_sheet.grid import Grid, Tab
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.parse import parse_sheet
-from fha.sources.league_sheet.writer import FakeLeagueSheetWriter, UncertainWriteError
+from fha.sources.league_sheet.writer import (
+    FakeLeagueSheetWriter,
+    RejectedWriteError,
+    UncertainWriteError,
+)
 from fha.sources.yahoo.models import RosterSlot
 from fha.storage.memory import InMemoryRepository
+from fha.storage.repository import RepositoryError
 from tests.unit.league_sheet import sheets as s
 from tests.unit.services.snapshots import synthetic_snapshot
 from tests.unit.services.test_league_sheet_service import NO_ALIASES, ONE, TAB_ONE, TAB_TWO, TWO
@@ -205,12 +215,31 @@ BEFORE = live(TAB_ONE, TAB_TWO)
 AFTER = live(AFTER_ONE, TAB_TWO)
 
 
+def assert_outcome(
+    result: Any,
+    kind: str,
+    code: str | None = None,
+    *,
+    attempted: int = 0,
+    applied: str = "no",
+    payroll: int | None = None,
+) -> None:
+    assert (result.kind, result.code, result.attempted, result.applied, result.payroll) == (
+        kind,
+        code,
+        attempted,
+        applied,
+        payroll,
+    )
+
+
 async def test_a_confirmed_plan_is_written_bound_and_read_back() -> None:
     result, writer, repo = await confirm(BEFORE, AFTER)
     assert result.ok, result.message
     assert (
         result.message == "Written: 7 cells on Pinecone. PAYROLL is now $16,400,000, as expected."
     )
+    assert_outcome(result, "written", attempted=7, applied="yes", payroll=16_400_000)
     [(tab, edits)] = writer.writes
     assert tab == "Pinecone"
     assert {f"{e.column}{e.row}": e.new for e in edits} == {
@@ -230,6 +259,7 @@ async def test_a_changed_tab_or_roster_writes_nothing() -> None:
     result, writer, _ = await confirm(BEFORE, digest="0" * 64)
     assert not result.ok
     assert "changed since the preview" in result.message
+    assert_outcome(result, "refused", "tab_changed")
     assert writer.writes == []
 
 
@@ -240,6 +270,7 @@ async def test_another_editable_tab_writes_nothing() -> None:
         "Nothing was written: the app can still edit 1 other tab(s) (Maple). "
         "Protect them first (Data → Protect sheets and ranges)."
     )
+    assert_outcome(result, "refused", "others_unprotected")
     assert writer.writes == []
     many = live(TAB_ONE, TAB_TWO, editable=("Pinecone", "Maple", "Summary"))
     assert "2 other tab(s) (Summary, Maple)" in (await confirm(many))[0].message
@@ -254,18 +285,21 @@ async def test_my_own_tab_locked_against_the_app_writes_nothing() -> None:
         "account to its protection (Data → Protect sheets and ranges → Pinecone)."
     )
     assert writer.writes == []
+    assert_outcome(result, "refused", "own_tab_locked")
 
 
 async def test_unknown_protections_write_nothing() -> None:
     result, writer, _ = await confirm(live(TAB_ONE, TAB_TWO, unknown=True))
     assert result.message == "Nothing was written: the sheet's protections couldn't be checked."
     assert writer.writes == []
+    assert_outcome(result, "refused", "protections_unknown")
 
 
 async def test_a_refused_plan_writes_nothing() -> None:
     result, writer, _ = await confirm(BEFORE, ticked=())
     assert result.message.startswith("Nothing was written: row 9 (Oetterger) awaits match review")
     assert writer.writes == []
+    assert_outcome(result, "refused", "refusal")
 
 
 async def test_a_tab_that_already_matches_needs_nothing() -> None:
@@ -273,12 +307,14 @@ async def test_a_tab_that_already_matches_needs_nothing() -> None:
     assert (result.ok, result.written) == (True, 0)
     assert result.message == "Nothing to write: Pinecone already matches your roster."
     assert writer.writes == []
+    assert_outcome(result, "up_to_date")
 
 
 async def test_no_plan_at_all_writes_nothing() -> None:
     nobody = replace(ONE, is_mine=False)
     result, _, _ = await confirm(BEFORE, teams=(nobody, TWO), digest="x")
     assert result.message == "Nothing was written: Your team isn't in the Yahoo data."
+    assert_outcome(result, "refused", "problem_no_team")
 
 
 async def test_failed_reads_and_writes_are_said_plainly() -> None:
@@ -289,10 +325,67 @@ async def test_failed_reads_and_writes_are_said_plainly() -> None:
     assert result.message == (
         "Nothing was written: the sheet couldn't be read (Sheets API answered HTTP 503)."
     )
+    assert_outcome(result, "unreadable", "sheet_unreadable")
     result, _, _ = await confirm(BEFORE, writer=FakeLeagueSheetWriter(down))
     assert result.message == (
         "The write failed and nothing was changed (Sheets API answered HTTP 503)."
     )
+    assert_outcome(result, "rejected", "not_sent")
+
+
+async def test_google_rejection_counts_the_attempted_cells() -> None:
+    rejected = RejectedWriteError("Sheets API refused the write: HTTP 403")
+    result, _, _ = await confirm(BEFORE, writer=FakeLeagueSheetWriter(rejected))
+    assert_outcome(result, "rejected", "google_refused", attempted=7)
+
+
+async def test_storage_failure_while_saving_or_planning_a_read_returns_unreadable() -> None:
+    class FailingRepo(InMemoryRepository):
+        fail_on: str = ""
+
+        async def put(self, collection: str, doc_id: str, doc: Any) -> None:
+            if doc_id == self.fail_on:
+                raise RepositoryError("private store identifier")
+            await super().put(collection, doc_id, doc)
+
+        async def get(self, collection: str, doc_id: str) -> Any:
+            if doc_id == self.fail_on:
+                raise RepositoryError("private store identifier")
+            return await super().get(collection, doc_id)
+
+    repo = FailingRepo()
+    repo.collections = (await bound_repo()).collections
+    snap = await snapshot()
+    fake = FakeLeagueSheetWriter()
+    for fail_on, code in [("latest", "sheet_unreadable"), (ROW_BINDINGS, "storage_failed")]:
+        repo.fail_on = fail_on
+        result = await write_update(repo, Clock(), Reads(BEFORE), fake, snap, "x", (9,))
+        assert_outcome(result, "unreadable", code)
+        assert "private store identifier" not in result.message
+    assert fake.writes == []
+
+
+async def test_before_write_gets_the_final_update_and_can_refuse_the_batch() -> None:
+    repo = await bound_repo()
+    await set_aav_override(repo, "3", 8_000_000)
+    snap = await snapshot()
+    preview = await prepare_update(repo, snap, BEFORE, (9,))
+    fake = FakeLeagueSheetWriter()
+    seen = []
+
+    async def refuse(final: Any, bindings: Any) -> str:
+        assert final == preview
+        assert final is not preview
+        assert bindings[row_key("Ada Knight", "C")] == "1"
+        seen.append(final)
+        return "superseded"
+
+    result = await write_update(
+        repo, Clock(), Reads(BEFORE), fake, snap, preview.digest, (9,), before_write=refuse
+    )
+    assert seen == [preview]
+    assert_outcome(result, "refused", "superseded")
+    assert fake.writes == []
 
 
 async def test_a_read_back_that_fails_or_differs_is_reported() -> None:
@@ -303,6 +396,7 @@ async def test_a_read_back_that_fails_or_differs_is_reported() -> None:
         == "Written (7 cells), but the tab couldn't be read back (HTTP 503). Check the tab."
     )
     assert (result.ok, result.written) == (False, 7)
+    assert_outcome(result, "unknown", "unverified", attempted=7, applied="yes")
 
     result, _, _ = await confirm(BEFORE, BEFORE)  # Google kept the old values
     assert result.message.startswith(
@@ -353,13 +447,13 @@ async def test_a_guard_refusal_writes_nothing(monkeypatch: Any) -> None:
     result, writer, _ = await confirm(BEFORE)
     assert result.message == "Nothing was written: edit outside the allowed cells: C40."
     assert writer.writes == []
+    assert_outcome(result, "refused", "guard")
 
 
 async def test_a_storage_failure_after_the_write_still_says_it_was_written(
     monkeypatch: Any,
 ) -> None:
     from fha.services import sheet_update
-    from fha.storage.repository import RepositoryError
 
     async def down(*args: Any) -> None:
         raise RepositoryError("project fha-prod refused", detail="HTTP 503")
@@ -373,6 +467,7 @@ async def test_a_storage_failure_after_the_write_still_says_it_was_written(
         "Check the tab, then read the sheet again (Admin)."
     )
     assert "fha-prod" not in result.message
+    assert_outcome(result, "unknown", "unverified", attempted=7, applied="yes")
 
 
 # ---------------------------------------------------------------- Codex review (PR #22 + #23)
@@ -403,6 +498,7 @@ async def test_a_lost_answer_with_the_change_on_the_tab_is_a_write() -> None:
         "Written: 7 cells on Pinecone. PAYROLL is now $16,400,000, as expected."
     )
     assert result.written == 7
+    assert_outcome(result, "written", attempted=7, applied="yes", payroll=16_400_000)
     bindings = (await repo.get(COLLECTION, ROW_BINDINGS) or {})["entries"]["Pinecone"]
     assert {"player_id": "3", "how": "written"} in bindings.values()
 
@@ -411,6 +507,7 @@ async def test_a_lost_answer_with_the_tab_unchanged_is_not_called_a_failure() ->
     # Google may still be applying the batch: an unchanged tab proves nothing yet.
     result, _, repo = await confirm(BEFORE, BEFORE, writer=FakeLeagueSheetWriter(LOST))
     assert (result.ok, result.written) == (False, 0)
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
     assert result.message == (
         "Google's answer was lost (Sheets API write: no answer (ReadTimeout)) and the tab "
         "shows no change yet, but Google may still apply it. Open this page again in a "
@@ -428,6 +525,7 @@ async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown(
         "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)), and "
         "the tab couldn't be read to check (HTTP 503). Check the tab before writing again."
     )
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
     # Row 9 new, row 10 (Zed) old: neither state (someone edited the tab meanwhile).
     half = replace(AFTER_ONE, players=[*AFTER_ONE.players[:3], *TAB_ONE.players[3:]])
     result, _, _ = await confirm(BEFORE, live(half, TAB_TWO), writer=FakeLeagueSheetWriter(LOST))
@@ -435,13 +533,20 @@ async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown(
         "The write's outcome is unknown (Sheets API write: no answer (ReadTimeout)): the "
         "tab holds neither the old cells nor the new ones. Check the tab."
     )
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
+
+
+async def test_a_lost_answer_with_no_tab_layout_is_still_unknown() -> None:
+    no_layout = live(replace(AFTER_ONE, payroll_formula="=F7+F8"), TAB_TWO)
+    result, _, _ = await confirm(BEFORE, no_layout, writer=FakeLeagueSheetWriter(LOST))
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
+    assert "the tab holds neither the old cells nor the new ones" in result.message
 
 
 async def test_a_storage_failure_while_checking_a_lost_answer_is_still_unknown(
     monkeypatch: Any,
 ) -> None:
     from fha.services import sheet_update
-    from fha.storage.repository import RepositoryError
 
     real, reads = sheet_update.read_league_sheet, []
 
@@ -459,6 +564,7 @@ async def test_a_storage_failure_while_checking_a_lost_answer_is_still_unknown(
         "the app's storage failed while checking. Check the tab before writing again."
     )
     assert "fha-prod" not in result.message
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
 
 
 # Zed's row (10) with its name cleared by hand but its other cells left: the parser
@@ -489,3 +595,118 @@ async def test_a_row_left_with_only_text_in_its_salary_cell_is_not_taken_as_clea
     lost = FakeLeagueSheetWriter(LOST)
     result, _, _ = await confirm(BEFORE, live(after, TAB_TWO), writer=lost)
     assert result.message.startswith("The write's outcome is unknown (Sheets API write")
+
+
+async def test_manual_no_op_refusal_and_digest_mismatch_do_not_open_attempts() -> None:
+    from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal
+
+    class RecordAttempts(InMemoryRepository):
+        recorded = 0
+
+        async def put(self, collection: str, doc_id: str, doc: Any) -> None:
+            if collection == WRITE_ATTEMPTS:
+                self.recorded += 1
+            await super().put(collection, doc_id, doc)
+
+    repo = RecordAttempts()
+    repo.collections = (await bound_repo()).collections
+    snap = await snapshot()
+    await set_aav_override(repo, "3", 8_000_000)
+    fake = FakeLeagueSheetWriter()
+    journal = WriteJournal(repo, "manual")
+    for sheet, ticked, expected, code in (
+        (AFTER, (), "unused", None),
+        (BEFORE, (), (await prepare_update(repo, snap, BEFORE)).digest, "refusal"),
+        (BEFORE, (9,), "wrong", "tab_changed"),
+    ):
+        result = await write_update(
+            repo, Clock(), Reads(sheet), fake, snap, expected, ticked, journal=journal
+        )
+        assert result.code == code
+        assert result.attempt_id is None
+    assert repo.recorded == 0
+    assert fake.writes == []
+
+
+async def test_known_result_clears_only_its_own_attempt() -> None:
+    from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal
+
+    repo = await bound_repo()
+    existing = {"at": Clock().now(), "deadline": Clock().now() + 600, "source": "auto", "cells": 1}
+    await repo.put(WRITE_ATTEMPTS, "old", existing)
+    await set_aav_override(repo, "3", 8_000_000)
+    snap = await snapshot()
+    preview = await prepare_update(repo, snap, BEFORE, (9,))
+    result = await write_update(
+        repo,
+        Clock(),
+        Reads(BEFORE, AFTER),
+        FakeLeagueSheetWriter(),
+        snap,
+        preview.digest,
+        (9,),
+        journal=WriteJournal(repo, "manual"),
+    )
+    assert_outcome(result, "written", attempted=7, applied="yes", payroll=16_400_000)
+    assert result.attempt_id is not None
+    assert await repo.all(WRITE_ATTEMPTS) == {"old": existing}
+
+
+@pytest.mark.parametrize("posting", [False, True], ids=["token", "post"])
+async def test_cancelled_manual_write_keeps_its_attempt_only_after_post_begins(
+    posting: bool,
+) -> None:
+    from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal
+    from fha.sources.league_sheet.writer import SheetsApiLeagueSheetWriter
+
+    repo = await bound_repo()
+    await set_aav_override(repo, "3", 8_000_000)
+    snap = await snapshot()
+    preview = await prepare_update(repo, snap, BEFORE, (9,))
+    entered = asyncio.Event()
+
+    async def token() -> str:
+        if not posting:
+            entered.set()
+            await asyncio.Event().wait()
+        return "token-for-test"
+
+    async def post(request: httpx.Request) -> httpx.Response:
+        entered.set()
+        await asyncio.Event().wait()
+        return httpx.Response(200)
+
+    with respx.mock(assert_all_called=False) as router:
+        router.post("https://sheets.googleapis.com/v4/spreadsheets/fake:batchUpdate").mock(
+            side_effect=post
+        )
+        async with httpx.AsyncClient() as http:
+            writer = SheetsApiLeagueSheetWriter(http, "fake", token)
+            task = asyncio.create_task(
+                write_update(
+                    repo,
+                    Clock(),
+                    Reads(BEFORE),
+                    writer,
+                    snap,
+                    preview.digest,
+                    (9,),
+                    journal=WriteJournal(repo, "manual"),
+                )
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                record = await repo.all(WRITE_ATTEMPTS)
+                assert list(record.values()) == [
+                    {
+                        "at": Clock().now(),
+                        "deadline": Clock().now() + 600,
+                        "source": "manual",
+                        "cells": 7,
+                    }
+                ]
+            finally:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+    assert await repo.all(WRITE_ATTEMPTS) == (record if posting else {})

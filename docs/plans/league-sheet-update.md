@@ -5,6 +5,9 @@ rehearsal (Phase 6) waits for the merge. Deviations are in DECISIONS, "League sh
 updating the owner's tab", implementation notes.
 Base: `main` at `a626288`. One independent review has been triaged (§5).
 
+2026-11-27 update. The owner added automatic tab updates after Yahoo fetches.
+See the [automatic update decision](../DECISIONS.md#2026-11-27--automatic-league-sheet-updates).
+
 ## 0. The feature, and what the owner decided
 
 When the owner changes their Yahoo roster, the app proposes the matching edits
@@ -22,6 +25,9 @@ The owner's answers (2026-10-30):
 | Placement | An add reuses a dropped player's row, otherwise the first blank row in the PAYROLL range. A drop clears its row. Only values change: rows are never inserted or deleted. |
 | New row | Name `Last, First`; position and NHL team as Yahoo codes (`C,LW`, `TB`); the cap hit in the salary column. |
 | IR moves | Yes, both ways: a counted row moves to an empty IR row below the range, and back. The owner will give the tab 3 IR rows. |
+
+On 2026-11-27 the owner reversed the tap-only answer. See the
+[automatic update decision](../DECISIONS.md#2026-11-27--automatic-league-sheet-updates).
 
 The recorded league settings (`tests/fixtures/yahoo/001-league-477-l-8076-settings.json`)
 agree with the owner's numbers: C3 LW3 RW3 D6 G1 + BN9 = 25 outside IR, and
@@ -375,7 +381,7 @@ Only then the real sheet: Editor, the protections, the tab's IR+ rows, and
 | A broader scope leaking into reads | A separate token; the read path keeps `readonly`. |
 | One key that can write both Firestore and the sheet | Accepted for now and recorded. Phase 4b allows a separate account. |
 | Formula injection through a name | `stringValue` only. |
-| A silent mistake | The read-back check, the audit log line, and the owner's tap on every write. Sheets version history allows recovery: copy the old cells back rather than restoring the whole sheet, which would undo the other managers' edits too. |
+| A silent mistake | The manual path uses the owner's tap, read-back check and audit log line. The [2026-11-27 automatic update decision](../DECISIONS.md#2026-11-27--automatic-league-sheet-updates) documents the checks for automatic writes. In Sheets version history, copy the old cells back to preserve other managers' edits. |
 | A bug found only against the real Google API | The rehearsal on a private copy (Phase 6). |
 
 ## 5. Review triage

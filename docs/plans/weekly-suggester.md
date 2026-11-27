@@ -19,6 +19,10 @@ Design defaults (owner chose "team decides", `relay-2026-11-27-suggester-default
 below a TTLTST threshold; the rest of the current matchup week with a toggle for next week; plain TTLTST × starts
 (weighting by the categories Matchup says the owner is losing is a later option, not v1).
 
+**Depends on PR #31** (Tonight + tomorrow): its date-varied demo schedule is used here, and both PRs edit
+`routes/rosters.py` and `rosters.html`. Implementation starts after PR #31 merges, on this branch rebased onto
+`main`.
+
 **Scope change.** `CLAUDE.md` ("no waiver *recommendation* ... screens") and SPEC §1 kept recommendations out of
 Phase 1. The owner asked for this one, so it is in scope now: SPEC §1 "Added after Phase 1", `CLAUDE.md`'s
 scope line and DECISIONS record it. **No projections** beyond "TTLTST × scheduled games the player would start":
@@ -36,10 +40,12 @@ no per-opponent adjustment, no injury-return guess, no minutes or line data.
 | Add candidates | Available skaters (`owner_key is None`) eligible at C, LW, RW or D, not out (status rule above), with at least one game in the horizon. Yahoo's available pool includes players on waivers, who can't be added until they clear (2 days in this league); the app can't tell them apart (the recorded responses carry no ownership type), so the page says so in one line. |
 | The cap | A suggestion pairs an add with a drop; the existing `swap_ok` decides (`services/teams.py`). A swap that doesn't fit (`False`) is never suggested; an unknown fit is shown with a mark ("cap unknown"). "Open spot" uses the room as it is. |
 | Horizon | **This week** (default): from tomorrow, the US/Eastern date after today, to the current week's `week_end` (Yahoo's scoreboard). Today is left out: today's lineup is already set and whether a free agent added today can still play today depends on a Yahoo setting the app doesn't read. **Next week** (`week=next`): the next scoreboard's `week_start` to `week_end` (in the snapshot as `next_scoreboard`), with the roster as it is now. If this week has no days left, the page says so and links to next week. The toggle is hidden when there is no next week. |
-| The add limit | `max_weekly_adds` (settings, "5" in the recording) and the owner's adds used this week (`roster_adds` in the scoreboard's team metadata, used only when `coverage_type` is `week` and `coverage_value` is the current week). The page says "Adds left: 3 of 5". With none left this week, it says so and shows no suggestions for this week (next week still works: the limit resets, so it shows "5 adds next week"). Either value missing: "Adds left: unknown", and suggestions still show. v1 ranks **single** swaps: after the owner makes one, the next Yahoo fetch recomputes. |
+| The add limit | `max_weekly_adds` (settings, "5" in the recording) and the owner's adds used this week (`roster_adds` in the team metadata of the `teams/roster` response, parsed into `Team`; used only when `coverage_type` is `week` and `coverage_value` is `current_week`). Checked: every team in the recorded `009-...-teams-roster.json` carries it with `coverage_value` 5, the recording's current week; the scoreboards carry the same value whatever their week, so the scoreboard is not the source. The page says "Adds left: 3 of 5". With none left this week, it says so and shows no suggestions for this week (next week still works: the limit resets, so it shows "5 adds next week"). Either value missing: "Adds left: unknown", and suggestions still show. v1 ranks **single** swaps: after the owner makes one, the next Yahoo fetch recomputes. |
 | Schedule | One `tonight(repo, source, clock, night=d)` call per horizon day (up to 7), run concurrently: the existing per-date cache (`schedule/<date>`, 6 h), per-date lock and per-date failure backoff, unchanged. A warm cache costs nothing; a cold one is up to 7 small NHL calls under one 3 s budget. If **any** horizon day is unavailable, the page shows no suggestions and says which days are missing (never a value from part of the week); stale days are used, with the age note. Reading the whole week from one NHL response would save calls but change the source seam, the parser and the cache; not worth it at this size. |
 | Where it shows | **A new page, `/rosters/suggest`** ("Suggest adds", linked from Rosters on the owner's team): the horizon line, the adds-left line, a **Gaps** table (per horizon day, the starting slots left empty by the current best lineup, e.g. "C 1 · D 2", or "none"), and the **top 10 adds**, each with its best drop: Add (name, positions, team, TTLTST), Drop (name, TTLTST, or "open spot"), Week +, Starts (the add's starts of his games in the horizon, e.g. "3 of 4"), Fills (the days and slots he starts, e.g. "Sat C, Mon D"), and a cap mark when the fit is unknown. Each row links to the Replace view for that drop with the same horizon. **The Replace view** gets a horizon chip pair (none, the default as today; "This week"; "Next week"); with one chosen, two columns, Week + and Starts, for that drop, and the rows sort by Week + (then TTLTST). |
-| Ranking | Week + descending, then the add's TTLTST descending, then name and player id. One row per add (his best drop); an add whose every pairing has no positive gain is left out. |
+| Ranking | Week + descending, then the add's TTLTST descending, then name and player id. One row per add (his best drop); an add whose every pairing has no positive gain is left out. **The best drop** for an add is the one with the highest gain; on a tie (common on a short horizon, where several drops lose nothing): the open spot first, then an unrated skater, then the lowest TTLTST, then player id. So the weakest player is the one proposed, never an arbitrary near-median one. |
+| Season | The values, the median and the drop threshold use the TTLTST of the page's season (the same `season` toggle and default as Replace and Rosters, `default_season`). |
+| Replace and goalies | The Replace view of a goalie shows no horizon chips (goalies aren't in the lineup model). |
 
 ## 1. Strategy critique
 
@@ -67,15 +73,18 @@ at a time; single swaps re-ranked after each fetch are enough.
   where `days` is the per-day list of eligible players already filtered by games and status. No dates, no
   schedule types: the service builds the days.
 - **`sources/yahoo`**: parse `max_weekly_adds` into `LeagueSettings` (optional) and each team's `roster_adds` into
-  the `Scoreboard` (`adds: Mapping[team_key, (coverage_week, value)]`, optional). Both are in the committed
-  fixtures (`001-...-settings.json`, `015-...-scoreboard-week-6.json`). `snapshot_codec` reads stored snapshots
+  `Team` (`roster_adds: (coverage_week, value) | None`) from the `teams/roster` response. Both are in the committed
+  fixtures (`001-...-settings.json`, `009-...-teams-roster.json`). `snapshot_codec` reads stored snapshots
   without them (defaults), so an old cache document still loads.
 - **`services/suggest.py`**: builds the horizon from the clock and the scoreboards, loads the slates, builds each
   day's eligible players, the drop and add candidates, the cap check, the add limit, and ranks. **Pruning** keeps
   it fast and exact: for a candidate, `gain ≤ TTLTST × games in the horizon − min over drops of the drop's own
   loss`; candidates are taken in descending bound order and the scan stops when the bound falls below the 10th best
   gain found. The loss of each drop and the per-day base lineups are computed once. A swap only re-solves the days
-  the add plays.
+  the add plays. The bound is weak when every day is a full slate (gains are small, so few candidates are cut);
+  the timing check covers that case. If it is too slow, an exact speed-up is allowed: on a given day and drop,
+  an add's gain depends only on his position set and his value, so one probe per (day, drop, position set) finds
+  the value at which he starts and what he displaces; the property test then checks it against a direct re-solve.
 - **Web**: `routes/rosters.py` `/rosters/suggest` (owner's team only; any other team: the existing "works for your
   own roster" 400), its template, the Rosters link, the Replace chips and columns.
 - **Demo**: the demo league's free agents and roster produce suggestions with the demo schedule (`DemoScheduleSource`
@@ -106,8 +115,11 @@ One commit per phase, gates green.
    waivers), links to Replace with the horizon; another team is a 400; Replace's chips and columns, its sort with
    a horizon, its default unchanged without one; the Rosters link only on the owner's team; the demo page with no
    NHL call; routes that don't load the horizon (League, Matchup, Admin, Players) make no extra schedule calls.
-   A timing check on the demo league and on a synthetic league of real size (about 600 available skaters): the
-   developer reports the server time in the close (not a test assertion).
+   A timing check on the demo league and on a synthetic league of real size (about 600 available skaters, 10 drop
+   candidates, 7 horizon days), including the worst case for pruning: every day a full slate with no empty slots.
+   The developer reports the server times in the close (not a test assertion).
+   Tie-break: several drops with the same gain propose the open spot, then unrated, then the lowest TTLTST.
+   A goalie's Replace view has no horizon chips.
 5. **Docs**: SPEC, `CLAUDE.md`, DECISIONS, this plan's status.
 
 ## 4. Risks

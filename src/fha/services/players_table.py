@@ -11,13 +11,14 @@ whoever owns the player: plans/players-name-search.md); the screen shows the row
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
 from fha.domain.models import Category
 from fha.domain.names import name_matcher, normalize_name
 from fha.services.league_view import LeagueView, PlayerRow
+from fha.services.schedule import team_code
 
 
 class Owner(StrEnum):
@@ -63,6 +64,7 @@ class PlayersQuery:
     zero_gp: bool = False  # show players with 0 GP
     start: int = 0  # the first row of the page asked for
     q: str | None = None  # a name search, as typed (trimmed); see ``searching``
+    tonight: bool = False
 
     @classmethod
     def from_params(cls, params: Mapping[str, str]) -> PlayersQuery:
@@ -81,6 +83,9 @@ class PlayersQuery:
         if q is not None and not normalize_name(q):
             q = None  # no words ("!!"): no search
         default_owner = Owner.ALL if q is not None else Owner.FREE
+        tonight = params.get("tonight")
+        if tonight not in (None, "1"):
+            raise QueryError("tonight must be 1 or absent")
         try:
             owner = Owner(get("owner") or default_owner)
             position = get("pos")
@@ -107,7 +112,18 @@ class PlayersQuery:
             if direction
             else (isinstance(sort, Category) or sort in DESCENDING_FIRST)
         )
-        return cls(owner, get("team"), position, min_gp, sort, descending, zero_gp == "1", start, q)
+        return cls(
+            owner,
+            get("team"),
+            position,
+            min_gp,
+            sort,
+            descending,
+            zero_gp == "1",
+            start,
+            q,
+            tonight=tonight == "1",
+        )
 
     @property
     def single_team(self) -> bool:
@@ -134,11 +150,17 @@ def _whole(text: str | None, name: str, max_digits: int) -> int:
     return int(text)
 
 
-def select(view: LeagueView, query: PlayersQuery, *, totals: bool = False) -> list[PlayerRow]:
+def select(
+    view: LeagueView,
+    query: PlayersQuery,
+    *,
+    totals: bool = False,
+    playing: Collection[str] | None = None,
+) -> list[PlayerRow]:
     """The rows the query shows, sorted; players with no value in the sort column last.
     ``totals``: a category sorts by its season total (the Totals view), not its norm."""
     hide_zero = not query.shows_zero_gp
-    rows = [r for r in _filtered(view, query) if not (hide_zero and r.gp == 0)]
+    rows = [r for r in _filtered(view, query, playing) if not (hide_zero and r.gp == 0)]
     names = {t.team_key: t.name for t in view.teams}
     key = _sort_value(query.sort, names, totals=totals)
     present = [r for r in rows if key(r) is not None]
@@ -148,14 +170,18 @@ def select(view: LeagueView, query: PlayersQuery, *, totals: bool = False) -> li
     return [*present, *missing]
 
 
-def zero_gp_hidden(view: LeagueView, query: PlayersQuery) -> int:
+def zero_gp_hidden(
+    view: LeagueView, query: PlayersQuery, *, playing: Collection[str] | None = None
+) -> int:
     """How many players the other filters show that 0-GP hiding leaves out."""
     if query.shows_zero_gp:
         return 0
-    return sum(1 for r in _filtered(view, query) if r.gp == 0)
+    return sum(1 for r in _filtered(view, query, playing) if r.gp == 0)
 
 
-def _filtered(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
+def _filtered(
+    view: LeagueView, query: PlayersQuery, playing: Collection[str] | None
+) -> list[PlayerRow]:
     mine = view.my_team.team_key if view.my_team else None
     matches = name_matcher(query.q or "") if query.searching else None  # normalized once
 
@@ -163,6 +189,8 @@ def _filtered(view: LeagueView, query: PlayersQuery) -> list[PlayerRow]:
         if matches is not None and not matches(row.name):
             return False
         if not _owned_as_asked(row, query, mine):
+            return False
+        if query.tonight and playing is not None and team_code(row.nhl_team) not in playing:
             return False
         if query.position is not None and query.position not in row.eligible_positions:
             return False

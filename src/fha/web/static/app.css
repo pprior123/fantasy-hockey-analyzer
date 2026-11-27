@@ -54,6 +54,7 @@ table.data tr.expand td { background: var(--soft); white-space: normal; }
 
 /* Status */
 .muted { color: var(--muted); }
+.game-mark { display: block; font-size: .75rem; }
 .good { color: var(--good); }
 .bad, .over { color: var(--bad); }
 .warn { color: var(--warn); }

@@ -32,6 +32,10 @@
 
 <h2>Skaters</h2>
 {{ m.view_toggle("/rosters", params, mode, totals=True) }}
+{% if slate.state != 'unavailable' %}
+<p class="muted">Tonight: {{ tonight_count }} of {{ active_count }} on teams with a game</p>
+{% endif %}
+{{ m.schedule_note(slate) }}
 <div class="table-wrap">
 <table class="data roster">
   <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th><th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th>
@@ -40,7 +44,7 @@
   <tbody>
   {% for r in skaters %}
   <tr class="{{ 'ir' if r.in_ir_slot else '' }}">
-    <td class="first">{% if r.rating and r.rating.rated %}<details><summary>{{ r.name }}</summary>{{ m.norms_list(r.norms, categories) }}</details>{% else %}{{ r.name }}{% endif %}{% if r.status %} <span class="badge">{{ r.status }}</span>{% endif %}</td>
+    <td class="first">{% if r.rating and r.rating.rated %}<details><summary>{{ r.name }}</summary>{{ m.norms_list(r.norms, categories) }}</details>{% else %}{{ r.name }}{% endif %}{% if r.status %} <span class="badge">{{ r.status }}</span>{% endif %}{{ m.game_mark(game_labels.get(r.player_id)) }}</td>
     <td>{{ r.position }}</td>
     <td>{{ r.slot or DASH }}</td>
     <td class="num">{{ r.gp }}</td>
@@ -75,5 +79,6 @@
 
 <h2>Goalies</h2>
 <p class="muted">Raw stats: goalies aren't rated.</p>
-{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': replace_view} if team.is_mine else none) }}
+{% if slate.games %}<p class="muted">Tonight's games (times ET)</p>{% endif %}
+{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': replace_view} if team.is_mine else none, game_labels) }}
 {% endblock %}

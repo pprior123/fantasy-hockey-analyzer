@@ -21,8 +21,12 @@
   {% endfor %}
 </nav>
 
+<nav class="chips schedule-filter" aria-label="Schedule">
+  <a class="chip{{ ' on' if tonight_active else '' }}" href="{{ url('/players', params, tonight=none if query.tonight else '1') }}">Tonight</a>
+</nav>
+
 <form method="get" action="/players" class="toolbar filters">
-  {% for key in ("owner", "sort", "dir", "season", "view", "zero_gp", "q") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
+  {% for key in ("owner", "sort", "dir", "season", "view", "zero_gp", "q", "tonight") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
   <label>Team
     <select name="team">
       <option value="">Any</option>
@@ -50,6 +54,7 @@
 </th>
 {%- endmacro %}
 
+{{ m.schedule_note(slate) }}
 <div class="table-wrap">
 <table class="data players">
   <thead><tr>

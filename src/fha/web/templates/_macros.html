@@ -40,8 +40,25 @@
 </dl>
 {%- endmacro %}
 
+{% macro schedule_note(slate) -%}
+{% if slate.state == 'unavailable' %}
+<p class="muted">Tonight's schedule is unavailable.</p>
+{% else %}
+{% if slate.state == 'stale' %}<p class="muted">Schedule from {{ slate.age|ago }}.</p>{% endif %}
+{% if slate.games %}
+<p class="muted">Tonight's games (times ET)</p>
+{% else %}
+<p class="muted">No games tonight.</p>
+{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro game_mark(label) -%}
+{% if label %}<span class="game-mark muted">{{ label }}</span>{% endif %}
+{%- endmacro %}
+
 {#- replace: the link parameters on my own roster (goalies count toward the cap), else none -#}
-{% macro goalie_table(goalies, replace=none) -%}
+{% macro goalie_table(goalies, replace=none, game_labels=none) -%}
 <div class="table-wrap">
 <table class="data goalies">
   <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th>{% if replace is not none %}<th></th>{% endif %}</tr></thead>
@@ -49,7 +66,7 @@
   {% for g in goalies %}
   <tr class="{{ 'ir' if g.in_ir_slot else '' }}">
     <td class="first">{{ g.name }}{% if g.in_ir_slot %} <span class="badge">{{ g.slot }}</span>{% endif %}{% if g.status %} <span class="badge">{{ g.status }}</span>{% endif %}</td>
-    <td>{{ g.nhl_team or DASH }}</td>
+    <td>{{ g.nhl_team or DASH }}{% if game_labels is not none %}{{ game_mark(game_labels.get(g.player_id)) }}{% endif %}</td>
     <td class="num">{{ g.gp }}</td>
     <td class="num">{{ g.goalie.get('W')|number(0) }}</td>
     <td class="num">{{ g.goalie.get('GAA')|number(2) }}</td>

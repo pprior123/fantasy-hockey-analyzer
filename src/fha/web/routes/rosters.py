@@ -5,10 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from fha.services.schedule import tonight
 from fha.services.teams import discrepancy_flags, replace_view, summarize
-from fha.web import format as _format  # noqa: F401 - installs the template filters
-from fha.web.app import render
+from fha.web.app import render, services
 from fha.web.data import page_data, season_param, view_param
+from fha.web.format import game_label
 from fha.web.routes.players import bad_request
 
 router = APIRouter()
@@ -32,6 +33,10 @@ async def rosters(request: Request) -> HTMLResponse:
         return bad_request(request, "That team isn't in the league.", "/rosters", "rosters")
     summary = summarize(view, team, discrepancies=discrepancy_flags(data.reports))
     roster = view.roster(team.team_key)
+    svc = services(request)
+    slate = await tonight(svc.repo, svc.schedule_source, svc.clock)
+    game_labels = {r.player_id: game_label(slate.matchup(r.nhl_team)) for r in roster}
+    outside_ir = [r for r in roster if not r.in_ir_slot]
     return render(
         request,
         "rosters.html",
@@ -49,6 +54,10 @@ async def rosters(request: Request) -> HTMLResponse:
         cap=view.cap,
         mode=mode,
         here=_here(request),
+        slate=slate,
+        game_labels=game_labels,
+        active_count=len(outside_ir),
+        tonight_count=sum(game_labels[r.player_id] is not None for r in outside_ir),
     )
 
 

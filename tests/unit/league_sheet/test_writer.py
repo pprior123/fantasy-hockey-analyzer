@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+import respx
 
 from fha.domain.sheet_update import CellEdit
 from fha.sources.google_auth import GoogleAuthError
@@ -14,6 +15,8 @@ from fha.sources.league_sheet.models import LeagueSheetError, ParsedTab
 from fha.sources.league_sheet.writer import (
     WRITE_SCOPE,
     FakeLeagueSheetWriter,
+    NotSentError,
+    RejectedWriteError,
     SheetsApiLeagueSheetWriter,
     UncertainWriteError,
     update_request,
@@ -263,3 +266,72 @@ async def test_a_client_error_is_a_definite_no(status: int) -> None:
     with pytest.raises(LeagueSheetError) as info:
         await writer(Google(status)).write(TAB, EDITS)
     assert not isinstance(info.value, UncertainWriteError)
+
+
+POST_URL = f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}:batchUpdate"
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (httpx.ConnectError("unreachable"), NotSentError),
+        (httpx.Response(403), RejectedWriteError),
+        (httpx.Response(302), UncertainWriteError),
+        (httpx.Response(503), UncertainWriteError),
+        (httpx.ReadTimeout("no reply"), UncertainWriteError),
+    ],
+    ids=["connect", "4xx", "redirect", "5xx", "read-timeout"],
+)
+async def test_http_outcomes_distinguish_rejection_from_uncertainty(
+    response: httpx.Response | Exception,
+    expected: type[LeagueSheetError],
+) -> None:
+    with respx.mock as router:
+        route = router.post(POST_URL)
+        if isinstance(response, Exception):
+            route.mock(side_effect=response)
+        else:
+            route.mock(return_value=response)
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(expected) as caught:
+                await SheetsApiLeagueSheetWriter(http, SHEET_ID, token).write(TAB, EDITS)
+    assert route.call_count == 1
+    assert SHEET_ID not in str(caught.value)
+
+
+async def test_token_failure_occurs_before_the_writer_reaches_the_send_boundary() -> None:
+    sends = []
+
+    async def fail_token() -> str:
+        raise GoogleAuthError("token request rejected")
+
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(POST_URL).respond(200)
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(NotSentError):
+                await SheetsApiLeagueSheetWriter(http, SHEET_ID, fail_token).write(
+                    TAB, EDITS, on_send=lambda: sends.append(True)
+                )
+    assert sends == []
+    assert not route.called
+
+
+async def test_writer_checks_the_deadline_after_awaiting_the_token() -> None:
+    monotonic = 10.0
+    sends = []
+
+    async def slow_token() -> str:
+        nonlocal monotonic
+        monotonic = 46.0
+        return await token()
+
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(POST_URL).respond(200)
+        async with httpx.AsyncClient() as http:
+            sheets = SheetsApiLeagueSheetWriter(
+                http, SHEET_ID, slow_token, monotonic=lambda: monotonic
+            )
+            with pytest.raises(NotSentError, match="deadline"):
+                await sheets.write(TAB, EDITS, deadline=45, on_send=lambda: sends.append(True))
+    assert sends == []
+    assert not route.called

@@ -12,16 +12,16 @@ The caller plans and guards the edits (``domain.sheet_update.guard``); the
 writer checks only what it needs to address a cell. As on the read path, an
 error never carries the spreadsheet ID or Google's response body.
 
-A failure before the request left (no connection) or a 4xx is a definite "not
-written": ``LeagueSheetError``. A lost answer (a read timeout, a dropped
-connection) or a 5xx is ``UncertainWriteError``: Google may have applied the
-batch, so the caller must look at the tab before saying either way.
+``NotSentError`` means no batch left the process. ``RejectedWriteError``
+means Google answered with a 4xx. Other failures after the POST began are
+``UncertainWriteError`` and require a read of the tab to check what landed.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+import time
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import httpx
@@ -38,6 +38,7 @@ COLUMN = re.compile(r"[B-Z]|[A-Z]{2,3}")  # never column A (the IR labels)
 
 # The request never reached Google: nothing can have been written.
 NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol)
+BeforePost = Callable[[], Awaitable[str | None]]
 
 
 class UncertainWriteError(LeagueSheetError):
@@ -45,11 +46,41 @@ class UncertainWriteError(LeagueSheetError):
     may or may not have been applied."""
 
 
+class NotSentError(LeagueSheetError):
+    """The batch could not be sent."""
+
+    def __init__(self, message: str, *, code: str = "not_sent") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class RejectedWriteError(LeagueSheetError):
+    """Google answered with a client error and did not apply the batch."""
+
+
 class LeagueSheetWriter(Protocol):
-    async def write(self, tab: ParsedTab, edits: Sequence[CellEdit]) -> None:
-        """Write ``edits`` to ``tab`` all at once (raises ``LeagueSheetError``, or
-        ``UncertainWriteError`` when it can't tell whether Google applied them)."""
+    async def write(
+        self,
+        tab: ParsedTab,
+        edits: Sequence[CellEdit],
+        *,
+        deadline: float | None = None,
+        before_post: BeforePost | None = None,
+        on_send: Callable[[], None] | None = None,
+    ) -> None:
+        """Write the batch before the monotonic deadline and signal when posting begins."""
         ...
+
+
+async def _check_before_post(
+    before_post: BeforePost | None, deadline: float | None, monotonic: Callable[[], float]
+) -> None:
+    if before_post is not None:
+        code = await before_post()
+        if code is not None:
+            raise NotSentError("the final automatic check refused", code=code)
+    if deadline is not None and monotonic() >= deadline:
+        raise NotSentError("the write deadline expired", code="out_of_time")
 
 
 def update_request(sheet_id: int, edits: Sequence[CellEdit]) -> dict[str, Any]:
@@ -58,7 +89,7 @@ def update_request(sheet_id: int, edits: Sequence[CellEdit]) -> dict[str, Any]:
     requests = []
     for e in edits:
         if not COLUMN.fullmatch(e.column) or e.row < 1:
-            raise LeagueSheetError(f"refusing to write {e.column}{e.row}")
+            raise NotSentError(f"refusing to write {e.column}{e.row}")
         col = column_number(e.column)
         requests.append(
             {
@@ -82,7 +113,7 @@ def _cell(e: CellEdit) -> dict[str, Any]:
     if e.new is None:
         return {}  # with the userEnteredValue mask: a clear
     if isinstance(e.new, bool) or not isinstance(e.new, str | int):
-        raise LeagueSheetError(f"refusing to write a {type(e.new).__name__} to {e.column}{e.row}")
+        raise NotSentError(f"refusing to write a {type(e.new).__name__} to {e.column}{e.row}")
     kind = "stringValue" if isinstance(e.new, str) else "numberValue"
     return {"userEnteredValue": {kind: e.new}}
 
@@ -98,37 +129,58 @@ def _protected(response: httpx.Response) -> bool:
 
 
 class SheetsApiLeagueSheetWriter:
-    def __init__(self, http: httpx.AsyncClient, sheet_id: str, token: TokenProvider) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        sheet_id: str,
+        token: TokenProvider,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._http = http
         self._sheet_id = sheet_id
         self._token = token
+        self._monotonic = monotonic
 
-    async def write(self, tab: ParsedTab, edits: Sequence[CellEdit]) -> None:
+    async def write(
+        self,
+        tab: ParsedTab,
+        edits: Sequence[CellEdit],
+        *,
+        deadline: float | None = None,
+        before_post: BeforePost | None = None,
+        on_send: Callable[[], None] | None = None,
+    ) -> None:
         if tab.sheet_id is None:
-            raise LeagueSheetError("the tab has no sheet ID (was it read from an .xlsx?)")
+            raise NotSentError("the tab has no sheet ID (was it read from an .xlsx?)")
         body = update_request(tab.sheet_id, edits)
         if not body["requests"]:
             return
         try:
             bearer = await self._token()
         except GoogleAuthError as e:
-            raise LeagueSheetError(f"service-account auth failed: {e}") from None
+            raise NotSentError(f"service-account auth failed: {e}") from None
         url = f"{API}{self._sheet_id}:batchUpdate"
+        await _check_before_post(before_post, deadline, self._monotonic)
+        if on_send is not None:
+            on_send()
         try:
             response = await self._http.post(
-                url, json=body, headers={"Authorization": f"Bearer {bearer}"}
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {bearer}"},
+                follow_redirects=False,
             )
         except (*NOT_SENT, httpx.InvalidURL) as e:
-            raise LeagueSheetError(f"Sheets API write failed ({type(e).__name__})") from None
+            raise NotSentError(f"Sheets API write failed ({type(e).__name__})") from None
         except httpx.HTTPError as e:
             raise UncertainWriteError(f"Sheets API write: no answer ({type(e).__name__})") from None
-        if response.status_code >= httpx.codes.INTERNAL_SERVER_ERROR:
-            status = response.status_code
-            raise UncertainWriteError(f"Sheets API write: HTTP {status}, outcome unknown")
-        if response.status_code != httpx.codes.OK:
+        status = response.status_code
+        if response.is_client_error:
             why = " (a cell to change is protected against the app)" if _protected(response) else ""
-            status = response.status_code
-            raise LeagueSheetError(f"Sheets API refused the write: HTTP {status}{why}")
+            raise RejectedWriteError(f"Sheets API refused the write: HTTP {status}{why}")
+        if status != httpx.codes.OK:
+            raise UncertainWriteError(f"Sheets API write: HTTP {status}, outcome unknown")
 
     def __repr__(self) -> str:
         return "SheetsApiLeagueSheetWriter(<sheet id hidden>)"
@@ -139,7 +191,18 @@ class FakeLeagueSheetWriter:
         self.writes: list[tuple[str, tuple[CellEdit, ...]]] = []
         self.error = error
 
-    async def write(self, tab: ParsedTab, edits: Sequence[CellEdit]) -> None:
+    async def write(
+        self,
+        tab: ParsedTab,
+        edits: Sequence[CellEdit],
+        *,
+        deadline: float | None = None,
+        before_post: BeforePost | None = None,
+        on_send: Callable[[], None] | None = None,
+    ) -> None:
+        await _check_before_post(before_post, deadline, time.monotonic)
+        if on_send is not None:
+            on_send()
         if self.error is not None:
             raise self.error
         self.writes.append((tab.name, tuple(edits)))

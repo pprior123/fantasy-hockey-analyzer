@@ -15,6 +15,7 @@ import hmac
 from collections import deque
 from urllib.parse import urlsplit
 
+from fastapi import Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 COOKIE = "fha_session"
@@ -74,3 +75,11 @@ def safe_next(raw: str | None) -> str:
     if parts.scheme or parts.netloc or any(ord(ch) < 0x20 for ch in raw):
         return DEFAULT_NEXT
     return raw
+
+
+def same_origin(request: Request) -> bool:
+    """Use the Fetch Metadata header only if the browser omitted Origin."""
+    origin = request.headers.get("Origin")
+    if origin is None:
+        return request.headers.get("Sec-Fetch-Site") == "same-origin"
+    return origin == f"{request.url.scheme}://{request.url.netloc}"

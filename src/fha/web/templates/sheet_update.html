@@ -14,6 +14,7 @@
   <h2>Update my tab{% if update.tab %}: {{ update.tab.name }}{% endif %}</h2>
   <p class="muted">Sheet read {{ read_ago or "—" }} · Yahoo data from {{ yahoo_ago }}. Tap Refresh (Admin) after a roster move for a fresh Yahoo roster.</p>
   {% if note %}<p class="warn">{{ note }}</p>{% endif %}
+  {% if attempt_warning %}<p class="warn">{{ attempt_warning }}</p>{% endif %}
 
   {% if update.problem %}
   <p class="bad">{{ update.problem }}</p>

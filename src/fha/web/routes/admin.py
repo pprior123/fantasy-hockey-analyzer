@@ -241,6 +241,12 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
     auto_enabled = getattr(request.state, "sheet_auto_enabled", None)
     if auto_writing and auto_enabled is None:
         auto_enabled = await enabled(svc.repo)
+    auto_log = None
+    if auto_writing:
+        try:
+            auto_log = await log_entries(svc.repo)
+        except RepositoryError as error:
+            log.warning("Automatic update log unavailable (%s)", type(error).__name__)
     return render(
         request,
         "admin.html",
@@ -276,7 +282,7 @@ async def admin(request: Request, flash: str | None = None, q: str | None = None
         repo_kind=type(svc.repo).__name__,
         auto_writing=auto_writing,
         auto_enabled=auto_enabled,
-        auto_log=await log_entries(svc.repo) if auto_writing else (),
+        auto_log=auto_log,
         auto_now=svc.clock.now(),
     )
 

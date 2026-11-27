@@ -14,6 +14,7 @@ from fha.sources.league_sheet.grid import Cell, Grid, Tab, column_number
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedTab
 from fha.sources.league_sheet.parse import parse_sheet
 from fha.sources.league_sheet.source import FakeLeagueSheet
+from fha.sources.league_sheet.writer import BeforePost, NotSentError
 from fha.web.context import Services
 from fha.web.routes.sheet_update import CONFIRM_SALT
 from tests.unit.league_sheet import sheets as s
@@ -207,8 +208,11 @@ class LiveSheet:
         edits: Any,
         *,
         deadline: float | None = None,
+        before_post: BeforePost | None = None,
         on_send: Callable[[], None] | None = None,
     ) -> None:
+        if before_post is not None and (code := await before_post()) is not None:
+            raise NotSentError("the final automatic check refused", code=code)
         if on_send is not None:
             on_send()
         self.writes += 1

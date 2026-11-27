@@ -29,7 +29,12 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from fha.services.league_sheet import load_league_sheet, read_league_sheet
 from fha.services.settings import SettingsError
-from fha.services.sheet_auto import auto_update, has_unresolved_attempt, mark_checked
+from fha.services.sheet_auto import (
+    auto_update,
+    has_unresolved_attempt,
+    mark_checked,
+    record_manual_attempt_outcome,
+)
 from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal, prepare_update, write_update
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.storage.repository import RepositoryError
@@ -96,9 +101,16 @@ async def sheet_update_page(request: Request) -> HTMLResponse:
     )
     writing = svc.sheet_writer is not None
     ready = writing and update.plan is not None and update.plan.ok and update.plan.edits
-    unresolved = writing and has_unresolved_attempt(
-        await svc.repo.all(WRITE_ATTEMPTS), svc.clock.now()
-    )
+    attempt_warning = None
+    if writing:
+        try:
+            if has_unresolved_attempt(await svc.repo.all(WRITE_ATTEMPTS), svc.clock.now()):
+                attempt_warning = (
+                    "An earlier write's outcome isn't known yet: check the tab before confirming."
+                )
+        except RepositoryError as error:
+            log.warning("Earlier sheet writes could not be checked (%s)", type(error).__name__)
+            attempt_warning = "Earlier writes couldn't be checked just now."
     return _page(
         request,
         update=update,
@@ -107,7 +119,7 @@ async def sheet_update_page(request: Request) -> HTMLResponse:
         note=note,
         read_ago=ago(svc.clock.now() - read_at) if read_at is not None else None,
         yahoo_ago=data.refreshed_label,
-        unresolved=unresolved,
+        attempt_warning=attempt_warning,
     )
 
 
@@ -138,7 +150,15 @@ async def sheet_update_confirm(request: Request, token: str = Form()) -> Redirec
             f"({data.cached.refresh_error}). Try again in a minute.",
             ticked,
         )
-    await mark_checked(svc.repo, data.cached.fetched_at)
+    try:
+        await mark_checked(svc.repo, data.cached.fetched_at)
+    except RepositoryError as error:
+        log.warning(
+            "Manual update could not mark the saved roster checked (%s)", type(error).__name__
+        )
+        return _back(
+            request, "error", "Nothing was written: the app's storage failed. Try again.", ticked
+        )
     result = await write_update(
         svc.repo,
         svc.clock,
@@ -149,6 +169,7 @@ async def sheet_update_confirm(request: Request, token: str = Form()) -> Redirec
         ticked,
         journal=WriteJournal(svc.repo, "manual"),
     )
+    await record_manual_attempt_outcome(svc.repo, svc.clock, result)
     return _back(
         request, "ok" if result.ok else "error", result.message, () if result.ok else ticked
     )

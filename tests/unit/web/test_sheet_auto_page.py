@@ -17,6 +17,7 @@ from fha.services.league_sheet import confirm_row
 from fha.services.refresh import CACHE, Cached, RefreshService, save_cached
 from fha.services.sheet_auto import (
     AUTO_LOG,
+    AUTO_STATE,
     AutoUpdate,
     _record_log,
     checked_generation,
@@ -69,6 +70,35 @@ def advance(svc: Services, seconds: float) -> float:
     clock = cast(FakeClock, svc.clock)
     clock.t += seconds
     return clock.now()
+
+
+class SelectiveFailure(InMemoryRepository):
+    fail_all: str | None = None
+    fail_put: str | None = None
+    fail_delete: str | None = None
+
+    async def all(self, collection: str) -> Any:
+        if self.fail_all == collection:
+            raise RepositoryError("storage detail kept off the page")
+        return await super().all(collection)
+
+    async def put(self, collection: str, doc_id: str, doc: Any) -> None:
+        if self.fail_put == collection:
+            raise RepositoryError("storage detail kept off the page")
+        await super().put(collection, doc_id, doc)
+
+    async def delete(self, collection: str, doc_id: str) -> None:
+        if self.fail_delete == collection:
+            raise RepositoryError("storage detail kept off the page")
+        await super().delete(collection, doc_id)
+
+
+def selective_storage(svc: Services) -> SelectiveFailure:
+    store = SelectiveFailure()
+    store.collections = cast(InMemoryRepository, svc.repo).collections
+    svc.repo = store
+    svc.refresh = RefreshService(FakeYahooSource(SNAP), store, svc.clock)
+    return store
 
 
 @pytest.mark.parametrize("path", ["/players", "/rosters", "/league", "/matchup", "/admin"])
@@ -205,6 +235,22 @@ def test_the_admin_switch_saves_and_the_log_lists_newest_entries_first() -> None
     assert log.index("newer reason") < log.index("older reason")
 
 
+def test_admin_keeps_the_switch_usable_when_the_log_read_fails() -> None:
+    svc, _ = writable(mine_tab())
+    repo = selective_storage(svc)
+    repo.fail_all = AUTO_LOG
+    c = browser(svc)
+    page = c.get("/admin")
+    assert page.status_code == 200
+    assert "Auto-update my tab" in page.text
+    assert "The log couldn't be read just now." in unescape(page.text)
+    saved = c.post(SWITCH, headers=ORIGIN)
+    assert saved.status_code == 200
+    assert "Auto-update my tab is off." in saved.text
+    assert not asyncio.run(enabled(repo))
+    assert "storage detail kept off the page" not in saved.text
+
+
 def test_written_and_silent_fragments_use_the_actual_saved_snapshot() -> None:
     svc, sheet = with_identified_drop()
     c = browser(svc)
@@ -276,6 +322,77 @@ def test_the_manual_confirm_marks_the_forced_snapshot_and_can_override_an_attemp
     assert trigger(confirmed.text) is None
     assert trigger(c.get("/players").text) is None
     assert set(asyncio.run(svc.repo.all(WRITE_ATTEMPTS))) == {"other"}
+
+
+def test_manual_preview_keeps_its_plan_when_attempt_listing_fails() -> None:
+    svc, _ = writable(mine_tab())
+    repo = selective_storage(svc)
+    repo.fail_all = WRITE_ATTEMPTS
+    response = browser(svc).get(MANUAL)
+    assert response.status_code == 200
+    assert "Earlier writes couldn't be checked just now." in unescape(response.text)
+    assert "Write these 3 cells to Mine" in response.text
+    assert token_in(response.text)
+    assert "storage detail kept off the page" not in response.text
+
+
+def test_manual_confirm_returns_to_the_preview_without_writing_if_mark_checked_fails() -> None:
+    svc, sheet = writable(mine_tab())
+    repo = selective_storage(svc)
+    c = browser(svc)
+    token = token_in(c.get(MANUAL).text)
+    repo.fail_put = AUTO_STATE
+    confirmed = c.post(MANUAL, data={"token": token})
+    assert confirmed.status_code == 200
+    assert confirmed.url.path == MANUAL
+    assert "Nothing was written: the app's storage failed. Try again." in unescape(confirmed.text)
+    assert "storage detail kept off the page" not in confirmed.text
+    assert sheet.writes == 0
+    assert asyncio.run(repo.all(WRITE_ATTEMPTS)) == {}
+
+
+def test_recovery_keeps_the_verified_manual_outcome_after_an_attempt_delete_fails(
+    monkeypatch: Any,
+) -> None:
+    svc, sheet = with_identified_drop()
+    repo = selective_storage(svc)
+    repo.fail_delete = WRITE_ATTEMPTS
+    c = browser(svc)
+    preview = c.get(MANUAL).text
+    confirmed = c.post(MANUAL, data={"token": token_in(preview)})
+    assert confirmed.status_code == 200
+    assert "PAYROLL is now $26,000,000" in confirmed.text
+    assert sheet.writes == 1
+    [attempt_id] = asyncio.run(repo.all(WRITE_ATTEMPTS))
+    doc_id = f"attempt-{attempt_id}"
+    saved = asyncio.run(repo.get(AUTO_LOG, doc_id))
+    assert saved is not None
+    assert (saved["outcome"], saved["source"], saved["cells"], saved["payroll_after"]) == (
+        "written",
+        "manual",
+        3,
+        26_000_000,
+    )
+
+    fetch = sheet.fetch
+    reads = 0
+
+    async def read_again() -> Any:
+        nonlocal reads
+        reads += 1
+        return await fetch()
+
+    monkeypatch.setattr(sheet, "fetch", read_again)
+    repo.fail_delete = None
+    fetched_at = advance(svc, 601)
+    assert trigger(c.post("/refresh", data={"next": "/players"}).text) == fetched_at
+    recovered = c.post(AUTO, data={"fetched_at": fetched_at}, headers=ORIGIN)
+    assert recovered.status_code == 200
+    assert recovered.text == ""
+    assert reads == 1
+    assert sheet.writes == 1
+    assert asyncio.run(repo.all(WRITE_ATTEMPTS)) == {}
+    assert asyncio.run(repo.all(AUTO_LOG)) == {doc_id: saved}
 
 
 def test_a_lost_manual_write_blocks_the_later_automatic_post(monkeypatch: Any) -> None:

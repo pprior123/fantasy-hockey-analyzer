@@ -377,6 +377,82 @@ async def test_elapsed_time_after_the_marker_or_token_cannot_send_a_batch(slow: 
     assert await app.repo.all(WRITE_ATTEMPTS) == {}
 
 
+@pytest.mark.parametrize("change", ["switch", "generation"])
+async def test_changes_during_token_acquisition_cancel_the_post_and_clear_its_record(
+    change: str,
+) -> None:
+    app = await setup()
+
+    async def token() -> str:
+        assert len(await app.repo.all(WRITE_ATTEMPTS)) == 1
+        if change == "switch":
+            await set_enabled(app.repo, False)
+        else:
+            app.clock.t += 1
+            mine = replace(ONE, roster=tuple(e for e in ONE.roster if e.player.player_id != "3"))
+            newer = replace(app.snap, teams=(mine, TWO))
+            await save_cached(app.repo, Cached(newer, app.clock.now()))
+        return "token-for-test"
+
+    with respx.mock(assert_all_called=False) as router:
+        post = router.post(
+            "https://sheets.googleapis.com/v4/spreadsheets/test:batchUpdate"
+        ).respond(200)
+        async with httpx.AsyncClient() as http:
+            writer = SheetsApiLeagueSheetWriter(http, "test", token)
+            result = await app.run(Sheet(OLD, OLD, AFTER), writer)
+    assert not post.called
+    assert result is not None
+    assert result.outcome == "skipped"
+    assert result.code == ("switched_off" if change == "switch" else "superseded")
+    assert result.cells == 0
+    assert await app.repo.all(WRITE_ATTEMPTS) == {}
+
+
+@pytest.mark.parametrize("failure", ["hook", "attempt-put", "post-hook"])
+async def test_storage_failures_before_the_send_leave_no_batch_or_attempt(failure: str) -> None:
+    class FailingStore(InMemoryRepository):
+        fail_check = False
+
+        async def get(self, collection: str, doc_id: str) -> Any:
+            if self.fail_check and collection == CACHE:
+                raise RepositoryError("private stored identifier")
+            return await super().get(collection, doc_id)
+
+        async def put(self, collection: str, doc_id: str, doc: Any) -> None:
+            if failure == "attempt-put" and collection == WRITE_ATTEMPTS:
+                raise RepositoryError("private stored identifier")
+            await super().put(collection, doc_id, doc)
+
+    repo = FailingStore()
+    app = await setup(repo=repo)
+
+    class FailOnFinalRead(Sheet):
+        async def fetch(self) -> ParsedSheet:
+            if failure == "hook" and self.calls == 1:
+                repo.fail_check = True
+            return await super().fetch()
+
+    async def token() -> str:
+        if failure == "post-hook":
+            repo.fail_check = True
+        return "token-for-test"
+
+    with respx.mock(assert_all_called=False) as router:
+        post = router.post(
+            "https://sheets.googleapis.com/v4/spreadsheets/test:batchUpdate"
+        ).respond(200)
+        async with httpx.AsyncClient() as http:
+            writer = SheetsApiLeagueSheetWriter(http, "test", token)
+            result = await app.run(FailOnFinalRead(OLD, OLD, AFTER), writer)
+    assert not post.called
+    assert result is not None
+    assert result.outcome == "failed"
+    assert result.code == "storage_failed"
+    assert "private stored identifier" not in result.reason
+    assert await repo.all(WRITE_ATTEMPTS) == {}
+
+
 async def test_a_lost_manual_answer_blocks_auto_then_keeps_evidence_until_a_fresh_read() -> None:
     app = await setup()
     digest = (await prepare_update(app.repo, app.snap, OLD)).digest

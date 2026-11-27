@@ -20,6 +20,7 @@ from fha.services.sheet_update import (
     AttemptSource,
     SheetUpdate,
     WriteJournal,
+    WriteResult,
     prepare_update,
     write_update,
 )
@@ -207,12 +208,24 @@ async def auto_update(
     except RepositoryError as error:
         log.warning("Automatic sheet update storage failed (%s)", type(error).__name__)
         result = AutoUpdate(clock.now(), "failed", "storage_failed", REASONS["storage_failed"])
+    await _save_result(repo, result)
+    return result
+
+
+async def record_manual_attempt_outcome(
+    repo: Repository, clock: Clock, result: WriteResult
+) -> None:
+    """Keep a definite manual result when its journal record had to stay behind."""
+    if result.attempt_cleanup_failed and result.attempt_id is not None:
+        await _save_result(repo, _write_outcome(clock, result, source="manual"))
+
+
+async def _save_result(repo: Repository, result: AutoUpdate | None) -> None:
     if result is not None:
         try:
             await _record_log(repo, result)
         except RepositoryError as error:
             log.warning("Automatic sheet update log failed (%s)", type(error).__name__)
-    return result
 
 
 async def _run_update(
@@ -288,6 +301,19 @@ async def _run_update(
         return skipped("problem_no_team")
     roster = {entry.player.player_id for entry in mine.roster}
 
+    async def eligibility_issue() -> str | None:
+        if not await refresh.eligible(fetched_at):
+            return "superseded"
+        if not await enabled(repo):
+            return "switched_off"
+        return None
+
+    async def before_post() -> str | None:
+        try:
+            return await eligibility_issue()
+        except RepositoryError:
+            return "storage_failed"
+
     async def before_write(update: SheetUpdate, bindings: Mapping[str, str]) -> str | None:
         nonlocal unidentified
         if update.plan is None:
@@ -295,10 +321,8 @@ async def _run_update(
         unidentified = _unidentified_drops(update.plan.changes, update.rows, bindings, roster)
         if unidentified:
             return "unidentified_drop"
-        if not await refresh.eligible(fetched_at):
-            return "superseded"
-        if not await enabled(repo):
-            return "switched_off"
+        if (issue := await eligibility_issue()) is not None:
+            return issue
         if has_unresolved_attempt(await repo.all(WRITE_ATTEMPTS), clock.now()):
             return "earlier_unknown"
         return None
@@ -311,9 +335,16 @@ async def _run_update(
         cached.snapshot,
         preview.digest,
         before_write=before_write,
+        before_post=before_post,
         journal=WriteJournal(repo, "auto"),
         deadline=started + SEND_BUDGET,
     )
+    return _write_outcome(clock, result, source="auto", unidentified=unidentified)
+
+
+def _write_outcome(
+    clock: Clock, result: WriteResult, *, source: AttemptSource, unidentified: tuple[int, ...] = ()
+) -> AutoUpdate | None:
     match result.kind:
         case "up_to_date":
             return None
@@ -330,6 +361,7 @@ async def _run_update(
         outcome,
         result.code,
         _reason(result.code, result.refusal, unidentified),
+        source=source,
         changes=result.changes,
         cells=result.attempted,
         payroll_after=result.payroll,

@@ -536,6 +536,13 @@ async def test_a_lost_answer_that_cannot_be_checked_says_the_outcome_is_unknown(
     assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
 
 
+async def test_a_lost_answer_with_no_tab_layout_is_still_unknown() -> None:
+    no_layout = live(replace(AFTER_ONE, payroll_formula="=F7+F8"), TAB_TWO)
+    result, _, _ = await confirm(BEFORE, no_layout, writer=FakeLeagueSheetWriter(LOST))
+    assert_outcome(result, "unknown", "lost_answer", attempted=7, applied="maybe")
+    assert "the tab holds neither the old cells nor the new ones" in result.message
+
+
 async def test_a_storage_failure_while_checking_a_lost_answer_is_still_unknown(
     monkeypatch: Any,
 ) -> None:

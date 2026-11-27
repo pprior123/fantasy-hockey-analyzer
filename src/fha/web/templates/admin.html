@@ -65,7 +65,9 @@
   </div>
   {% if auto_writing %}
   <h3 id="automatic-updates">Automatic updates</h3>
-  {% if auto_log %}
+  {% if auto_log is none %}
+  <p class="warn">The log couldn't be read just now.</p>
+  {% elif auto_log %}
   <ul>
     {% for entry in auto_log %}
     <li><strong>{{ entry.outcome|capitalize }}</strong> <span class="muted">{{ (auto_now - entry.at)|ago }}{% if entry.source == 'manual' %} · manual write{% endif %}</span>

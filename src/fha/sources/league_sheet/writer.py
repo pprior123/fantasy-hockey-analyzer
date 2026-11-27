@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import httpx
@@ -38,6 +38,7 @@ COLUMN = re.compile(r"[B-Z]|[A-Z]{2,3}")  # never column A (the IR labels)
 
 # The request never reached Google: nothing can have been written.
 NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol)
+BeforePost = Callable[[], Awaitable[str | None]]
 
 
 class UncertainWriteError(LeagueSheetError):
@@ -48,9 +49,9 @@ class UncertainWriteError(LeagueSheetError):
 class NotSentError(LeagueSheetError):
     """The batch could not be sent."""
 
-    def __init__(self, message: str, *, deadline_expired: bool = False) -> None:
+    def __init__(self, message: str, *, code: str = "not_sent") -> None:
         super().__init__(message)
-        self.deadline_expired = deadline_expired
+        self.code = code
 
 
 class RejectedWriteError(LeagueSheetError):
@@ -64,10 +65,22 @@ class LeagueSheetWriter(Protocol):
         edits: Sequence[CellEdit],
         *,
         deadline: float | None = None,
+        before_post: BeforePost | None = None,
         on_send: Callable[[], None] | None = None,
     ) -> None:
         """Write the batch before the monotonic deadline and signal when posting begins."""
         ...
+
+
+async def _check_before_post(
+    before_post: BeforePost | None, deadline: float | None, monotonic: Callable[[], float]
+) -> None:
+    if before_post is not None:
+        code = await before_post()
+        if code is not None:
+            raise NotSentError("the final automatic check refused", code=code)
+    if deadline is not None and monotonic() >= deadline:
+        raise NotSentError("the write deadline expired", code="out_of_time")
 
 
 def update_request(sheet_id: int, edits: Sequence[CellEdit]) -> dict[str, Any]:
@@ -135,6 +148,7 @@ class SheetsApiLeagueSheetWriter:
         edits: Sequence[CellEdit],
         *,
         deadline: float | None = None,
+        before_post: BeforePost | None = None,
         on_send: Callable[[], None] | None = None,
     ) -> None:
         if tab.sheet_id is None:
@@ -147,8 +161,7 @@ class SheetsApiLeagueSheetWriter:
         except GoogleAuthError as e:
             raise NotSentError(f"service-account auth failed: {e}") from None
         url = f"{API}{self._sheet_id}:batchUpdate"
-        if deadline is not None and self._monotonic() >= deadline:
-            raise NotSentError("the write deadline expired", deadline_expired=True)
+        await _check_before_post(before_post, deadline, self._monotonic)
         if on_send is not None:
             on_send()
         try:
@@ -184,10 +197,10 @@ class FakeLeagueSheetWriter:
         edits: Sequence[CellEdit],
         *,
         deadline: float | None = None,
+        before_post: BeforePost | None = None,
         on_send: Callable[[], None] | None = None,
     ) -> None:
-        if deadline is not None and time.monotonic() >= deadline:
-            raise NotSentError("the write deadline expired", deadline_expired=True)
+        await _check_before_post(before_post, deadline, time.monotonic)
         if on_send is not None:
             on_send()
         if self.error is not None:

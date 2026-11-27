@@ -50,6 +50,7 @@ from fha.sources.league_sheet.grid import parse_a1
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet, ParsedTab
 from fha.sources.league_sheet.source import LeagueSheetSource
 from fha.sources.league_sheet.writer import (
+    BeforePost,
     LeagueSheetWriter,
     NotSentError,
     RejectedWriteError,
@@ -257,11 +258,13 @@ class WriteJournal:
             {"at": at, "deadline": at + ATTEMPT_SECONDS, "source": self.source, "cells": cells},
         )
 
-    async def clear(self, attempt_id: str) -> None:
+    async def clear(self, attempt_id: str) -> bool:
         try:
             await self.repo.delete(WRITE_ATTEMPTS, attempt_id)
         except RepositoryError as error:
             log.warning("Sheet write attempt could not be cleared (%s)", type(error).__name__)
+            return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -275,6 +278,7 @@ class WriteResult:
     refusal: str | None = None
     changes: tuple[str, ...] = ()
     attempt_id: str | None = None
+    attempt_cleanup_failed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -295,6 +299,7 @@ async def write_update(
     ticked: Collection[int] = (),
     *,
     before_write: BeforeWrite | None = None,
+    before_post: BeforePost | None = None,
     journal: WriteJournal | None = None,
     deadline: float | None = None,
 ) -> WriteResult:
@@ -380,11 +385,14 @@ async def write_update(
             update.rows,
             update.layout,
             deadline=deadline,
+            before_post=before_post,
         )
 
     attempt_id = secrets.token_hex(8)
     post_started = False
-    result = None
+    recorded = False
+    cleared = True
+    result: WriteResult | None = None
 
     def posting() -> None:
         nonlocal post_started
@@ -394,24 +402,31 @@ async def write_update(
         try:
             await journal.record(attempt_id, clock.now(), len(plan.edits))
         except RepositoryError:
-            return _storage_failed()
-        result = await _write_and_verify(
-            repo,
-            clock,
-            source,
-            writer,
-            snapshot,
-            tab,
-            plan,
-            update.rows,
-            update.layout,
-            deadline=deadline,
-            on_send=posting,
-        )
-        return replace(result, attempt_id=attempt_id)
+            result = _storage_failed()
+        else:
+            recorded = True
+            result = await _write_and_verify(
+                repo,
+                clock,
+                source,
+                writer,
+                snapshot,
+                tab,
+                plan,
+                update.rows,
+                update.layout,
+                deadline=deadline,
+                before_post=before_post,
+                on_send=posting,
+            )
     finally:
         if not post_started or (result is not None and result.kind != "unknown"):
-            await journal.clear(attempt_id)
+            cleared = await journal.clear(attempt_id)
+    return replace(
+        result,
+        attempt_id=attempt_id if recorded or not cleared else None,
+        attempt_cleanup_failed=not cleared,
+    )
 
 
 def _storage_failed() -> WriteResult:
@@ -432,14 +447,17 @@ async def _write_and_verify(
     layout: TabLayout,
     *,
     deadline: float | None = None,
+    before_post: BeforePost | None = None,
     on_send: Callable[[], None] | None = None,
 ) -> WriteResult:
     lost: UncertainWriteError | None = None
     try:
-        if deadline is None and on_send is None:
+        if deadline is None and before_post is None and on_send is None:
             await writer.write(tab, plan.edits)
         else:
-            await writer.write(tab, plan.edits, deadline=deadline, on_send=on_send)
+            await writer.write(
+                tab, plan.edits, deadline=deadline, before_post=before_post, on_send=on_send
+            )
     except UncertainWriteError as e:  # Google may have applied it: look before saying
         lost = e
     except RejectedWriteError as e:
@@ -449,9 +467,15 @@ async def _write_and_verify(
             "google_refused",
             attempted=len(plan.edits),
         )
+    except NotSentError as e:
+        if e.code == "storage_failed":
+            return _storage_failed()
+        kind: WriteKind = "refused" if e.code in ("superseded", "switched_off") else "rejected"
+        return WriteResult(kind, f"The write failed and nothing was changed ({e}).", e.code)
     except LeagueSheetError as e:
-        code = "out_of_time" if isinstance(e, NotSentError) and e.deadline_expired else "not_sent"
-        return WriteResult("rejected", f"The write failed and nothing was changed ({e}).", code)
+        return WriteResult(
+            "rejected", f"The write failed and nothing was changed ({e}).", "not_sent"
+        )
     written = len(plan.edits)
     try:
         after: ParsedSheet | None = None

@@ -2730,3 +2730,44 @@ page. League-wide name search lets the owner look up any player from there.
 **Alternatives.** Keeping All as the opening view would still require a tap
 to see available players. Defaulting name searches to Free Agents would hide
 rostered matches until the owner selected All.
+
+## 2026-11-27 — Automatic league sheet updates
+
+**Owner's decision.** This reverses the 2026-10-30 answer to write only after
+a tap. Check the owner's tab when the app fetches Yahoo, either from Refresh
+or from a page opened after the cache expires. The **Auto-update my tab**
+switch in Admin defaults to on. `FHA_SHEET_WRITE=1` still enables all writing.
+Admin shows a log of automatic writes, skips, failures and uncertain results.
+
+**Trigger and cost.** The first eligible full page asks for the update after
+it loads. The request has its own 60-second budget and loads the exact saved
+Yahoo generation from storage. The manual confirmation marks its forced
+generation checked. A matching stored sheet up to 24 hours old can settle
+the check without Google. A fresh read is required when the stored sheet
+differs, is older, or an attempt needs reconciliation. A skipped update leaves
+the manual preview available. Yahoo's roster is used as fetched, so a later
+fetch can finish an addition that followed a drop. Plan and reviews are in
+`docs/plans/auto-tab-update.md` (PR #29).
+
+**Checks before each automatic write.** Each dropped row must have its own
+stored binding to a player who left the roster. The app applies the same sheet
+protections, plan digest, edit guard and read-back checks used for manual
+updates. At the final plan it rechecks the saved generation, the switch and
+unresolved attempts. The writer checks a monotonic deadline immediately
+before posting, after obtaining its token. Both paths record the batch before
+sending it and retain records whose outcomes are uncertain. Recovery retains
+the record until the fresh sheet read has been stored. The banner and log use
+fixed reasons, with parsed plan refusals and up to five row numbers for
+unidentified drops. The log keeps the latest 50 entries ordered by time and
+ID, using a stable ID for entries tied to a batch attempt.
+
+**Alternatives.** Writing in the page request would add sheet latency to the
+Yahoo refresh. A scheduled job would fetch when no one opens the app. A
+cross-instance lock would require a new conditional storage primitive in all
+three backends. The chosen attempt records and read-back catch unresolved
+writes, and the next eligible check whose stored sheet is over 24 hours old
+can detect remaining divergence. An unidentified drop may still need manual
+repair. Both new POSTs require a session and a same-origin request. The
+`Origin` header takes precedence over `Sec-Fetch-Site`. A separate form token
+was considered, but the automatic request supplies only a generation that the
+server verifies against its own saved data.

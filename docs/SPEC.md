@@ -52,12 +52,12 @@ are listed in §10 for context only.
 
 ### Added after Phase 1
 
-- **Updating the owner's own tab** in the league sheet (owner's decision,
-  2026-10-30; DECISIONS, "League sheet: updating the owner's tab"). After a
-  Yahoo roster change, the app previews the edits to the owner's tab, checks
-  the cap, and writes cell values only after the owner taps, then reads the
-  tab back. It never writes another tab, never inserts or deletes rows, and is
-  off unless `FHA_SHEET_WRITE=1`. Yahoo stays read-only. See §4a "Writing".
+- **Updating the owner's own tab** in the league sheet. After a Yahoo roster
+  change, the app can apply a clean plan automatically after a page loads
+  (owner, 2026-11-27). The owner can also preview and confirm an update by
+  hand. Both paths check the cap, edit cell values in the owner's tab only,
+  and read it back. Writing requires `FHA_SHEET_WRITE=1`. Yahoo stays
+  read-only. See §4a "Writing" and DECISIONS, "Automatic league sheet updates".
 
 ## 2. Architecture
 
@@ -74,9 +74,10 @@ Phone browser ──HTTPS──▶ Vercel (Python serverless, FastAPI)
   build step, no SPA framework.
 - **Storage:** Firestore (Spark free plan). Accessed **only** from the server
   using a service account. Firestore security rules deny all client access.
-- **Refresh model:** no background jobs. On request, if cached stats are older
-  than the TTL (default 30 min), refresh from Yahoo, recompute, serve. A
-  manual Refresh button forces it.
+- **Refresh model.** Work runs in requests, with no background jobs. If cached
+  stats are older than the TTL (default 30 min), refresh from Yahoo, recompute,
+  and serve. The Refresh button forces a fetch. An automatic tab update runs
+  in a separate request the browser makes after a full page loads (see §4a).
 - **Why not browser-only:** Yahoo's API does not permit browser (CORS) calls,
   and the OAuth client secret cannot ship to a browser.
 
@@ -213,19 +214,21 @@ block right below the range (it may be a contact line: it is named by its row
 number only, and never shown as a change or a review row), a cell to change holds a formula, a row to
 move has no salary number, a row awaits match review (unless the owner ticks
 it as dropped), no free row is left, or an incoming cap hit is unknown. Slot
-counts (from the league settings) are checked as invariants. Before writing,
-the app fetches the Yahoo roster afresh (writing nothing if Yahoo can't be read
-just then), re-reads the sheet and recomputes the plan; it writes only if the
-plan's digest is the one the owner saw (signed, 10 minutes), and only if every
-other tab is protected against the service account as a whole tab
+counts (from the league settings) are checked as invariants. On manual
+confirmation, the app fetches the Yahoo roster afresh, re-reads the sheet,
+and recomputes the plan. A failed Yahoo fetch stops the confirmation. A manual
+write requires the same digest as the owner's signed preview (valid for 10
+minutes). Both paths require every other tab to be protected against the
+service account as a whole tab
 (`protectedRanges`: no bounds, no unprotected ranges, not warning-only,
-`requestingUserCanEdit` false), and its own tab is not (a tab locked against
-the app is refused with a message naming the fix; a write Google refuses for a
-protected cell says so). The write is one atomic `spreadsheets.batchUpdate`
+`requestingUserCanEdit` false). The owner's tab must be editable by the
+service account. The app explains how to unlock the owner's tab and identifies
+a protected-cell refusal from Google. The write is one atomic `spreadsheets.batchUpdate`
 (`updateCells` per cell, `fields: userEnteredValue`, text as `stringValue`) with a separate
 `spreadsheets`-scope token; reads keep `readonly`. A failure before the request
 leaves, or a 4xx, means nothing was written. A lost answer (a timeout after
-sending, a dropped connection) or a 5xx is an unknown outcome: the app reads the
+sending or a dropped connection) or another non-200 response leaves the
+outcome unknown. The app reads the
 tab, and says the write went through (every new cell is there), that no change
 shows yet but Google may still apply it (every old cell is), or that the outcome
 is unknown (anything else, or the check itself failed). A row the parser skipped
@@ -236,6 +239,26 @@ added to their players, then reads the tab back and checks each written cell,
 the PAYROLL and that nothing is left to change. The owner shares the sheet
 with the service account as Editor and protects every other tab; if their own
 tab is protected, its protection must list the service account.
+
+**Automatic update.** With **Auto-update my tab** on (the default), the
+first full page to serve an unchecked saved Yahoo generation within its TTL
+asks for an update after it loads. Show more fragments and the manual Update
+page leave that check to the next eligible full page. The follow-up reads the
+exact saved generation from storage. A matching stored sheet up to 24 hours
+old can settle the check without Google. An older stored sheet or an expired
+write attempt requires a fresh read. A clean plan needs edits, no refusals,
+and a distinct stored row binding for every drop that identifies a player
+who left the roster. The final plan, saved generation, switch and unresolved
+attempts are checked before a batch is sent. The batch must start within 35
+seconds of the follow-up request.
+
+Both paths record each attempt before sending it and retain the record when
+its outcome is uncertain. The automatic path skips while an earlier result
+is unresolved. After the attempt's 10-minute window it retains the record
+until a fresh sheet read has been saved. The manual preview warns about
+unresolved writes and still permits confirmation. The follow-up request
+shows a banner for writes, skips, failures and uncertain outcomes. Admin
+keeps the latest 50 of those results, omitting checks with nothing to change.
 
 **League key:** Yahoo needs `{game_key}.l.8076`. Resolve the current NHL
 `game_key` at runtime (games endpoint, `game_codes=nhl`); never hardcode it —
@@ -595,8 +618,9 @@ A season label and toggle per §5.
    single-player AAV edit; force refresh; **Update my tab** (§4a
    "Writing": the edits before → after, cap room before and after, a "drop
    this row" tick for rows awaiting review, and Confirm when writing is on;
-   a Rosters badge links to it when the tab is out of date); config,
-   including the rating settings: divisor method (workbook by default, or
+   a Rosters badge links to it when the tab is out of date). With writing on,
+   Admin also shows **Auto-update my tab** and **Automatic updates**. The
+   configuration includes the rating settings: divisor method (workbook by default, or
    per-82), divisor count (default 20; switching method pre-fills that
    method's default unless the owner typed a count), and GP floor fraction
    (default 2%). The form shows the settings in use and warns that saving

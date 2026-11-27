@@ -1,6 +1,6 @@
 # Plan: update the owner's tab automatically
 
-Status: **approved by team-lead**, 2026-11-27, after three plan reviews: AU-P1 (not ready, 12
+Status: **implemented**, 2026-11-27, after three plan reviews: AU-P1 (not ready, 12
 findings), AU-P2 (not ready, 8), AU-P3 (ready with changes, 6; all accepted). Triage in §6. **§2a
 amends §2 and §3 and wins where they differ.** The owner needs no review of plans (2026-11-27).
 

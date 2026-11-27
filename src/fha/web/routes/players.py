@@ -79,6 +79,8 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
             request, f"That filter isn't one the Players screen knows: {e}.", "/players", "players"
         )
     mode = view_param(params.get("view"), totals=True)
+    if partial:
+        request.state.suppress_sheet_auto = True
     data = await page_data(request, season=season_param(params.get("season")))
     view = data.view
     if query.team_key is not None and view.team(query.team_key) is None:

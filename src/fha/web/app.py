@@ -87,7 +87,17 @@ def render(
     context: AppContext | None = getattr(request.app.state, "context", None)  # none: error app
     app_name = APP_NAME[context is not None and context.settings.demo][1]
     return templates.TemplateResponse(
-        request, template, {"nav": NAV, "app_name": app_name, **values}, status_code=status_code
+        request,
+        template,
+        {
+            "nav": NAV,
+            "app_name": app_name,
+            "sheet_auto_trigger": (
+                getattr(request.state, "sheet_auto_trigger", None) if status_code == 200 else None
+            ),
+            **values,
+        },
+        status_code=status_code,
     )
 
 

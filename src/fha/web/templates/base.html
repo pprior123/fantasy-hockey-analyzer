@@ -34,6 +34,9 @@
       {% endblock %}
     </div>
   </header>
+  {% if sheet_auto_trigger is not none %}
+  <div hx-post="/sheet/auto-update" hx-trigger="load" hx-vals='{{ {"fetched_at": sheet_auto_trigger}|tojson }}' hx-swap="outerHTML"></div>
+  {% endif %}
   <main class="page">
     {% block content %}{% endblock %}
   </main>

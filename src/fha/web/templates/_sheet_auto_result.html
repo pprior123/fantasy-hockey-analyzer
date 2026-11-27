@@ -1,0 +1,15 @@
+<div class="page">
+  <p class="admin-flash {{ 'good' if result.outcome == 'written' else 'error' }}" role="status">
+    {% if result.outcome == 'written' %}
+    Your tab was updated: {{ result.changes|join(", ") }} ({{ result.cells }} {{ 'cell' if result.cells == 1 else 'cells' }}).
+    {% if result.payroll_after is not none %}PAYROLL is now ${{ "{:,}".format(result.payroll_after) }}.{% endif %}
+    <a href="/admin#automatic-updates">Log</a>
+    {% elif result.outcome == 'unknown' %}
+    The automatic update of your tab may not have gone through: {{ result.reason }}.
+    Check it on <a href="/admin/sheet/update">Update my tab</a>.
+    {% else %}
+    Your tab wasn't updated automatically: {{ result.reason }}.
+    <a href="/admin/sheet/update">Update my tab</a>
+    {% endif %}
+  </p>
+</div>

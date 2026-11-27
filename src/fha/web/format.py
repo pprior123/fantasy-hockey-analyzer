@@ -8,18 +8,21 @@ through binary floats.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from urllib.parse import urlencode
 
 from jinja2 import Environment
+from markupsafe import Markup
 
 from fha.domain.engine import DivisorMethod, EngineConfig
 from fha.domain.schedule import Mark
-from fha.services.schedule import EASTERN
+from fha.services.schedule import EASTERN, Tonight
 
 DASH = "—"
+# Fixed names, not strftime: the server's locale must not change the screens.
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 def _round(value: float | Decimal, digits: int) -> Decimal:
@@ -95,6 +98,65 @@ def game_label(assignment: Mark | None) -> str | None:
         return opponent
     hour = start.hour % 12 or 12
     return f"{opponent} {hour}:{start.minute:02d}{'a' if start.hour < 12 else 'p'}"
+
+
+def weekday(day: date) -> str:
+    return WEEKDAYS[day.weekday()]
+
+
+def day_labels(slates: Sequence[Tonight], team: str) -> list[str]:
+    """The team's marks: tonight's as is, a later day's after its weekday ("Sat vs NYR 1:00p")."""
+    labels = []
+    for i, slate in enumerate(slates):
+        label = game_label(slate.matchup(team))
+        if label is not None:
+            labels.append(label if i == 0 else f"{weekday(slate.date)} {label}")
+    return labels
+
+
+def game_count(slates: Sequence[Tonight], team: str) -> int | None:
+    """The team's games over the slates; None (a dash) when any of them is unavailable."""
+    if any(slate.state == "unavailable" for slate in slates):
+        return None
+    return sum(slate.matchup(team) is not None for slate in slates)
+
+
+def schedule_notes(slates: Sequence[Tonight]) -> list[Markup]:
+    """The notes above a table with marks: each day's state, then which days' times show.
+    Markup from literal templates (the arguments are escaped), so apostrophes print as typed."""
+    notes = []
+    for i, slate in enumerate(slates):
+        day = weekday(slate.date)
+        if slate.state == "unavailable":
+            notes.append(
+                Markup("Tonight's schedule is unavailable.")
+                if i == 0
+                else Markup("Tomorrow's ({}) schedule is unavailable.").format(day)
+            )
+            continue
+        if slate.state == "stale" and slate.age is not None:
+            when = ago(slate.age)
+            notes.append(
+                Markup("Schedule from {}.").format(when)
+                if i == 0
+                else Markup("Schedule for {} from {}.").format(day, when)
+            )
+        if not slate.games:
+            notes.append(
+                Markup("No games tonight.") if i == 0 else Markup("No games {}.").format(day)
+            )
+    line = games_line(slates)
+    return [*notes, line] if line is not None else notes
+
+
+def games_line(slates: Sequence[Tonight]) -> Markup | None:
+    """ "Tonight's games (times ET)", naming only the days that have games."""
+    days = [
+        Markup("Tonight's") if i == 0 else Markup("{}'s").format(weekday(slate.date))
+        for i, slate in enumerate(slates)
+        if slate.state != "unavailable" and slate.games
+    ]
+    return Markup(" and ").join(days) + Markup(" games (times ET)") if days else None
 
 
 def rating_settings(config: EngineConfig) -> str:

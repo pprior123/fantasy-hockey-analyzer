@@ -40,33 +40,36 @@
 </dl>
 {%- endmacro %}
 
-{% macro schedule_note(slate) -%}
-{% if slate.state == 'unavailable' %}
-<p class="muted">Tonight's schedule is unavailable.</p>
-{% else %}
-{% if slate.state == 'stale' %}<p class="muted">Schedule from {{ slate.age|ago }}.</p>{% endif %}
-{% if slate.games %}
-<p class="muted">Tonight's games (times ET)</p>
-{% else %}
-<p class="muted">No games tonight.</p>
-{% endif %}
-{% endif %}
+{% macro schedule_note(notes) -%}
+{% for note in notes %}<p class="muted">{{ note }}</p>
+{% endfor %}
 {%- endmacro %}
 
-{% macro game_mark(label) -%}
-{% if label %}<span class="game-mark muted">{{ label }}</span>{% endif %}
+{% macro game_mark(labels) -%}
+{% for label in labels or () %}<span class="game-mark muted">{{ label }}</span>{% endfor %}
+{%- endmacro %}
+
+{#- A team's games in the chosen days; a dash when a needed day's schedule is unavailable -#}
+{% macro game_count(count) -%}
+<td class="num">{{ DASH if count is none else count }}</td>
+{%- endmacro %}
+
+{% macro game_count_header() -%}
+<th class="num" title="team games">Gm</th>
 {%- endmacro %}
 
 {#- replace: the link parameters on my own roster (goalies count toward the cap), else none -#}
-{% macro goalie_table(goalies, replace=none, game_labels=none) -%}
+{#- game_counts: the Gm column (Rosters), else none (Matchup) -#}
+{% macro goalie_table(goalies, replace=none, game_labels=none, game_counts=none) -%}
 <div class="table-wrap">
 <table class="data goalies">
-  <thead><tr><th class="first">Goalie</th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th>{% if replace is not none %}<th></th>{% endif %}</tr></thead>
+  <thead><tr><th class="first">Goalie</th><th>Team</th>{% if game_counts is not none %}{{ game_count_header() }}{% endif %}<th class="num">GP</th><th class="num">W</th><th class="num">GAA</th><th class="num">SV%</th><th class="num">AAV</th>{% if replace is not none %}<th></th>{% endif %}</tr></thead>
   <tbody>
   {% for g in goalies %}
   <tr class="{{ 'ir' if g.in_ir_slot else '' }}">
     <td class="first">{{ g.name }}{% if g.in_ir_slot %} <span class="badge">{{ g.slot }}</span>{% endif %}{% if g.status %} <span class="badge">{{ g.status }}</span>{% endif %}</td>
     <td>{{ g.nhl_team or DASH }}{% if game_labels is not none %}{{ game_mark(game_labels.get(g.player_id)) }}{% endif %}</td>
+    {% if game_counts is not none %}{{ game_count(game_counts.get(g.player_id)) }}{% endif %}
     <td class="num">{{ g.gp }}</td>
     <td class="num">{{ g.goalie.get('W')|number(0) }}</td>
     <td class="num">{{ g.goalie.get('GAA')|number(2) }}</td>
@@ -75,7 +78,7 @@
     {% if replace is not none %}<td><a href="{{ url('/rosters/replace', replace, drop=g.player_id) }}">Replace</a></td>{% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="{{ 8 if replace is not none else 7 }}" class="muted">No goalies.</td></tr>
+  <tr><td colspan="{{ 7 + (1 if replace is not none else 0) + (1 if game_counts is not none else 0) }}" class="muted">No goalies.</td></tr>
   {% endfor %}
   </tbody>
 </table>

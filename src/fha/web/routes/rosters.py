@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from fha.services.schedule import tonight
+from fha.services.schedule import eastern_date, nights
 from fha.services.teams import discrepancy_flags, replace_view, summarize
 from fha.web.app import render, services
 from fha.web.data import page_data, season_param, view_param
-from fha.web.format import game_label
+from fha.web.format import day_labels, game_count, games_line, schedule_notes
 from fha.web.routes.players import bad_request
 
 router = APIRouter()
@@ -34,9 +34,14 @@ async def rosters(request: Request) -> HTMLResponse:
     summary = summarize(view, team, discrepancies=discrepancy_flags(data.reports))
     roster = view.roster(team.team_key)
     svc = services(request)
-    slate = await tonight(svc.repo, svc.schedule_source, svc.clock)
-    game_labels = {r.player_id: game_label(slate.matchup(r.nhl_team)) for r in roster}
-    outside_ir = [r for r in roster if not r.in_ir_slot]
+    # Lenient like Rosters' other parameters: anything but 2 means Tonight.
+    days = 2 if params.get("tonight") == "2" else 1
+    slates = await nights(
+        svc.repo, svc.schedule_source, svc.clock, count=days, night=eastern_date(svc.clock)
+    )
+    game_labels = {r.player_id: day_labels(slates, r.nhl_team) for r in roster}
+    game_counts = {r.player_id: game_count(slates, r.nhl_team) for r in roster}
+    counts = [game_counts[r.player_id] for r in roster if not r.in_ir_slot]
     return render(
         request,
         "rosters.html",
@@ -54,10 +59,15 @@ async def rosters(request: Request) -> HTMLResponse:
         cap=view.cap,
         mode=mode,
         here=_here(request),
-        slate=slate,
+        days=days,
+        schedule_on=all(s.state != "unavailable" for s in slates),
+        schedule_notes=schedule_notes(slates),
+        games_line=games_line(slates),
         game_labels=game_labels,
-        active_count=len(outside_ir),
-        tonight_count=sum(game_labels[r.player_id] is not None for r in outside_ir),
+        game_counts=game_counts,
+        active_count=len(counts),
+        tonight_count=sum(1 for n in counts if n),
+        games_count=sum(n or 0 for n in counts),
     )
 
 

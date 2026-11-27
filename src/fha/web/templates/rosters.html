@@ -10,7 +10,7 @@
 </div>
 {# The picker is its own form: the Refresh POST can't sit inside it (nested forms don't work). #}
 <form method="get" action="/rosters" class="toolbar team-picker">
-  {% for key in ("season", "view") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
+  {% for key in ("season", "view", "tonight") %}{% if params.get(key) %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
   <label>Team
     <select name="team">
       {% for t in data.view.teams %}<option value="{{ t.team_key }}"{% if t.team_key == team.team_key %} selected{% endif %}>{{ t.name }}{% if t.is_mine %} (mine){% endif %}</option>{% endfor %}
@@ -32,13 +32,18 @@
 
 <h2>Skaters</h2>
 {{ m.view_toggle("/rosters", params, mode, totals=True) }}
-{% if slate.state != 'unavailable' %}
-<p class="muted">Tonight: {{ tonight_count }} of {{ active_count }} on teams with a game</p>
+<nav class="chips schedule-filter" aria-label="Schedule">
+  <a class="chip{{ ' on' if days == 1 else '' }}" href="{{ url('/rosters', params, tonight=None) }}">Tonight</a>
+  <a class="chip{{ ' on' if days == 2 else '' }}" href="{{ url('/rosters', params, tonight='2') }}">Tonight + tomorrow</a>
+</nav>
+{% if schedule_on %}
+{% if days == 2 %}<p class="muted">Tonight + tomorrow: {{ games_count }} {{ 'game' if games_count == 1 else 'games' }} for {{ tonight_count }} of {{ active_count }} players</p>
+{% else %}<p class="muted">Tonight: {{ tonight_count }} of {{ active_count }} on teams with a game</p>{% endif %}
 {% endif %}
-{{ m.schedule_note(slate) }}
+{{ m.schedule_note(schedule_notes) }}
 <div class="table-wrap">
 <table class="data roster">
-  <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th><th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th>
+  <thead><tr><th class="first">Name</th><th>Pos</th><th>Slot</th>{{ m.game_count_header() }}<th class="num">GP</th><th class="num">TTLTST</th><th class="num">Pctl</th>
     {% if mode == 'money' %}<th class="num">AAV</th><th class="num">$/TTLTST</th>{% else %}{% for cat in categories %}<th class="num">{{ cat.value }}</th>{% endfor %}{% endif %}
     {% if team.is_mine %}<th></th>{% endif %}</tr></thead>
   <tbody>
@@ -47,6 +52,7 @@
     <td class="first">{% if r.rating and r.rating.rated %}<details><summary>{{ r.name }}</summary>{{ m.norms_list(r.norms, categories) }}</details>{% else %}{{ r.name }}{% endif %}{% if r.status %} <span class="badge">{{ r.status }}</span>{% endif %}{{ m.game_mark(game_labels.get(r.player_id)) }}</td>
     <td>{{ r.position }}</td>
     <td>{{ r.slot or DASH }}</td>
+    {{ m.game_count(game_counts.get(r.player_id)) }}
     <td class="num">{{ r.gp }}</td>
     <td class="num">{{ r.ttltst|number(3) }}</td>
     <td class="num">{{ r.percentile|pctl }}</td>
@@ -61,7 +67,7 @@
     {% if team.is_mine %}<td><a href="{{ url('/rosters/replace', {'season': params.get('season', ''), 'view': replace_view}, drop=r.player_id) }}">Replace</a></td>{% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="{{ 6 + (2 if mode == 'money' else categories|length) + (1 if team.is_mine else 0) }}" class="muted">No skaters.</td></tr>
+  <tr><td colspan="{{ 7 + (2 if mode == 'money' else categories|length) + (1 if team.is_mine else 0) }}" class="muted">No skaters.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -79,6 +85,6 @@
 
 <h2>Goalies</h2>
 <p class="muted">Raw stats: goalies aren't rated.</p>
-{% if slate.games %}<p class="muted">Tonight's games (times ET)</p>{% endif %}
-{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': replace_view} if team.is_mine else none, game_labels) }}
+{% if games_line %}<p class="muted">{{ games_line }}</p>{% endif %}
+{{ m.goalie_table(goalies, {'season': params.get('season', ''), 'view': replace_view} if team.is_mine else none, game_labels, game_counts) }}
 {% endblock %}

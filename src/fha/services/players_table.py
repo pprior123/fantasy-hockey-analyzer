@@ -64,7 +64,7 @@ class PlayersQuery:
     zero_gp: bool = False  # show players with 0 GP
     start: int = 0  # the first row of the page asked for
     q: str | None = None  # a name search, as typed (trimmed); see ``searching``
-    tonight: bool = False
+    nights: int = 0  # the schedule filter: 0 off, 1 tonight, 2 tonight + tomorrow
 
     @classmethod
     def from_params(cls, params: Mapping[str, str]) -> PlayersQuery:
@@ -84,8 +84,8 @@ class PlayersQuery:
             q = None  # no words ("!!"): no search
         default_owner = Owner.ALL if q is not None else Owner.FREE
         tonight = params.get("tonight")
-        if tonight not in (None, "1"):
-            raise QueryError("tonight must be 1 or absent")
+        if tonight not in (None, "1", "2"):
+            raise QueryError("tonight must be 1, 2 or absent")
         try:
             owner = Owner(get("owner") or default_owner)
             position = get("pos")
@@ -122,7 +122,7 @@ class PlayersQuery:
             zero_gp == "1",
             start,
             q,
-            tonight=tonight == "1",
+            nights=int(tonight or 0),
         )
 
     @property
@@ -190,7 +190,7 @@ def _filtered(
             return False
         if not _owned_as_asked(row, query, mine):
             return False
-        if query.tonight and playing is not None and team_code(row.nhl_team) not in playing:
+        if query.nights and playing is not None and team_code(row.nhl_team) not in playing:
             return False
         if query.position is not None and query.position not in row.eligible_positions:
             return False

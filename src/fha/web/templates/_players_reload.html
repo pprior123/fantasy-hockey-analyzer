@@ -1,1 +1,1 @@
-<tr><td class="muted" colspan="{{ colspan }}">{% if new_night %}It's a new night: <a href="{{ reload_url }}">reload the list.</a>{% else %}Tonight's schedule changed. <a href="{{ reload_url }}">Reload the list.</a>{% endif %}</td></tr>
+<tr><td class="muted" colspan="{{ colspan }}">{% if new_night %}It's a new night: <a href="{{ reload_url }}">reload the list.</a>{% else %}{{ "The schedule changed." if two_days else "Tonight's schedule changed." }} <a href="{{ reload_url }}">Reload the list.</a>{% endif %}</td></tr>

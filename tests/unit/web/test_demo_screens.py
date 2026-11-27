@@ -49,7 +49,7 @@ def test_the_league_shows_every_payroll_and_one_team_over_the_cap() -> None:
 
 def test_players_and_rosters_show_salaries_and_room() -> None:
     client = demo_client()
-    players = client.get("/players").text
+    players = client.get("/players?owner=all").text
     assert len(re.findall(r"\$\d+\.\d\dM", players)) > 50
     rosters = client.get("/rosters").text
     assert f"Cap {money(CAP)}" in rosters

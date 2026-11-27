@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from typing import Any
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from fha.domain.schedule import mark
 from fha.services.players_table import (
     MAX_Q_CHARS,
     PAGE_SIZE,
@@ -19,7 +21,7 @@ from fha.services.players_table import (
     select,
     zero_gp_hidden,
 )
-from fha.services.schedule import eastern_date, tonight
+from fha.services.schedule import eastern_date, team_code, tonight
 from fha.web.app import render, services
 from fha.web.auth import safe_next
 from fha.web.data import page_data, season_param, view_param
@@ -107,8 +109,11 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         return _reload_list(request, params, colspan, new_night=True)
     slate = await tonight(svc.repo, svc.schedule_source, svc.clock, night=day)
     playing = None if slate.state == "unavailable" else slate.games
+    team_labels = {code: game_label(mark(code, game)) for code, game in slate.games.items()}
     fingerprint = (
-        "off" if playing is None else sha256(",".join(sorted(playing)).encode()).hexdigest()[:12]
+        "off"
+        if playing is None
+        else sha256(json.dumps(team_labels, sort_keys=True).encode()).hexdigest()[:12]
     )
     if partial and page_slate is not None and page_slate != fingerprint:
         return _reload_list(request, params, colspan, new_night=False)
@@ -129,7 +134,7 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         "categories": categories,
         "colspan": colspan,
         "team_names": {t.team_key: t.name for t in view.teams},
-        "game_labels": {r.player_id: game_label(slate.matchup(r.nhl_team)) for r in shown},
+        "game_labels": {r.player_id: team_labels.get(team_code(r.nhl_team)) for r in shown},
         "paging_night": slate.date.isoformat() if svc.schedule_source is not None else None,
         "paging_slate": fingerprint if svc.schedule_source is not None else None,
     }

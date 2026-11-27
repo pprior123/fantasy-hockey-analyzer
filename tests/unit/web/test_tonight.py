@@ -326,7 +326,7 @@ def test_same_night_slate_changes_reload_the_table_before_appending(change: str)
     assert (updated_params["slate"] == "off") == (change == "unavailable")
 
 
-def test_same_playing_teams_can_append_if_game_times_or_provider_order_change() -> None:
+def test_reordering_provider_games_can_still_append_the_next_page() -> None:
     clock = FakeClock(NOW)
     svc = make_services(clock)
     source = Source(GAMES)
@@ -335,13 +335,52 @@ def test_same_playing_teams_can_append_if_game_times_or_provider_order_change() 
     old = show_more(c.get("/players?owner=all&tonight=1&sort=name").text)
     assert old is not None
     clock.t += 6 * 3600
-    source.games = tuple(replace(game, start_utc=NOW) for game in reversed(GAMES))
+    source.games = tuple(reversed(GAMES))
     partial = c.get(old[1])
     assert partial.status_code == 200
     assert len(partial_names(partial.text)) == PAGE_SIZE
     next_links = show_more(partial.text)
     assert next_links is not None
     assert params(next_links[1])["slate"] == params(old[1])["slate"]
+
+
+@pytest.mark.parametrize("change", ["time", "opponent", "venue"])
+def test_visible_game_label_changes_reload_even_when_the_playing_teams_match(change: str) -> None:
+    clock = FakeClock(NOW)
+    svc = make_services(clock)
+    source = Source(GAMES)
+    svc.schedule_source = source
+    c = client(svc)
+    original = c.get("/players?owner=all&tonight=1&sort=name").text
+    assert "@BOS 7:00p" in original
+    old = show_more(original)
+    assert old is not None
+
+    clock.t += 6 * 3600
+    if change == "time":
+        assert GAME.start_utc is not None
+        source.games = (replace(GAME, start_utc=GAME.start_utc + 3600), *GAMES[1:])
+        updated_label = "@BOS 8:00p"
+    elif change == "opponent":
+        source.games = (replace(GAME, home="LAK"), replace(GAMES[1], home="BOS"), *GAMES[2:])
+        updated_label = "@LAK 7:00p"
+    else:
+        source.games = (replace(GAME, away=GAME.home, home=GAME.away), *GAMES[1:])
+        updated_label = "vs BOS 7:00p"
+    assert {code for game in source.games for code in (game.away, game.home)} == PLAYING
+
+    response = c.get(old[1])
+    assert response.status_code == 200
+    assert "Tonight's schedule changed" in unescape(response.text)
+    assert response.text.count("<tr>") == 1
+    assert partial_names(response.text) == []
+    reload = player_link(response.text, "Reload the list.")
+    reloaded = c.get(reload).text
+    assert updated_label in reloaded
+    assert "@BOS 7:00p" not in reloaded
+    next_links = show_more(reloaded)
+    assert next_links is not None
+    assert params(next_links[1])["slate"] != params(old[1])["slate"]
 
 
 def test_roster_marks_goalies_and_ir_but_counts_only_players_outside_ir() -> None:

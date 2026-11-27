@@ -28,9 +28,8 @@ should default to free agents and not ALL".
 
 - `services/players_table.py`, `PlayersQuery.from_params`: a blank `owner` is
   `Owner.ALL` when `q` is a search (has a word), else `Owner.FREE`. The dataclass
-  default stays `Owner.ALL`? No: it becomes `Owner.FREE` too, so a bare
-  `PlayersQuery()` means what a bare URL means; callers that build one in tests
-  for All say so.
+  default becomes `Owner.FREE` too, so a bare `PlayersQuery()` means what a bare
+  URL means; tests that build one for All say so.
 - `docs/SPEC.md` §7.1: "Filter chips: All / My Team / Free Agents / Taken
   (default: Free Agents; a name search starts from All)".
 - `docs/DECISIONS.md`: a dated entry (what, why, alternatives).

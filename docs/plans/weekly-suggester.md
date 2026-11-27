@@ -21,7 +21,8 @@ below a TTLTST threshold; the rest of the current matchup week with a toggle for
 (weighting by the categories Matchup says the owner is losing is a later option, not v1).
 
 **Depends on PR #31** (Tonight + tomorrow): its date-varied demo schedule is used here, and both PRs edit
-`routes/rosters.py` and `rosters.html`. Implementation starts after PR #31 merges, on this branch rebased onto
+`routes/rosters.py` and `rosters.html`. Phases 1 and 2 (the domain optimizer, the Yahoo fields) touch no file
+PR #31 touches and may start before it merges; phases 3 to 5 start after PR #31 merges, on this branch rebased onto
 `main`.
 
 **Scope change.** `CLAUDE.md` ("no waiver *recommendation* ... screens") and SPEC §1 kept recommendations out of
@@ -168,4 +169,4 @@ The report is posted verbatim on PR #32. Each finding was checked against the co
 | 11 | Low | Seven per-date calls, all-or-nothing, 5-minute backoff per day | **Accepted.** v1 keeps per-date calls; the note names the days and the retry; DECISIONS records the cost |
 | 12 | Low | Share the drop's cap-hit rule with Replace | **Accepted.** Checked: inline in `replace_view` (`teams.py:289-294`). One helper; a test that both agree |
 
-The plan is approved after this triage (team-lead, 2026-11-27). Implementation starts after PR #31 merges.
+The plan is approved after this triage (team-lead, 2026-11-27). Phases 3 to 5 start after PR #31 merges.

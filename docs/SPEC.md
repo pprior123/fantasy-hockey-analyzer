@@ -58,6 +58,9 @@ are listed in §10 for context only.
   hand. Both paths check the cap, edit cell values in the owner's tab only,
   and read it back. Writing requires `FHA_SHEET_WRITE=1`. Yahoo stays
   read-only. See §4a "Writing" and DECISIONS, "Automatic league sheet updates".
+- **Tonight's NHL games** appear beside players on Players and Rosters.
+  The Players **Tonight** chip filters to teams with a game today in Eastern
+  time. Ratings and roster recommendations are outside this feature's scope.
 
 ## 2. Architecture
 
@@ -65,6 +68,7 @@ are listed in §10 for context only.
 Phone browser ──HTTPS──▶ Vercel (Python serverless, FastAPI)
                               │
                               ├──▶ Yahoo Fantasy Sports API (OAuth 2.0, read-only)
+                              ├──▶ NHL public schedule (read-only)
                               └──▶ Firestore (server-only, service account)
 ```
 
@@ -113,6 +117,9 @@ Required seams (Protocols), each with an in-memory/fake implementation used in
 tests:
 
 - `YahooSource` — league settings, teams, rosters, player pool, season stats.
+- `ScheduleSource` — NHL game slates by Eastern date. The NHL adapter uses
+  the shared HTTP client. The demo and tests use synthetic data, including
+  an NHL response fixture for the adapter tests.
 - `LeagueSheetSource` — the league's shared salary spreadsheet (§4a): per
   team tab, the salary rows, IR rows, the tab's own payroll, and the cap.
   Two grid readers feed one pure parser: Google Sheets API (production) and
@@ -124,7 +131,7 @@ tests:
   impl: PuckPedia CSV. (PuckPedia has a paid private API; a future impl may
   slot in here.)
 - `Repository` — players, stats cache + timestamp, salaries, name bindings,
-  aliases, Yahoo tokens, config.
+  aliases, Yahoo tokens, config, NHL schedules by date.
 - `Clock` — injectable, so cache-TTL logic is testable.
 
 ## 4. Data sources
@@ -136,6 +143,7 @@ tests:
 | Season stat totals | Yahoo API | **source of truth** for stats |
 | Last season's stat totals | Yahoo API | pre-season / early-season baseline (§5) |
 | Weekly matchups | Yahoo API | league scoreboard, current and next week |
+| Today's NHL games | NHL public schedule | Eastern date, regular-season and playoff games, scheduled start times |
 | Salaries of rostered players, payrolls, cap | League shared spreadsheet | **source of truth** (§4a) |
 | Salaries of free agents | CSV import | PuckPedia export (the sheet only lists rostered players) |
 
@@ -584,6 +592,13 @@ A season label and toggle per §5.
    order, accents and punctuation ignored, not fuzzy) whoever owns them, 0-GP
    players included; a search starts from the whole league, and the filters
    then narrow it (DECISIONS, "Players: name search").
+   **Tonight** adds a filter for players on teams with a game on today's
+   Eastern date. It combines with the owner and team filters. Opening Players
+   with Tonight alone lists free agents. A new search or Clear resets Tonight.
+   Marks below the NHL team code show the opponent, home or away, and the
+   scheduled time in ET when available. Show more carries the date and asks for
+   a reload if Eastern midnight passed. If the schedule is unavailable, the
+   page shows the normal list for its other filters and leaves Tonight unlit.
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in
@@ -592,6 +607,10 @@ A season label and toggle per §5.
    and their AAV (no TTLTST). In Phase 1 goalies count toward the cap, and my
    goalies can be replaced like skaters; their Yahoo rank and any other goalie
    view are deferred (owner, 2026-09-27; issue #7).
+   Skaters and goalies have the same opponent and time marks as Players. The
+   Tonight count covers players outside IR slots whose NHL teams have a game,
+   including goalies and injured players in other slots. An unavailable
+   schedule hides the count.
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:

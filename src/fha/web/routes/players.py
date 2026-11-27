@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from hashlib import sha256
 from typing import Any
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from fha.domain.schedule import mark
 from fha.services.players_table import (
     MAX_Q_CHARS,
     PAGE_SIZE,
@@ -18,10 +21,11 @@ from fha.services.players_table import (
     select,
     zero_gp_hidden,
 )
-from fha.web import format as _format  # noqa: F401 - installs the template filters
+from fha.services.schedule import eastern_date, team_code, tonight
 from fha.web.app import render, services
 from fha.web.auth import safe_next
 from fha.web.data import page_data, season_param, view_param
+from fha.web.format import game_label, url
 
 router = APIRouter()
 
@@ -58,6 +62,18 @@ def bad_request(request: Request, message: str, back: str, active: str) -> HTMLR
     )
 
 
+def _reload_list(
+    request: Request, params: dict[str, str], colspan: int, *, new_night: bool
+) -> HTMLResponse:
+    return render(
+        request,
+        "_players_reload.html",
+        colspan=colspan,
+        reload_url=url("/players", params),
+        new_night=new_night,
+    )
+
+
 @router.get("/players", response_class=HTMLResponse)
 async def players(request: Request) -> HTMLResponse:
     """The page: rows up to ``start`` + one page (``start`` is the no-JS "Show more")."""
@@ -85,23 +101,44 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
     view = data.view
     if query.team_key is not None and view.team(query.team_key) is None:
         return bad_request(request, "That team isn't in the league.", "/players", "players")
-    rows = select(view, query, totals=mode == "totals")
+    categories = view.config.categories
+    colspan = len(COLUMNS) + (len(MONEY_COLUMNS) if mode == "money" else len(categories))
+    svc = services(request)
+    page_night = params.pop("night", None)
+    page_slate = params.pop("slate", None)
+    day = eastern_date(svc.clock)
+    if partial and page_night is not None and page_night != day.isoformat():
+        return _reload_list(request, params, colspan, new_night=True)
+    slate = await tonight(svc.repo, svc.schedule_source, svc.clock, night=day)
+    playing = None if slate.state == "unavailable" else slate.games
+    team_labels = {code: game_label(mark(code, game)) for code, game in slate.games.items()}
+    fingerprint = (
+        "off"
+        if playing is None
+        else sha256(json.dumps(team_labels, sort_keys=True).encode()).hexdigest()[:12]
+    )
+    if partial and page_slate is not None and page_slate != fingerprint:
+        return _reload_list(request, params, colspan, new_night=False)
+    rows = select(view, query, totals=mode == "totals", playing=playing)
     end = query.start + PAGE_SIZE
+    shown = rows[query.start if partial else 0 : end]
     params.pop("start", None)  # every other link starts from the top again
     if not query.searching:
         params.pop("q", None)  # "" or "!!": no search, so no link carries it
     display_state = {k: params[k] for k in DISPLAY_STATE if params.get(k)}
-    categories = view.config.categories
     context: dict[str, Any] = {
-        "rows": rows[query.start if partial else 0 : end],
+        "rows": shown,
         "next_start": end if end < len(rows) else None,
         "left": max(len(rows) - end, 0),
         "page_size": PAGE_SIZE,
         "params": params,
         "mode": mode,
         "categories": categories,
-        "colspan": len(COLUMNS) + (len(MONEY_COLUMNS) if mode == "money" else len(categories)),
+        "colspan": colspan,
         "team_names": {t.team_key: t.name for t in view.teams},
+        "game_labels": {r.player_id: team_labels.get(team_code(r.nhl_team)) for r in shown},
+        "paging_night": slate.date.isoformat() if svc.schedule_source is not None else None,
+        "paging_slate": fingerprint if svc.schedule_source is not None else None,
     }
     if partial:
         return render(request, "_player_rows.html", **context)
@@ -114,7 +151,9 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         refreshed_at=data.refreshed_label,
         data=data,
         total=len(rows),
-        zero_gp_hidden=zero_gp_hidden(view, query),
+        zero_gp_hidden=zero_gp_hidden(view, query, playing=playing),
+        slate=slate,
+        tonight_active=query.tonight and playing is not None,
         query=query,
         sort=query.sort.value,
         columns=COLUMNS,

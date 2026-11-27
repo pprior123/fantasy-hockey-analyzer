@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from datetime import datetime
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from urllib.parse import urlencode
 
 from jinja2 import Environment
 
 from fha.domain.engine import DivisorMethod, EngineConfig
+from fha.domain.schedule import Mark
+from fha.services.schedule import EASTERN
 
 DASH = "—"
 
@@ -77,6 +80,21 @@ def ago(seconds: float) -> str:
     if seconds < 48 * 3600:
         return f"{int(seconds // 3600)} h ago"
     return f"{int(seconds // 86400)} days ago"
+
+
+def game_label(assignment: Mark | None) -> str | None:
+    if assignment is None:
+        return None
+    venue = "@" if assignment.venue == "at" else "vs "
+    opponent = venue + assignment.opponent
+    if assignment.start_utc is None:
+        return opponent
+    try:
+        start = datetime.fromtimestamp(assignment.start_utc, EASTERN)
+    except (ValueError, OverflowError, OSError):
+        return opponent
+    hour = start.hour % 12 or 12
+    return f"{opponent} {hour}:{start.minute:02d}{'a' if start.hour < 12 else 'p'}"
 
 
 def rating_settings(config: EngineConfig) -> str:

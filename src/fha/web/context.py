@@ -26,6 +26,7 @@ from fha.storage.repository import Repository
 if TYPE_CHECKING:
     from fha.sources.google_auth import TokenProvider
     from fha.sources.league_sheet.writer import LeagueSheetWriter
+    from fha.sources.nhl.schedule import ScheduleSource
 
 DEFAULT_BASELINE_MIN_GP = 10  # SPEC §5, baseline season
 SESSION_DAYS = 400  # browsers cap cookie lifetimes around here
@@ -107,6 +108,7 @@ class Services:
     prepare: Callable[[], Awaitable[None]] | None = None
     # Writes the owner's tab (SPEC §4a "Writing"); None: writing is off.
     sheet_writer: LeagueSheetWriter | None = None
+    schedule_source: ScheduleSource | None = None
 
 
 ServicesFactory = Callable[[httpx.AsyncClient], Services]
@@ -195,6 +197,7 @@ def league_sheet_from_env(
 def production_services(
     environ: Mapping[str, str], http: httpx.AsyncClient, settings: Settings
 ) -> Services:
+    from fha.sources.nhl.schedule import NhlScheduleSource
     from fha.sources.yahoo.client import YahooClient
     from fha.sources.yahoo.oauth import DEFAULT_REDIRECT_URI, Credentials
     from fha.sources.yahoo.source import HttpYahooSource
@@ -218,6 +221,7 @@ def production_services(
         clock,
         league_sheet_from_env(environ, http),
         sheet_writer=sheet_writer_from_env(environ, http),
+        schedule_source=NhlScheduleSource(http),
     )
 
 
@@ -230,6 +234,7 @@ def demo_services(
     Salaries are built in (issue #14): a synthetic league sheet, read and bound,
     and free-agent rows, stored before the first page. A configured sheet
     (``LEAGUE_SHEET_ID`` or ``LEAGUE_SHEET_XLSX``) replaces them all."""
+    from fha.sources.nhl.demo import DemoScheduleSource
     from fha.sources.yahoo.demo import demo_snapshot
     from fha.sources.yahoo.fake import FakeYahooSource
     from fha.storage.memory import InMemoryRepository
@@ -253,11 +258,12 @@ def demo_services(
         FakeYahooSource(snapshot), repo, clock, ttl_seconds=settings.ttl_seconds
     )
     sheet = league_sheet_from_env(environ, http)
+    schedule = DemoScheduleSource()
     if sheet is not None:
-        return Services(repo, refresh, clock, sheet)
+        return Services(repo, refresh, clock, sheet, schedule_source=schedule)
     from fha.services.demo import DemoSalaries
     from fha.sources.demo_salaries import DemoLeagueSheet, demo_free_agent_rows
 
     built_in = DemoLeagueSheet(snapshot)
     salaries = DemoSalaries(repo, clock, snapshot, built_in, demo_free_agent_rows(snapshot))
-    return Services(repo, refresh, clock, built_in, salaries.ensure)
+    return Services(repo, refresh, clock, built_in, salaries.ensure, schedule_source=schedule)

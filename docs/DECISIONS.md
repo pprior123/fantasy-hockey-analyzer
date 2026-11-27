@@ -2715,3 +2715,18 @@ breaks Pctl ties by TTLTST, then by name, so the Pctl order is exactly TTLTST's
 
 **mutmut** (`fha.domain.standings*`): 150 killed, none survived. The equivalent
 `roto` flag mutant went with the flag.
+
+## 2026-11-27 — Players opens on Free Agents
+
+**What.** Players opens with the Free Agents chip selected when the URL has
+no owner filter and no name search. The list includes waivers. A name search
+without an owner filter starts from All. The owner chips can narrow those
+results, and Clear returns to Free Agents. The All chip sets `owner=all`.
+Plan and review in `docs/plans/players-default-free-agents.md` (PR #28).
+
+**Why.** The owner asked to see available players first on the app's start
+page. League-wide name search lets the owner look up any player from there.
+
+**Alternatives.** Keeping All as the opening view would still require a tap
+to see available players. Defaulting name searches to Free Agents would hide
+rostered matches until the owner selected All.

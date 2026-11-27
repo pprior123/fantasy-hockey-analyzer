@@ -550,7 +550,8 @@ A season label and toggle per §5.
 
 1. **Players** — table: Name · Pos · Team · Owner · GP · TTLTST · Pctl · AAV ·
    $/TTLTST. Tap a header to sort. Filter chips: All / My Team / Free Agents /
-   Taken, plus a team picker for any single team; position; min GP. Tap a row
+   Taken. Free Agents is the default, and a name search starts from All.
+   Filter by team, position, and min GP. Tap a row
    to expand the 7-category norm breakdown. Sticky header. Last-refreshed time
    and a Refresh button. 100 rows at a time, with a **Show more** button that
    appends the next 100; players with 0 GP are hidden unless asked for (not
@@ -585,8 +586,8 @@ A season label and toggle per §5.
 4. **Matchup** — the owner's opponent for the current week and next week
    (week switch). Side-by-side team profiles per category with the
    difference; trailing categories (§5) highlighted. Goalies raw. A "Free
-   agents who help here" link opens Players filtered to free agents and
-   sorted by `need_score`, with a "fits my cap" filter.
+   agents who help here" link opens a dedicated page (`/matchup/free-agents`)
+   listing free agents sorted by `need_score`, with a "fits my cap" filter.
 5. **Admin** — league sheet status (last read, per-tab parse status incl.
    unrecognized tabs, tab ↔ Yahoo team binding, discrepancy report);
    PuckPedia CSV import for free agents; match review (unmatched row vs. top

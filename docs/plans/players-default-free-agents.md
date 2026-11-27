@@ -1,6 +1,8 @@
 # Plan: Players opens on Free Agents, not All
 
-Status: Codex-reviewed (ready with changes, all accepted), awaiting the owner's OK, 2026-11-27. The owner's request (2026-11-27): "the players page
+Status: Approved by the owner 2026-11-27; implemented
+
+The owner's request (2026-11-27): "the players page
 should default to free agents and not ALL".
 
 ## 1. The decision

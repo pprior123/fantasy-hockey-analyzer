@@ -80,8 +80,9 @@ class PlayersQuery:
             raise QueryError(f"q must be at most {MAX_Q_CHARS} characters, got {q[:12] + '…'!r}")
         if q is not None and not normalize_name(q):
             q = None  # no words ("!!"): no search
+        default_owner = Owner.ALL if q is not None else Owner.FREE
         try:
-            owner = Owner(get("owner") or Owner.ALL)
+            owner = Owner(get("owner") or default_owner)
             position = get("pos")
             if position is not None and position not in POSITIONS:
                 raise QueryError(f"unknown position {position!r}")

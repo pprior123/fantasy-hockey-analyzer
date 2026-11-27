@@ -17,7 +17,7 @@ from fha.domain.names import name_matches
 from fha.services.free_agents import import_free_agent_salaries
 from fha.services.league_sheet import bind_tab, read_league_sheet
 from fha.services.league_view import LeagueView, Salaries, Season, build_view
-from fha.services.players_table import PlayersQuery, select
+from fha.services.players_table import PAGE_SIZE, Owner, PlayersQuery, SortKey, select
 from fha.services.refresh import RefreshService
 from fha.services.settings import save_rating_settings
 from fha.services.teams import LeagueQuery, LeagueTable, league_table
@@ -228,20 +228,23 @@ def show_more(html: str) -> tuple[str, str] | None:
 
 
 def test_players_shows_a_page_of_rows_and_a_show_more_button() -> None:
-    html = client().get("/players?season=last").text
+    html = client().get("/players?owner=all&season=last").text
     total = len(SNAP.pool) - DEMO_ZERO_GP
     assert len(names_in(html, "players")) == 100
     assert f"{total} players ({DEMO_ZERO_GP} with 0 GP hidden" in html
-    more = ("/players?season=last&start=100", "/players/rows?season=last&start=100")
+    more = (
+        "/players?owner=all&season=last&start=100",
+        "/players/rows?owner=all&season=last&start=100",
+    )
     assert show_more(html) == more
     assert f'Show 100 more <span class="muted">({total - 100} left)' in html
 
 
 def test_show_more_returns_the_next_page_alone_then_stops() -> None:
     c = client()
-    everything = names_in(c.get("/players?start=99000").text, "players")
+    everything = names_in(c.get("/players?owner=all&start=99000").text, "players")
     assert len(everything) == len(SNAP.pool) - DEMO_ZERO_GP
-    got, link = [], "/players/rows?start=0"
+    got, link = [], "/players/rows?owner=all&start=0"
     while link:
         part = c.get(link)
         assert part.status_code == 200
@@ -316,6 +319,155 @@ def player_links(html: str) -> list[str]:
     return [h.replace("&amp;", "&") for h in re.findall(r'href="(/players[^"]*)"', html)]
 
 
+def player_link(html: str, label: str) -> str:
+    (href,) = re.findall(rf'href="(/players[^"<>]*)">{re.escape(label)}</a>', html)
+    return href.replace("&amp;", "&")
+
+
+def active_owner_chip(html: str) -> str | None:
+    chips = html.split('class="chips owner-chips"', 1)[1].split("</nav>", 1)[0]
+    found = re.search(r'class="chip on" href="[^"]*">([^<]*)</a>', chips)
+    return found[1] if found else None
+
+
+def test_players_opens_on_free_agents_and_all_is_explicit() -> None:
+    c = client()
+    view = build_view_for_test()
+    home = c.get("/players").text
+    free = [r.name for r in select(view, PlayersQuery(owner=Owner.FREE))]
+    assert names_in(home, "players") == free[:PAGE_SIZE]
+    assert active_owner_chip(home) == "Free Agents"
+    all_link = player_link(home, "All")
+    assert all_link == "/players?owner=all"
+    whole_league = c.get(all_link).text
+    assert active_owner_chip(whole_league) == "All"
+    assert names_in(whole_league, "players") == [
+        r.name for r in select(view, PlayersQuery())[:PAGE_SIZE]
+    ]
+    every_row = c.get(f"{all_link}&{EVERY_ROW}").text
+    assert set(names_in(every_row, "players")) == {p.name for p in SNAP.pool}
+
+
+@pytest.mark.parametrize("owner_param", [{}, {"owner": "all"}], ids=["default", "all"])
+def test_players_display_and_filter_links_keep_owner_scope(owner_param: dict[str, str]) -> None:
+    c = client()
+    home = c.get("/players", params=owner_param).text
+    owner = Owner.ALL if owner_param else Owner.FREE
+    query = PlayersQuery(owner=owner)
+    last = build_view_for_test()
+    current = build_view(SNAP, DEFAULT_CONFIG, Salaries(), season=Season.CURRENT)
+    expected_home = [r.name for r in select(last, query)[:PAGE_SIZE]]
+    for label, view, expected_query in (
+        ("Name", last, replace(query, sort=SortKey.NAME, descending=False)),
+        ("This season", current, query),
+        ("Categories", last, query),
+        ("Totals", last, query),
+        ("show them", last, replace(query, zero_gp=True)),
+    ):
+        href = player_link(home, label)
+        assert parse_qs(urlsplit(href).query).get("owner", []) == list(owner_param.values())
+        page = c.get(href).text
+        assert names_in(page, "players") == [
+            r.name for r in select(view, expected_query)[:PAGE_SIZE]
+        ]
+        assert active_owner_chip(page) == active_owner_chip(home)
+
+    shown = c.get(player_link(home, "show them")).text
+    hide_link = player_link(shown, "hide 0 GP")
+    assert parse_qs(urlsplit(hide_link).query).get("owner", []) == list(owner_param.values())
+    assert names_in(c.get(hide_link).text, "players") == expected_home
+
+    form = filter_form(shown)
+    opening = shown.split('class="toolbar filters"', 1)[0].rsplit("<form", 1)[1]
+    assert 'method="get" action="/players"' in opening
+    assert ">Apply</button>" in form
+    hidden = hidden_inputs(form)
+    assert hidden == {**owner_param, "zero_gp": "1"}
+    applied = c.get("/players", params={**hidden, "team": "", "pos": "D", "min_gp": ""}).text
+    assert names_in(applied, "players") == [
+        r.name for r in select(last, replace(query, position="D", zero_gp=True))[:PAGE_SIZE]
+    ]
+    assert active_owner_chip(applied) == active_owner_chip(home)
+
+
+@pytest.mark.parametrize("owner_param", [{}, {"owner": "all"}], ids=["default", "all"])
+def test_players_show_more_keeps_owner_scope_in_both_paging_paths(
+    owner_param: dict[str, str],
+) -> None:
+    c = client()
+    page = c.get("/players", params=owner_param).text
+    owner = Owner.ALL if owner_param else Owner.FREE
+    expected = [r.name for r in select(build_view_for_test(), PlayersQuery(owner=owner))]
+    assert len(expected) > 2 * PAGE_SIZE
+    appended = names_in(page, "players")
+    assert appended == expected[:PAGE_SIZE]
+    for start in range(PAGE_SIZE, len(expected), PAGE_SIZE):
+        links = show_more(page)
+        assert links is not None
+        full_url, rows_url = links
+        for href in links:
+            assert parse_qs(urlsplit(href).query) == {
+                **{key: [value] for key, value in owner_param.items()},
+                "start": [str(start)],
+            }
+        page = c.get(full_url).text
+        part = c.get(rows_url).text
+        assert "<html" not in part
+        assert show_more(part) == show_more(page)
+        chunk = names_in(f'<table class="data players">{part}</table>', "players")
+        assert chunk == expected[start : start + PAGE_SIZE]
+        appended.extend(chunk)
+        assert names_in(page, "players") == appended
+    assert show_more(page) is None
+    assert appended == expected
+    assert len(appended) == len(set(appended))
+
+
+def test_players_team_picker_overrides_the_default_owner_scope() -> None:
+    c = client()
+    home = c.get("/players").text
+    team = SNAP.teams[1]
+    defaults = {"pos": "", "min_gp": ""}
+    picked = c.get(
+        "/players",
+        params={**hidden_inputs(filter_form(home)), **defaults, "team": team.team_key},
+    ).text
+    assert active_owner_chip(picked) is None
+    assert set(names_in(picked, "players")) == {entry.player.name for entry in team.roster}
+    form = filter_form(picked)
+    assert '<option value="">Any</option>' in form
+    assert f'<option value="{team.team_key}" selected>' in form
+    any_team = c.get("/players", params={**hidden_inputs(form), **defaults, "team": ""}).text
+    assert names_in(any_team, "players") == names_in(home, "players")
+    assert active_owner_chip(any_team) == "Free Agents"
+
+
+def test_players_default_zero_gp_note_counts_only_free_agents() -> None:
+    view = build_view_for_test()
+    hidden = sum(r.gp == 0 and r.owner_key is None for r in view.rows)
+    assert 0 < hidden < DEMO_ZERO_GP
+    html = client().get("/players").text
+    assert f"({hidden} with 0 GP hidden" in html
+
+
+def test_players_ownerless_search_finds_a_rostered_player() -> None:
+    name = MINE.roster[0].player.name
+    html = client().get("/players", params={"q": name}).text
+    assert name in names_in(html, "players")
+    assert active_owner_chip(html) == "All"
+
+
+def test_players_free_agent_search_shows_zero_gp_players() -> None:
+    zero = next(r.name for r in build_view_for_test().rows if r.gp == 0 and r.owner_key is None)
+    c = client()
+    matches = c.get("/players", params={"q": zero}).text
+    free = c.get(player_link(matches, "Free Agents")).text
+    assert active_owner_chip(free) == "Free Agents"
+    assert set(names_in(free, "players")) == matching(zero) & {p.name for p in SNAP.available}
+    assert zero in names_in(free, "players")
+    assert "with 0 GP hidden" not in free
+
+
 def clear_link(html: str) -> str | None:
     found = re.search(r'<a href="([^"]*)">Clear</a>', search_form(html))
     return found[1].replace("&amp;", "&") if found else None
@@ -343,8 +495,8 @@ def test_a_search_finds_names_whoever_owns_them_with_zero_gp_players() -> None:
 def test_a_search_includes_zero_gp_players() -> None:
     """0-GP players show while searching, without zero_gp=1 (the plan, §1)."""
     c = client()
-    hidden = set(names_in(c.get(f"/players?season=last&{EVERY_ROW}").text, "players"))
-    hidden -= set(names_in(c.get("/players?season=last&start=99000").text, "players"))
+    hidden = set(names_in(c.get(f"/players?owner=all&season=last&{EVERY_ROW}").text, "players"))
+    hidden -= set(names_in(c.get("/players?owner=all&season=last&start=99000").text, "players"))
     assert len(hidden) == DEMO_ZERO_GP
     zero = sorted(hidden)[0]
     assert zero in names_in(c.get(f"/players?season=last&q={zero}").text, "players")
@@ -367,8 +519,10 @@ def test_a_query_with_no_words_is_the_normal_list(q: str) -> None:
     c = client()
     plain = c.get("/players?season=last").text
     html = c.get(f"/players?season=last&q={q}").text
+    free = [r for r in build_view_for_test().rows if r.owner_key is None]
     assert names_in(html, "players") == names_in(plain, "players")
-    assert f"({DEMO_ZERO_GP} with 0 GP hidden" in html
+    assert set(names_in(html, "players")) <= {r.name for r in free if r.gp > 0}
+    assert f"({sum(r.gp == 0 for r in free)} with 0 GP hidden" in html
     assert clear_link(html) is None
     assert 'name="q" value=""' in search_form(html)
     assert not any("q=" in h for h in player_links(html))  # no link carries it
@@ -422,13 +576,13 @@ def test_clear_drops_the_search_and_every_filter_chosen_after_it() -> None:
     html = c.get(f"/players?q=zeke&owner=free&team={team}&pos=C&view=cats&sort=gp").text
     assert clear_link(html) == "/players?view=cats&sort=gp"
     cleared = c.get(clear_link(html) or "").text
-    # Expected straight from the view: every player with GP, most GP first, ties by
+    # Expected straight from the view: free agents with GP, most GP first, ties by
     # name then id; the first page of them.
-    view = build_view_for_test()
-    played = sorted((r for r in view.rows if r.gp > 0), key=lambda r: (r.name, r.player_id))
+    free = [r for r in build_view_for_test().rows if r.owner_key is None]
+    played = sorted((r for r in free if r.gp > 0), key=lambda r: (r.name, r.player_id))
     played.sort(key=lambda r: r.gp, reverse=True)
     assert names_in(cleared, "players") == [r.name for r in played[:100]]
-    assert f"{len(played)} players ({DEMO_ZERO_GP} with 0 GP hidden" in cleared
+    assert f"{len(played)} players ({len(free) - len(played)} with 0 GP hidden" in cleared
 
 
 def test_a_search_pages_through_show_more_and_the_no_js_link() -> None:
@@ -498,7 +652,7 @@ def test_a_searched_player_keeps_the_league_rank_in_both_seasons() -> None:
         (searched,) = select(view, PlayersQuery(q="Bram Corberg"))
         assert searched.rating == row.rating
         seen[season] = (row.gp, row.rating.rank, row.percentile)
-        plain = c.get(f"/players?season={season.value}&{EVERY_ROW}").text
+        plain = c.get(f"/players?owner=all&season={season.value}&{EVERY_ROW}").text
         found = c.get(f"/players?season={season.value}&q=Bram%20Corberg").text
         assert row_html(found, "Bram Corberg") == row_html(plain, "Bram Corberg")
     last, current = seen[Season.LAST], seen[Season.CURRENT]
@@ -713,8 +867,10 @@ def build_view_for_test() -> LeagueView:
 def test_the_totals_view_shows_raw_season_totals(path: str) -> None:
     """Players and Rosters (owner, 2026-10-30): beside Salary and Categories, a Totals
     chip shows each skater's 7 raw season totals as whole numbers."""
-    html = client().get(f"{path}?view=totals&season=last").text
-    assert f'class="chip on" href="{path}?view=totals&amp;season=last">Totals</a>' in html
+    owner = "&owner=all" if path == "/players" else ""
+    href = f"{path}?view=totals&season=last{owner}"
+    html = client().get(href).text
+    assert f'class="chip on" href="{href.replace("&", "&amp;")}">Totals</a>' in html
     assert "$/TTLTST" not in html
     row = next(r for r in build_view_for_test().rows if r.owner_key == MINE.team_key and r.totals)
     cells = "".join(f'<td class="num">{int(row.totals[c])}</td>' for c in DEFAULT_CONFIG.categories)

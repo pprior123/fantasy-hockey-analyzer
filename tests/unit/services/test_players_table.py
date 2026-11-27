@@ -184,20 +184,21 @@ def test_sort_by_owner_uses_team_names(view: LeagueView) -> None:
 
 
 def test_params_parse_with_defaults() -> None:
-    assert PlayersQuery.from_params({}) == PlayersQuery()
     q = PlayersQuery.from_params(
         {"owner": "free", "pos": "D", "min_gp": "5", "sort": "aav", "team": " t1 "}
     )
     assert q == PlayersQuery(Owner.FREE, "t1", "D", 5, SortKey.AAV, True)
     assert PlayersQuery.from_params({"sort": "name"}).descending is False
     assert PlayersQuery.from_params({"sort": "value"}).descending is False  # cheapest first
-    assert PlayersQuery.from_params({"sort": "HIT"}) == PlayersQuery(sort=Category.HIT)
-    assert PlayersQuery.from_params({"sort": "gp", "dir": "asc"}).descending is False
-    assert PlayersQuery.from_params({"owner": " ", "min_gp": ""}) == PlayersQuery()
-    assert PlayersQuery.from_params({"zero_gp": "1", "start": "200"}) == PlayersQuery(
-        zero_gp=True, start=200
+    assert PlayersQuery.from_params({"sort": "HIT"}) == PlayersQuery(
+        owner=Owner.FREE, sort=Category.HIT
     )
-    assert PlayersQuery.from_params({"zero_gp": "", "start": ""}) == PlayersQuery()
+    assert PlayersQuery.from_params({"sort": "gp", "dir": "asc"}).descending is False
+    assert PlayersQuery.from_params({"owner": " ", "min_gp": ""}) == PlayersQuery(owner=Owner.FREE)
+    assert PlayersQuery.from_params({"zero_gp": "1", "start": "200"}) == PlayersQuery(
+        owner=Owner.FREE, zero_gp=True, start=200
+    )
+    assert PlayersQuery.from_params({"zero_gp": "", "start": ""}) == PlayersQuery(owner=Owner.FREE)
 
 
 @pytest.mark.parametrize(
@@ -323,7 +324,7 @@ def test_the_filters_narrow_a_search(
 def test_a_query_with_no_words_is_no_search(named: LeagueView, q: str | None) -> None:
     """Parsed or built directly: the normal list, 0-GP players hidden and counted."""
     params = {} if q is None else {"q": q}
-    assert PlayersQuery.from_params(params) == PlayersQuery()
+    assert PlayersQuery.from_params(params) == PlayersQuery(owner=Owner.FREE)
     built = PlayersQuery(q=q)
     assert ids(select(named, built)) == ids(select(named, PlayersQuery()))
     assert zero_gp_hidden(named, built) == zero_gp_hidden(named, PlayersQuery()) == len(ZERO_GP)
@@ -347,6 +348,17 @@ def test_q_parses_trimmed() -> None:
     assert PlayersQuery.from_params({"q": "Stützle", "owner": "free"}) == PlayersQuery(
         owner=Owner.FREE, q="Stützle"
     )
+
+
+@pytest.mark.parametrize("params", [{}, {"owner": ""}, {"q": "!!"}])
+def test_players_url_defaults_to_free_agents_without_a_search(params: dict[str, str]) -> None:
+    assert PlayersQuery.from_params(params) == PlayersQuery(owner=Owner.FREE)
+
+
+def test_players_url_search_defaults_to_all_and_allows_narrowing() -> None:
+    assert PlayersQuery.from_params({"q": "mcdavid"}).owner is Owner.ALL
+    assert PlayersQuery.from_params({"q": "mcdavid", "owner": ""}).owner is Owner.ALL
+    assert PlayersQuery.from_params({"q": "x", "owner": "mine"}).owner is Owner.MINE
 
 
 def test_an_over_long_q_is_refused_quoting_twelve_characters() -> None:

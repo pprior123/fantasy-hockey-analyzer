@@ -1,8 +1,8 @@
 # Plan: update the owner's tab automatically
 
-Status: revised twice, 2026-11-27: after AU-P1 (not ready, 12 findings) and AU-P2 (not ready, 8
-findings; all accepted in full or in part). Triage in §6. Third review: AU-P3, on the changes. The
-owner needs no review of plans (2026-11-27); team-lead approves after the review's triage.
+Status: **approved by team-lead**, 2026-11-27, after three plan reviews: AU-P1 (not ready, 12
+findings), AU-P2 (not ready, 8), AU-P3 (ready with changes, 6; all accepted). Triage in §6. **§2a
+amends §2 and §3 and wins where they differ.** The owner needs no review of plans (2026-11-27).
 
 The owner's request (2026-11-27, relayed by the operator): update the owner's tab in the league
 sheet automatically, instead of only on a tap on Admin → Update my tab.
@@ -249,6 +249,66 @@ The manual Update page's preview and confirm (apart from the checked-snapshot ma
 record around its batch), the domain planner, the protections, the digest, the 10-minute confirm,
 the forced Yahoo refresh on the manual confirm, Yahoo read-only, own tab only, values only.
 
+## 2a. Amendments after AU-P3 (these override §2 and §3 where they differ)
+
+1. **Recovery keeps its evidence until repaired** (finding 1). An expired attempt record is
+   deleted only after a fresh read of the sheet has been **stored** (step 6 succeeded). Its
+   "unknown" log entry has the ID `attempt-<attempt id>` (an idempotent `put`), so retries and
+   concurrent recoveries log it once. The 24-hour rule is a cache-age threshold checked on the next
+   eligible run whose dependencies work. A divergence the fresh read finds may need manual repair:
+   e.g. a late batch added a player who has since left with no binding written (the request died
+   before `bind_written_rows`): that drop is unidentified, so the run skips with the banner and the
+   owner fixes it on the Update page. Tests: a forced read that fails, then a retry (the record
+   stays until the retry's read is stored); a late batch that added an unbound, departed player
+   (skip, no edits).
+2. **The exact saved generation, cache-only** (finding 2). A new `RefreshService.load_saved(
+   fetched_at) -> Cached | None` reads the stored cache only (meta and chunks), decodes it, and
+   returns it only if its `fetched_at` is the one asked for and is within the TTL; it never calls
+   `current()` or the Yahoo source, and ignores the process's memory. Undecodable or superseded:
+   none, and the run is silent. The hook rechecks with the saved meta. The endpoint uses this, not
+   `current()`. Tests through the real POST: A posted while B's save is stalled (A's roster is
+   used, or nothing is sent; never B's); eligible meta with undecodable chunks (nothing sent); zero
+   Yahoo calls in both.
+3. **Attempt bookkeeping inside `write_update`, for both routes** (finding 3). `write_update` takes
+   an optional `journal` (the attempts store and a `source`): right before sending it puts the
+   record with the **final plan's** cell count, and after the outcome it deletes or keeps the
+   record per §2 "Attempts". The manual confirm passes `journal` with `source="manual"`; the
+   automatic path passes it with `source="auto"` plus its `before_write` hook (eligibility, drops,
+   switch, unresolved attempts: auto only). A manual no-op, refusal or digest mismatch puts no
+   record. **The manual confirm overrides an unresolved attempt**: the owner has just previewed the
+   tab as read fresh, and the digest guarantees it is unchanged; the preview shows "An earlier
+   write's outcome isn't known yet: check the tab before confirming" while one is unresolved.
+   Tests: a manual no-op and a refusal put no record; a manual request killed after the put leaves
+   a record with the correct cell count; an automatic run on a later eligible snapshot then skips
+   until it expires.
+4. **The deadline at the send boundary** (finding 4). `writer.write` takes `deadline` (monotonic
+   seconds, from the clock) and checks it after awaiting the token and immediately before the
+   HTTP post; past it, it raises `NotSentError`. The auto path's deadline is the request start +
+   35 s; the manual path passes none. Before the boundary (deadline, token failure, cancellation),
+   the record is deleted (`finally` around the pre-send part); after it, a lost or uncertain answer
+   keeps it. Tests: a slow marker put and a slow token push past the deadline (nothing sent, no
+   record left); cancellation before and after the boundary.
+5. **Typed writer outcomes** (finding 5). The writer raises `NotSentError` (token failure, the
+   deadline, a connection never established), `RejectedWriteError` (an HTTP 4xx: Google refused),
+   and `UncertainWriteError` (a lost answer, a 5xx, **and any other non-200 status**:
+   conservative). `attempted` is the batch size whenever the post was attempted (rejected or
+   uncertain), else 0. `applied`: `yes` with `unverified` when the batch was acknowledged, or found
+   written after a lost answer, but the read-back or storage afterwards failed (the existing
+   "Written (N cells), but ..." stays); `maybe` with `lost_answer` when the tab is unchanged, mixed
+   or unreadable after a lost answer. Both are kind `unknown`, and both keep the record. Tests: the
+   real writer with respx: a token failure, a connect error, a 4xx, a 302 and a 5xx, a read
+   timeout after sending.
+6. **A known result survives journal failures** (finding 6). Only failures **before the outcome**
+   become "failed". After `write_update` returns, a `RepositoryError` while logging or deleting the
+   record doesn't change the banner (a verified write still says "Your tab was updated"); a failed
+   delete keeps the record. Reconciling a record whose `attempt-<id>` log entry already says
+   `written` deletes the record without logging "unknown" (and still forces the fresh read). Tests:
+   a log failure and a delete failure after a verified write (the banner says updated); the next
+   run's reconciliation of that kept record logs nothing new.
+7. **Origin fallback** (AU-P3's disposition of AU-P2 finding 8). A mismatching `Origin` is
+   rejected even when `Sec-Fetch-Site: same-origin` is present; `Sec-Fetch-Site` is used only when
+   `Origin` is absent; neither header: rejected. Tests for each.
+
 ## 3. Phases
 
 Each phase one commit, gates green. No `domain/` module changes, so no mutmut run (if one turns out
@@ -371,3 +431,19 @@ accepted AU-P1's answers to findings 4 (the TTL contract), 7 (change names), 11 
 | 8 | Medium | The Admin switch has no same-site origin protection | **Accepted.** A same-origin check (`Origin`, else `Sec-Fetch-Site`) on both new POSTs; tests for cross-origin and same-site different-origin requests |
 
 AU-P1's finding 6 note (§0's "anything else" against the silent refusal-only plan) is fixed in §0.
+
+### AU-P3 (quality-mgr, gpt-6.2-sol, at `31848da`): ready with changes, 6 findings (6 Medium)
+
+The report is posted verbatim on PR #29. Each finding was checked against the code; all accepted, in
+§2a.
+
+| # | Sev | Finding | Triage |
+|---|---|---|---|
+| 1 | Medium | Recovery deletes its evidence before a fresh read is stored; a found divergence may be unrepairable automatically | **Accepted** (§2a.1). Checked: the read awaits the source, then stores (`league_sheet.py:48-49`); `bind_written_rows` runs only after the write (`sheet_update.py:326`) |
+| 2 | Medium | `current()` after an eligible check can return a different roster or fetch Yahoo | **Accepted** (§2a.2). Checked: memory is published before the save (`refresh.py:145-147`); an undecodable cache returns None (`refresh.py:60`) and `current()` then fetches (`refresh.py:137`) |
+| 3 | Medium | The manual route can't record the final batch size | **Accepted** (§2a.3). Checked: the route has only the digest (`routes/sheet_update.py:113`); the plan is computed inside `write_update` (`sheet_update.py:242`). The journal moves into `write_update`; the manual confirm overrides an unresolved attempt, with a warning on the preview |
+| 4 | Medium | The 25 s check doesn't bound the send | **Accepted** (§2a.4). Checked: `writer.write` awaits the token (`writer.py:113`) behind a lock (`google_auth.py:78`). The deadline is checked in the writer right before the post |
+| 5 | Medium | The writer can't distinguish not-sent, rejected and other statuses | **Accepted** (§2a.5). Checked: one `LeagueSheetError` for the token failure, the connection and every non-200 below 500 (`writer.py:115,122,128-131`), caught together (`sheet_update.py:284`) |
+| 6 | Medium | A journal failure after a verified write could say "wasn't updated" | **Accepted** (§2a.6). Checked: `_read_back` returns a verified `WriteResult(True, ...)` (`sheet_update.py:439-444`) |
+
+The plan is approved after this triage (team-lead, 2026-11-27).

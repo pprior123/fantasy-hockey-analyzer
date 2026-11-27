@@ -1,7 +1,7 @@
 # Plan: tonight and tomorrow
 
-Status: **approved**, 2026-11-27, after quality-mgr's plan review (TT-P1: ready with changes, 11 findings, all
-accepted; triage in §6). The owner needs no review of plans (2026-11-27).
+Status: **implemented**, 2026-11-27 (TT-1). It was approved that day after quality-mgr's plan review (TT-P1:
+ready with changes, 11 findings, all accepted; triage in §6). The owner needs no review of plans (2026-11-27).
 
 The owner's request (2026-11-27, relayed by the operator): "can you add another option to be 'tonight and
 tomorrow?'". It extends PR #30 (`docs/plans/plays-tonight.md`): a second option beside Tonight on Players and

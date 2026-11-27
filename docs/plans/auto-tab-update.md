@@ -77,8 +77,9 @@ The contract: **the first full page served after a Yahoo fetch, while that snaps
 one and within the TTL, runs the update for it.** In practice that is every fetch: a Refresh tap
 redirects to a full page, and opening the app after the TTL renders one. Not covered (AU-P2
 finding 4, accepted as a narrowed contract): a fetch made by a fragment (`/players/rows`, "Show
-more") or a Refresh from the Update page, when no other full page follows within the TTL; the next
-fetch runs it.
+more") or by the Update page itself (its GET fetches Yahoo when the cache has expired), when no
+other full page follows within the TTL; the next fetch runs it. On the Update page the owner is
+updating by hand anyway.
 
 `page_data` decides whether the page carries the trigger, for full pages only: every rated page
 and Admin; not the Update page (`/admin/sheet/update`; the owner is updating by hand there) and not
@@ -288,8 +289,9 @@ to be needed, stop and ask team-lead).
    the same-origin check. Tests:
    - the trigger on an unchecked eligible snapshot; none for checked, stale, errored, switch off,
      writing off, the demo, the Update page and `/players/rows`;
-   - after `/refresh` with `next` a rated page: the trigger for the new snapshot; with `next` the
-     Update page: none (the narrowed contract, pinned);
+   - after `/refresh` (the button on Admin and the rated pages): the trigger for the new snapshot;
+   - the Update page's GET after the TTL fetches Yahoo and carries no trigger, and the next full
+     page within the TTL does (the narrowed contract, pinned);
    - first activation: a pre-existing unchecked eligible snapshot carries it;
    - the manual confirm: no trigger after its redirect, its snapshot marked checked, a lost answer
      there makes the next automatic POST skip (batch count stays 1);
@@ -362,7 +364,7 @@ accepted AU-P1's answers to findings 4 (the TTL contract), 7 (change names), 11 
 | 1 | High | The shared marker permits overlapping batches, can be cleared by another attempt, and a late older batch after a newer stored read-back makes the pre-check skip Google indefinitely | **Accepted.** Checked: `put` is create-or-replace (`repository.py:59`); the read-back stores the sheet (`league_sheet.py:49`); the pre-check is silent on no changes. Replaced the marker with write-ahead attempt records, one document per attempt, deleted only by their own attempt and only on a definite outcome; an expired record is logged as unknown and forces a fresh read; a 24-hour fresh read bounds the remaining orders (§1, §2 "Attempts"). **Rejected in part:** a conditional-acquisition lock (no atomic primitive in `Repository`; the divergence it prevents is now detected and repaired, bounded at 24 h) |
 | 2 | Medium | The drop proof uses a reusable key and applies only to the preliminary plan | **Accepted.** Checked: `row_key` is name + position group (`free_agents.py:45`); bindings persist after a row stops matching (`league_sheet.py:355`). The check moves into the hook, on the final recomputed plan; no two drops may share a key or a bound player; tests for reuse and a binding removed between plans |
 | 3 | Medium | A matching posted timestamp doesn't prove the saved generation | **Accepted.** Checked: `_stored()` serves memory when the newer stored generation is unreadable (`refresh.py:197-201`), and memory is set before the save (`refresh.py:145-147`). `eligible` reads the saved meta directly; tests for both cases |
-| 4 | Medium | A Refresh on the Update page, or a fragment fetch, has no follow-up | **Accepted as a narrowed contract.** Checked: `/refresh` redirects to `safe_next(next)` (`players.py:133-134`). The contract is now "the first full page after a fetch, while it is the saved one within the TTL"; both gaps are stated and the Update-page case is pinned by a test; the next fetch runs it |
+| 4 | Medium | A fetch by the Update page, or by a fragment, has no follow-up | **Accepted as a narrowed contract.** quality-mgr corrected the finding after the report: the Refresh button is on Admin (and the rated pages); the gap is the Update page's own GET, which fetches Yahoo after the TTL (`sheet_update.py:81`, `data.py:128`). The contract is now "the first full page after a fetch, while it is the saved one within the TTL"; both gaps are stated and the Update-page case is pinned by a test; the next fetch runs it |
 | 5 | Medium | `problem` text can carry the PAYROLL formula; `refused` has no reason discriminator | **Accepted.** Checked: `parse.py:175` quotes the formula; `sheet_update.py:104` interpolates `tab.reason`. Reason codes with fixed sentences for every kind; the unreadable-tab sentence never quotes the reason; a sentinel formula test |
 | 6 | Medium | Transmission and application are conflated; preparation storage failures escape | **Accepted.** Checked: a 4xx is raised after the post (`writer.py:118-131`); the lost-answer returns omit the count (`sheet_update.py:295-315`). `WriteResult` gains `attempted` and `applied` (yes/no/maybe) with a table; `RepositoryError` during preparation becomes `unreadable`/`storage_failed`; the endpoint turns any `RepositoryError` into a failed banner |
 | 7 | Medium | The cutoff precedes awaited work; a killed request leaves no record | **Accepted.** Checked: `writer.write` awaits `_token()` before posting (`writer.py:113`). The cutoff is 25 s and comes before the record's put; the writer's own 10 s limits bound the rest (about 45 s worst case); a killed request leaves its attempt record, which the next run reconciles into the log |

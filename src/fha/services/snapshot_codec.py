@@ -123,6 +123,7 @@ def _settings(s: LeagueSettings) -> dict[str, Any]:
             {"position": r.position, "count": r.count, "is_starting": r.is_starting}
             for r in s.roster_slots
         ],
+        "max_weekly_adds": s.max_weekly_adds,
     }
 
 
@@ -150,6 +151,7 @@ def _team(t: Team) -> dict[str, Any]:
             {"player": _player(e.player), "selected_position": e.selected_position}
             for e in t.roster
         ],
+        "roster_adds": None if t.roster_adds is None else list(t.roster_adds),
     }
 
 
@@ -185,6 +187,10 @@ def _int(value: Any) -> int:
     return value
 
 
+def _opt_int(value: Any) -> int | None:
+    return None if value is None else _int(value)
+
+
 def _bool(value: Any) -> bool:
     if not isinstance(value, bool):
         raise SnapshotCodecError(f"expected a boolean, got {type(value).__name__}")
@@ -214,6 +220,8 @@ def _unsettings(s: Mapping[str, Any]) -> LeagueSettings:
             RosterSlot(_str(r["position"]), _int(r["count"]), _bool(r["is_starting"]))
             for r in s["roster_slots"]
         ),
+        # Absent in a snapshot cached before the weekly suggester.
+        max_weekly_adds=_opt_int(s.get("max_weekly_adds")),
     )
 
 
@@ -240,7 +248,16 @@ def _unteam(t: Mapping[str, Any]) -> Team:
         roster=tuple(
             RosterEntry(_unplayer(e["player"]), _str(e["selected_position"])) for e in t["roster"]
         ),
+        roster_adds=_unroster_adds(t.get("roster_adds")),  # absent in older snapshots
     )
+
+
+def _unroster_adds(value: Any) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != 2:
+        raise SnapshotCodecError("roster_adds must be [week, adds]")
+    return _int(value[0]), _int(value[1])
 
 
 def _unline(s: Mapping[str, Any]) -> StatLine:

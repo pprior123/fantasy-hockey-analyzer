@@ -125,7 +125,8 @@ async def log_entries(repo: Repository) -> list[AutoUpdate]:
 
 
 async def _record_log(repo: Repository, result: AutoUpdate) -> None:
-    if result.outcome == "skipped":
+    # Recovery needs the outcome under its own attempt ID, even for a repeated skip.
+    if result.outcome == "skipped" and result.attempt_id is None:
         entries = await _ordered_log(repo)
         if entries:
             _, latest = entries[0]

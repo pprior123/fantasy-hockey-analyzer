@@ -409,6 +409,59 @@ async def test_changes_during_token_acquisition_cancel_the_post_and_clear_its_re
     assert await app.repo.all(WRITE_ATTEMPTS) == {}
 
 
+async def test_repeated_post_token_refusals_preserve_each_attempts_outcome_in_recovery() -> None:
+    class FailingDelete(InMemoryRepository):
+        blocked = False
+
+        async def delete(self, collection: str, doc_id: str) -> None:
+            if self.blocked and collection == WRITE_ATTEMPTS:
+                raise RepositoryError("test attempt delete failure")
+            await super().delete(collection, doc_id)
+
+    repo = FailingDelete()
+    app = await setup(repo=repo)
+
+    async def token() -> str:
+        await set_enabled(repo, False)
+        return "token-for-test"
+
+    outcomes = []
+    with respx.mock(assert_all_called=False) as router:
+        post = router.post(
+            "https://sheets.googleapis.com/v4/spreadsheets/test:batchUpdate"
+        ).respond(200)
+        async with httpx.AsyncClient() as http:
+            writer = SheetsApiLeagueSheetWriter(http, "test", token)
+            for blocked in (False, True):
+                repo.blocked = blocked
+                app.clock.t += 1
+                await set_enabled(repo, True)
+                await app.save_generation()
+                result = await app.run(Sheet(OLD, OLD), writer)
+                assert result is not None
+                assert (result.outcome, result.code, result.cells) == ("skipped", "switched_off", 0)
+                outcomes.append(result)
+
+            [attempt_id] = await repo.all(WRITE_ATTEMPTS)
+            assert attempt_id == outcomes[1].attempt_id
+            log_before = await repo.all(AUTO_LOG)
+            repo.blocked = False
+            app.clock.t += 601
+            await set_enabled(repo, True)
+            await app.save_generation()
+            fresh = Sheet(AFTER)
+            assert await app.run(fresh, writer) is None
+            assert fresh.calls == 1
+
+    assert not post.called
+    assert await repo.all(WRITE_ATTEMPTS) == {}
+    assert await repo.all(AUTO_LOG) == log_before
+    saved = await repo.get(AUTO_LOG, f"attempt-{attempt_id}")
+    assert saved is not None
+    assert (saved["outcome"], saved["code"], saved["cells"]) == ("skipped", "switched_off", 0)
+    assert await log_entries(repo) == list(reversed(outcomes))
+
+
 @pytest.mark.parametrize("failure", ["hook", "attempt-put", "post-hook"])
 async def test_storage_failures_before_the_send_leave_no_batch_or_attempt(failure: str) -> None:
     class FailingStore(InMemoryRepository):

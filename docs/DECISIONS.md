@@ -2730,3 +2730,30 @@ page. League-wide name search lets the owner look up any player from there.
 **Alternatives.** Keeping All as the opening view would still require a tap
 to see available players. Defaulting name searches to Free Agents would hide
 rostered matches until the owner selected All.
+
+## 2026-11-27 — Tonight's NHL games
+
+**What.** Players and Rosters show the opponent and scheduled start in ET
+for players on teams with a game today. The date comes from the app's clock
+in US/Eastern and covers regular-season and playoff games. Players can
+filter by **Tonight** alongside ownership and other filters. Rosters counts
+players outside IR slots whose teams have a game. The marks describe the
+NHL team's schedule. Plan and review in `docs/plans/plays-tonight.md` (PR #30).
+
+**Source and cost.** The chosen source adds a fixed, read-only outbound host,
+`api-web.nhle.com`. The public NHL schedule gives games by date without a key.
+The adapter has a three-second budget, and Firestore keeps each day's games
+for six hours before asking again. A stored failure delays a retry by five
+minutes across instances. Concurrent requests to one process share a fetch.
+The demo generates its own slate for the requested date.
+
+**States.** A fresh slate may be empty on an off day. A fetch failure can
+leave the same date's older slate usable, with its age shown. A missing
+slate or storage failure leaves the schedule unavailable and the other
+Players filters usable. Show more carries the date so it can ask for a
+reload at Eastern midnight.
+
+**Alternatives.** The recorded Yahoo responses have no NHL schedule fields.
+A committed season schedule would age when games move. A browser-side NHL
+request would depend on cross-origin access and move data fetching out of
+the server-rendered app.

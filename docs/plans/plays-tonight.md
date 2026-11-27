@@ -1,6 +1,6 @@
 # Plan: players who play tonight
 
-Status: **approved by team-lead**, 2026-11-27, after quality-mgr's plan review (PT-P1: ready with
+Status: **implemented**, 2026-11-27, after quality-mgr's plan review (PT-P1: ready with
 changes, 8 findings, all accepted; triage in §6). The owner needs no review of plans (2026-11-27).
 
 The owner's idea (2026-11-27): show which players play tonight. Team-lead decides the source and

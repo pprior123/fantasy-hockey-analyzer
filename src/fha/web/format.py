@@ -17,12 +17,14 @@ from jinja2 import Environment
 from markupsafe import Markup
 
 from fha.domain.engine import DivisorMethod, EngineConfig
+from fha.domain.lineup import SCALE
 from fha.domain.schedule import Mark
 from fha.services.schedule import EASTERN, Tonight
 
 DASH = "—"
 # Fixed names, not strftime: the server's locale must not change the screens.
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _round(value: float | Decimal, digits: int) -> Decimal:
@@ -104,6 +106,34 @@ def weekday(day: date) -> str:
     return WEEKDAYS[day.weekday()]
 
 
+def day_name(day: date) -> str:
+    """ "Sat Nov 28"."""
+    return f"{weekday(day)} {MONTHS[day.month - 1]} {day.day}"
+
+
+def days_span(days: Sequence[date]) -> str:
+    """ "Sat Nov 28 to Sun Nov 29", or one day's name."""
+    if not days:
+        return ""
+    first, last = day_name(days[0]), day_name(days[-1])
+    return first if first == last else f"{first} to {last}"
+
+
+def week_plus(gain: int) -> str:
+    """A suggester gain (integer units) as TTLTST-starts, 2 decimals, signed."""
+    return signed(gain / SCALE, 2)
+
+
+def fills(filled: Sequence[tuple[date, str]]) -> str:
+    """The days and slots an add starts in: "Sat C, Mon D"."""
+    return ", ".join(f"{weekday(day)} {slot}" for day, slot in filled)
+
+
+def gap_text(empty: Sequence[tuple[str, int]]) -> str:
+    """A day's empty starting slots: "C 1 · D 2", or "none"."""
+    return " · ".join(f"{slot} {count}" for slot, count in empty) or "none"
+
+
 def day_labels(slates: Sequence[Tonight], team: str) -> list[str]:
     """The team's marks: tonight's as is, a later day's after its weekday ("Sat vs NYR 1:00p")."""
     labels = []
@@ -181,6 +211,9 @@ def url(path: str, params: Mapping[str, str], **changes: str | None) -> str:
 def install(env: Environment) -> None:
     env.filters.update(money=money, number=number, up=up, signed=signed, pctl=percentile, ago=ago)
     env.globals.update(url=url, rating_settings=rating_settings, DASH=DASH)
+    env.filters.update(
+        day_name=day_name, days_span=days_span, week_plus=week_plus, fills=fills, gap_text=gap_text
+    )
 
 
 def _install_on_app_templates() -> None:

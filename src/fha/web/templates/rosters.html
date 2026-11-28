@@ -31,6 +31,7 @@
 </section>
 
 <h2>Skaters</h2>
+{% if team.is_mine %}<p class="suggest-link"><a href="{{ url('/rosters/suggest', {'season': params.get('season', '')}) }}">Suggest adds</a> <span class="muted">for the rest of the week</span></p>{% endif %}
 {{ m.view_toggle("/rosters", params, mode, totals=True) }}
 <nav class="chips schedule-filter" aria-label="Schedule">
   <a class="chip{{ ' on' if days == 1 else '' }}" href="{{ url('/rosters', params, tonight=None) }}">Tonight</a>

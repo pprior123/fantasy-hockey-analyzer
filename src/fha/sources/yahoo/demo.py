@@ -304,3 +304,29 @@ def demo_snapshot(seed: int = 8076) -> LeagueSnapshot:
         scoreboard=board(WEEK),
         next_scoreboard=board(WEEK + 1),
     )
+
+
+def demo_this_week(snapshot: LeagueSnapshot, today: dt.date) -> LeagueSnapshot:
+    """The demo's two scoreboards dated around ``today`` (the Monday-to-Sunday week that holds
+    it, and the week after; week numbers kept), with the league's add limit and my adds used,
+    so the add suggester has days to plan for whatever the date (plans/weekly-suggester.md)."""
+    monday = today - dt.timedelta(days=today.weekday())
+
+    def dated(board: Scoreboard | None, offset: int) -> Scoreboard | None:
+        if board is None:
+            return None
+        start = monday + dt.timedelta(weeks=offset)
+        return replace(
+            board,
+            week_start=start.isoformat(),
+            week_end=(start + dt.timedelta(days=6)).isoformat(),
+        )
+
+    week = snapshot.settings.current_week
+    return replace(
+        snapshot,
+        settings=replace(snapshot.settings, max_weekly_adds=5),
+        teams=tuple(replace(t, roster_adds=(week, 2)) if t.is_mine else t for t in snapshot.teams),
+        scoreboard=dated(snapshot.scoreboard, 0) or snapshot.scoreboard,
+        next_scoreboard=dated(snapshot.next_scoreboard, 1),
+    )

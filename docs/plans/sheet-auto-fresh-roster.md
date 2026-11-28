@@ -1,7 +1,7 @@
 # Plan: the automatic tab update reads the roster fresh before writing
 
-Status: **approved**, 2026-11-28, after quality-mgr's plan review (FR-P1: ready with changes, 5 findings, all
-accepted; triage in §4). Priority fix. The owner needs no review of plans.
+Status: **implemented**, 2026-11-28 (FR-1; notes in §5). Approved 2026-11-28 after quality-mgr's plan review
+(FR-P1: ready with changes, 5 findings, all accepted; triage in §4). Priority fix. The owner needs no review of plans.
 
 ## The bug
 
@@ -93,3 +93,22 @@ The plan is approved after this triage (team-lead, 2026-11-28).
 
 Switch "Auto-update my tab" off in Admin, or tap Refresh after any Yahoo roster move and before editing the tab by
 hand. The owner decides.
+
+## 5. Implementation notes (FR-1)
+
+Differences from the plan, each with its test (`tests/unit/services/test_sheet_auto.py` unless named):
+
+- `fetch_rosters` returns `Rosters(teams, date)` (`sources/yahoo/models.py`), not `tuple[Team, ...]`, so the roster's
+  date travels with the teams. `parse.parse_roster_date` reads the first roster's `date`, None if absent
+  (`tests/unit/yahoo/test_parse.py`); against the recorded `009` fixture it is `2026-10-30`
+  (`tests/unit/yahoo/test_replay.py`, respx, one call).
+- The seam is `RefreshService.read_rosters(league_key)`, a pass-through to the source that leaves the cache, the
+  refresh lock and the failure back-off alone (`tests/unit/services/test_refresh.py`), so `auto_update`'s signature
+  is unchanged.
+- The roster date goes in both places: `AutoUpdate.roster_date` (stored only when known; older entries read as
+  None) and an info log line, since an up-to-date check (the owner's case) writes no log entry.
+- The owner's case runs twice: settled by the stored sheet, and (stored sheet over 24 hours old) by a live read.
+- The test fixture's IR slot is `IR`, not `IR+`; both are IR slots (`IR_SLOTS`). The move-to-IR test uses `IR+`.
+- Any exception from the roster read (and the 10 s timeout) is `roster_unreadable`; the log keeps only the error's
+  type name.
+

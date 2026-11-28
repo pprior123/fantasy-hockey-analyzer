@@ -133,7 +133,9 @@ tests/
 Required seams (Protocols), each with an in-memory/fake implementation used in
 tests:
 
-- `YahooSource` — league settings, teams, rosters, player pool, season stats.
+- `YahooSource` — league settings, teams, rosters, player pool, season stats
+  (`fetch_snapshot`); every team's roster alone (`fetch_rosters`), for the
+  automatic tab update (§4a).
 - `ScheduleSource` — NHL game slates by Eastern date. The NHL adapter uses
   the shared HTTP client. The demo and tests use synthetic data, including
   an NHL response fixture for the adapter tests.
@@ -269,7 +271,16 @@ tab is protected, its protection must list the service account.
 first full page to serve an unchecked saved Yahoo generation within its TTL
 asks for an update after it loads. Show more fragments and the manual Update
 page leave that check to the next eligible full page. The follow-up reads the
-exact saved generation from storage. A matching stored sheet up to 24 hours
+exact saved generation from storage. Before anything else touches the sheet,
+it reads every team's roster afresh from Yahoo (one `teams/roster` call,
+`YahooSource.fetch_rosters`, 10-second limit) and plans, pre-checks, guards
+drops and writes from the saved generation with those rosters, never the
+cached ones: a move or a hand fix to the tab made since the fetch is not
+written back. That read leaves the cache as it is. A failed or slow read
+skips the update ("your Yahoo roster couldn't be checked just now"), with no
+fallback to the cached roster; the log entry records the roster's Yahoo date.
+A Yahoo move still reaches the tab only at the app's next fetch (Refresh, or
+a page opened after the cache expires). A matching stored sheet up to 24 hours
 old can settle the check without Google. An older stored sheet or an expired
 write attempt requires a fresh read. A clean plan needs edits, no refusals,
 and a distinct stored row binding for every drop that identifies a player

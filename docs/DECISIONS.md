@@ -2841,3 +2841,67 @@ tomorrow from the same NHL response (its game week) would change the source
 seam and the cache document; the weekly suggester's plan decides that.
 Always showing tomorrow's marks would double the marks on every page for a
 question the owner asks only sometimes.
+
+## 2026-11-27 — Weekly add suggester
+
+**What.** A **Suggest adds** page for the owner's roster lists the free agent
+adds that gain the most over the rest of the matchup week (or next week), each
+with its best drop. Replace gets matching week columns. The owner asked for it
+and chose "team decides" for the details. Plan, review and implementation notes
+in `docs/plans/weekly-suggester.md` (PR #32).
+
+**Scope change.** `CLAUDE.md` and SPEC §1 kept waiver recommendations out of
+Phase 1. The owner asked for this one, so drop suggestions and the add count
+come forward ("Added after Phase 1"). There are still no projections: a player
+plays when his NHL team has a game and he has no status (or `DTD`).
+
+**The value rule.** Week + is the sum, over the horizon days, of the best daily
+lineup with the swap minus the best lineup now. A lineup's value is the sum of
+its starters' TTLTST over the league's starting skater slots. Unrated skaters
+are worth 0 per start; goalies are left out. The best lineup assumes the owner
+starts the best eligible players, because he sets his lineup daily. The
+optimizer (`domain/lineup.py`) is exact and keeps values in integer
+millionths, so ties are exact. On a value tie it prefers more starts, then
+the lower player id.
+
+**Drops.** Drops come from the rated skaters outside IR at or below the median
+TTLTST of those skaters (`DROP_SHARE = 0.5`). The threshold scales with the
+roster, and it never proposes dropping a star whose week is light. Unrated
+skaters are never automatic drops: unrated usually means "hasn't played yet".
+An open roster spot needs no drop. Replace still offers any drop.
+
+**Horizon and today.** This week runs from tomorrow to Yahoo's `week_end`.
+Today is left out: today's lineup is set, and whether an add made today can
+still play today is a Yahoo setting the app doesn't read. Next week runs from
+the later of its `week_start` and tomorrow. A week without dates can't be
+planned.
+
+**The add limit.** Adds left is the league's `max_weekly_adds` minus the
+owner's `roster_adds`. It counts only when Yahoo's coverage week is the current
+week, and is unknown otherwise. Next week shows the reset limit, unless Yahoo
+still reports the week that ended. v1 ranks single swaps; after one is made,
+the next Yahoo fetch re-ranks.
+
+**Waivers.** Yahoo's available pool includes players on waivers, and the
+recorded responses don't mark them, so the page says so in one line. Fetching
+Yahoo's free-agent and waiver lists separately is a later option (unverified).
+
+**The cap.** A pair is checked with `swap_ok`, using the drop's cap hit from
+one helper shared with Replace (`teams.drop_cap_hit`), so both screens give the
+same answer. A misfit is never suggested; an unknown fit is marked. An open
+spot uses `fits`.
+
+**Schedule calls.** Each horizon day is one cached schedule call: up to 7 cold
+NHL calls a week, run concurrently, each with the per-date cache, lock and
+five-minute backoff. If any day is unavailable, the page shows no suggestions
+and names the days. Reading the week from one NHL response would save calls
+but change the source seam; the cost is accepted for v1.
+
+**Speed.** One solve per slot type per day prices every add for a drop
+(`drop_week`). Measured: 0.06 s through the service for 600 available skaters,
+10 drop options and 7 full-slate days (pass line 2 s).
+
+**Alternatives.** A heuristic score (TTLTST × games, with a penalty for crowded
+positions) needs a weight nobody can justify. A greedy daily lineup is wrong
+with multi-position players. A multi-add weekly plan is combinatorial, and the
+owner makes one move at a time.

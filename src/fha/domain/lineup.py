@@ -17,8 +17,9 @@ path. With values >= 0 the result is a largest independent set too (most starts)
 The week gain of a swap (``week_gain``) uses per-slot thresholds: with the add in slot
 type s, the day's best is ``best(rest, slots - one s) + add``, so one solve per slot type
 prices every add (``drop_week``). An exact tie in (value, starts) between the add
-starting and not starting is settled by solving that day directly, so the result always
-equals the direct re-solve.
+starting and not starting is settled by solving that day directly. So the gain and the
+add's starts always equal the direct re-solve's, and each filled slot is one a best lineup
+gives him (another best lineup may seat him elsewhere).
 """
 
 from __future__ import annotations

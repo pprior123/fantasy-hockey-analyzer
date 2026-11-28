@@ -55,7 +55,9 @@ uv run --env-file .env python -m scripts.yahoo_auth --firestore private/<key>.js
   in scope: the owner picks, the app filters and sorts). If something out of
   scope seems necessary, ask. Added after Phase 1 (SPEC §1): updating the
   owner's own tab in the league sheet, the app's only write anywhere outside
-  its own storage (SPEC §4a "Writing"; off unless `FHA_SHEET_WRITE=1`).
+  its own storage (SPEC §4a "Writing"; off unless `FHA_SHEET_WRITE=1`); and
+  the weekly add suggester (SPEC §7.2 "Suggest adds"), the one recommendation
+  screen, with no projections beyond TTLTST × the starts a player would get.
 - Small, focused commits with clear messages. Don't push to `main` without
   the owner's go-ahead unless they've said otherwise for the session.
 

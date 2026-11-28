@@ -48,7 +48,9 @@ historical snapshots, waiver *recommendation* features (drop suggestions,
 acquisition counter), trade evaluator, multi-user support. (The Matchup
 screen's free-agent shortcut and the Replace view in §7 are filters and sorts
 over existing data for a player the owner chose, not recommenders.) Do not build these. Phase 2 and 3
-are listed in §10 for context only.
+are listed in §10 for context only. (The owner later asked for a weekly add
+suggester; it brings drop suggestions and the add count forward: "Added after
+Phase 1".)
 
 ### Added after Phase 1
 
@@ -66,6 +68,16 @@ are listed in §10 for context only.
   Phase 2 "games-this-week counts" candidate (§10). Ratings and roster
   recommendations are outside this feature's scope (DECISIONS, "Tonight +
   tomorrow").
+- **Suggest adds** (owner, 2026-11-27): for the owner's roster, the free agent
+  adds worth the most over the rest of the matchup week (or next week), each
+  with its best drop. The value of a swap is its **Week +**: TTLTST × the
+  starts the add would get in the best daily lineup, minus whom he benches
+  and what the drop loses, worked out by an exact lineup optimizer over the
+  league's starting slots. The page also shows the adds left against the
+  weekly limit. **No projections:** a player plays when his NHL team has a game
+  and he has no status (or `DTD`). It doesn't adjust for opponents, guess when
+  an injured player returns, or use minutes or line data. See §7.2 and
+  DECISIONS, "Weekly add suggester".
 
 ## 2. Architecture
 
@@ -633,7 +645,39 @@ A season label and toggle per §5.
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:
-     only swaps where `swap_ok` holds.
+     only swaps where `swap_ok` holds. Week chips: **Any time** (the default,
+     as before, with no schedule read), **This week**, **Next week**. With a
+     week chosen, **Week +** and **Starts** columns price each free agent
+     swapped for this drop, and rows sort by Week +. A goalie or an IR-slot
+     drop has no week chips: goalies aren't in the lineup model, and an
+     IR-slot drop frees no active spot. A week that can't be priced whole
+     shows a note, dashes and the TTLTST sort.
+   - **Suggest adds** (`/rosters/suggest`, linked from Rosters on the owner's
+     team; `week=this` by default, or `next`). The page shows:
+     - the days planned for: from tomorrow to the week's end (today's lineup is
+       set), or next week from the later of its start and tomorrow;
+     - "Adds left: N of M", from the league's `max_weekly_adds` and the owner's
+       `roster_adds`, used only when Yahoo's coverage week is the current week,
+       else "unknown"; next week shows the reset limit;
+     - a line that available players may be on waivers;
+     - a **Gaps** table: the starting slots the best lineup leaves empty each
+       day;
+     - the **top 10 adds**. Each shows its best drop (or "open spot" when the
+       roster has room), Week +, Starts ("3 of 4"), Fills ("Sat C, Mon D"),
+       the drop's status badge, a mark when the cap fit is unknown, and a
+       Replace link for that drop and week.
+
+     Drops come from the rated skaters outside IR at or below the median
+     TTLTST; unrated skaters are never automatic drops. A swap that doesn't fit
+     the cap (`swap_ok` False) is never suggested. Gains under 0.005 aren't
+     listed. An add's best drop is the one with the highest gain; ties go to
+     the open spot, then the lowest TTLTST, then the player id. Rows rank by
+     Week +, then the add's TTLTST.
+
+     With no adds left this week, the page shows the gaps but no adds. If any
+     day's NHL schedule is unavailable, it shows no suggestions and names the
+     days, never a value from part of the week. Stale days are used, with
+     their age.
 3. **League** — one row per team: mean TTLTST, its Pctl (the Players scale),
    and the mean norm per category or payroll and cap room (replaces the
    workbook's manager comparison, `Table10`). Each value shows its rank among
@@ -840,11 +884,14 @@ access (DECISIONS, "Yahoo API access: pending approval").
 
 ### Later (context only — do not build)
 - **Phase 2:** to be planned from the owner's use of the running Phase 1 app.
-  Candidates so far: waiver recommendations (drop suggestions), trade
-  evaluator, tonight's-games lineup helper and games-this-week counts (NHL
-  schedule API; a two-day games count, Gm, was brought forward in §1), weekly acquisition counter, goalie-appearance tracker (the
-  league requires 3 per week). (Exporting the owner's roster to the league
-  sheet was brought forward as "Updating the owner's own tab", §1.)
+  Candidates so far: trade evaluator, tonight's-games lineup helper and
+  games-this-week counts (NHL schedule API; a two-day games count, Gm, was
+  brought forward in §1), goalie-appearance tracker (the league requires 3 per
+  week). Brought forward into §1:
+  - exporting the owner's roster to the league sheet, as "Updating the owner's
+    own tab";
+  - waiver recommendations (drop suggestions) and the weekly add count, as
+    "Suggest adds".
 - **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie
   model, keeper-value view.
 

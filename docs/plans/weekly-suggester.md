@@ -1,7 +1,7 @@
 # Plan: weekly add suggester
 
-Status: **approved**, 2026-11-27, after quality-mgr's plan review (WS-P1: ready with changes, 12 findings, all
-accepted; triage in §6). The owner needs no review of plans (2026-11-27).
+Status: **implemented**, 2026-11-27 (WS-1, WS-2). Approved that day after quality-mgr's plan review (WS-P1:
+ready with changes, 12 findings, all accepted; triage in §6). The owner needs no review of plans (2026-11-27).
 
 ## The request
 
@@ -188,3 +188,19 @@ The plan contradicted itself in three places; developer resolved them, and team-
    seated if an augmenting path over slot types exists, moving earlier starters along it). Exact because a player's
    value doesn't depend on his slot; with values ≥ 0 it also gives the most starts. Negative or non-finite values
    raise `ValueError`. The slot tie order is the `slots` mapping's order (the service passes the settings' order).
+
+### Implementation notes, phases 3-5 (developer, approved by team-lead, 2026-11-27)
+
+1. **Demo weeks.** The demo league's weeks were fixed in October, so against a real clock both horizons were
+   empty. `demo_services` now dates the two demo scoreboards from its clock (`demo_this_week`: the Monday-Sunday
+   week holding today's Eastern date, and the week after; week numbers kept). It also sets the add limit (5) and
+   the owner's adds (current week, 2). Plain `demo_snapshot()` is unchanged.
+2. **Replace and IR-slot drops.** An IR-slot drop frees no active spot, so, like a goalie, he gets no week chips.
+3. **An unpriceable week on Replace** (a day unavailable, no days left, no week dates): a note, dashes in Week +
+   and Starts, and the default TTLTST sort. Never a partial week.
+4. **No adds left** shows the Gaps table but no adds.
+5. **Structure.** `services/suggest.py` is split into `horizon` (pure), `load_week` (I/O), `rank` and
+   `replace_gains` (pure), with `plan_week` putting them together. `schedule.slates` loads any list of dates.
+   Display text lives in `web/format.py`.
+6. **Speed**, through `rank`: 0.06 s for 600 available skaters, 10 drop options and 7 full-slate days.
+

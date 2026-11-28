@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from fha.domain.sheet_update import Change, TabRow
@@ -27,6 +28,7 @@ from fha.services.sheet_update import (
 from fha.sources.league_sheet.models import LeagueSheetError
 from fha.sources.league_sheet.source import LeagueSheetSource
 from fha.sources.league_sheet.writer import LeagueSheetWriter
+from fha.sources.yahoo.models import LeagueSnapshot
 from fha.storage.repository import Document, Repository, RepositoryError
 
 AUTO_LOG = "sheet_auto_log"
@@ -35,6 +37,7 @@ AUTO_SWITCH = "sheet_auto"
 LOG_LIMIT = 50
 SHEET_MAX_AGE = 24 * 3600
 SEND_BUDGET = 35.0
+ROSTER_TIMEOUT = 10.0  # the fresh roster read's own limit: the Yahoo client's read timeout
 ATTEMPT_PREFIX = "attempt-"
 log = logging.getLogger(__name__)
 
@@ -45,6 +48,7 @@ REASONS = {
     "expired_attempt": "an earlier write's outcome is unknown. Check the tab",
     "no_sheet": "no league sheet has been read yet",
     "problem_no_team": "your team isn't in the Yahoo data",
+    "roster_unreadable": "your Yahoo roster couldn't be checked just now",
     "problem_unbound": "no tab is bound to your team yet",
     "problem_unreadable_tab": "your tab couldn't be read",
     "problem_old_sheet": "the stored sheet predates the update feature. Read the sheet again",
@@ -76,6 +80,7 @@ class AutoUpdate:
     cells: int = 0
     payroll_after: int | None = None
     attempt_id: str | None = None
+    roster_date: str | None = None  # Yahoo's date for the fresh roster the update used
 
 
 async def enabled(repo: Repository) -> bool:
@@ -119,6 +124,7 @@ async def log_entries(repo: Repository) -> list[AutoUpdate]:
             attempt_id=doc_id.removeprefix(ATTEMPT_PREFIX)
             if doc_id.startswith(ATTEMPT_PREFIX)
             else None,
+            roster_date=doc.get("roster_date"),
         )
         for doc_id, doc in await _ordered_log(repo)
     ]
@@ -149,6 +155,8 @@ async def _record_log(repo: Repository, result: AutoUpdate) -> None:
         "cells": result.cells,
         "reason": result.reason,
     }
+    if result.roster_date is not None:
+        doc["roster_date"] = result.roster_date
     if result.outcome == "written":
         doc.update(changes=list(result.changes), payroll_after=result.payroll_after)
     await repo.put(AUTO_LOG, doc_id, doc)
@@ -268,13 +276,45 @@ async def _run_update(
                 ),
             )
 
+    # Plan from Yahoo's roster as it is now, never the cached one: a move or a hand
+    # fix made since the fetch would otherwise be "corrected" back (2026-11-28).
+    try:
+        async with asyncio.timeout(ROSTER_TIMEOUT):
+            rosters = await refresh.read_rosters(cached.snapshot.settings.league_key)
+    except Exception as error:  # any failure skips: no fallback to the cached roster
+        log.warning("Automatic sheet update roster read failed (%s)", type(error).__name__)
+        return skipped("roster_unreadable")
+    log.info("Automatic sheet update read the Yahoo rosters dated %s", rosters.date)
+    snapshot = replace(cached.snapshot, teams=rosters.teams)
+    result = await _update_from(
+        repo, clock, refresh, source, writer, snapshot, attempts, fetched_at, started
+    )
+    return None if result is None else replace(result, roster_date=rosters.date)
+
+
+async def _update_from(
+    repo: Repository,
+    clock: Clock,
+    refresh: RefreshService,
+    source: LeagueSheetSource,
+    writer: LeagueSheetWriter,
+    snapshot: LeagueSnapshot,
+    attempts: Mapping[str, Document],
+    fetched_at: float,
+    started: float,
+) -> AutoUpdate | None:
+    """Plan against the sheet from ``snapshot`` (fresh rosters) and write if clean."""
+
+    def skipped(code: str, refusal: str | None = None) -> AutoUpdate:
+        return AutoUpdate(clock.now(), "skipped", code, _reason(code, refusal, ()))
+
     if not attempts:
         stored = await load_league_sheet(repo)
         if stored is None:
             return skipped("no_sheet")
         sheet, read_at = stored
         if clock.now() - read_at <= SHEET_MAX_AGE:
-            preview = await prepare_update(repo, cached.snapshot, sheet)
+            preview = await prepare_update(repo, snapshot, sheet)
             if preview.problem_code is not None:
                 return skipped(preview.problem_code)
             if preview.plan is None or not preview.plan.changes:
@@ -286,7 +326,7 @@ async def _run_update(
     for attempt_id in attempts:
         await repo.delete(WRITE_ATTEMPTS, attempt_id)
 
-    preview = await prepare_update(repo, cached.snapshot, sheet)
+    preview = await prepare_update(repo, snapshot, sheet)
     if preview.problem_code is not None:
         return skipped(preview.problem_code)
     if preview.plan is None or not preview.plan.changes:
@@ -297,7 +337,7 @@ async def _run_update(
         return None
 
     unidentified: tuple[int, ...] = ()
-    mine = cached.snapshot.my_team
+    mine = snapshot.my_team
     if mine is None:
         return skipped("problem_no_team")
     roster = {entry.player.player_id for entry in mine.roster}
@@ -333,7 +373,7 @@ async def _run_update(
         clock,
         source,
         writer,
-        cached.snapshot,
+        snapshot,
         preview.digest,
         before_write=before_write,
         before_post=before_post,

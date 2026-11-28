@@ -18,7 +18,7 @@ from fha.services.refresh import (
 )
 from fha.sources.yahoo.client import YahooHTTPError
 from fha.sources.yahoo.fake import FakeYahooSource
-from fha.sources.yahoo.models import LeagueSnapshot
+from fha.sources.yahoo.models import LeagueSnapshot, Rosters
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import RepositoryError
 from tests.unit.services.snapshots import synthetic_snapshot
@@ -707,3 +707,32 @@ async def test_cache_only_load_uses_the_old_generation_while_a_new_save_is_stall
     assert not await refresh.eligible(T0)
     assert await refresh.load_saved(T0 + 10) == Cached(snap, T0 + 10)
     assert source.calls == [True]
+
+
+async def test_a_roster_read_bypasses_the_cache_and_leaves_its_state_alone(
+    snap: LeagueSnapshot,
+) -> None:
+    repo, clock = InMemoryRepository(), FakeClock()
+    source = FakeYahooSource(snap, rosters=Rosters(snap.teams[:1], "2026-11-28"))
+    refresh = service(source, repo, clock)
+    cached = await refresh.current()
+    assert await refresh.read_rosters("465.l.8076") == Rosters(snap.teams[:1], "2026-11-28")
+    assert source.roster_calls == ["465.l.8076"]
+    assert source.calls == [True]  # no refresh, before or after
+    assert await refresh.current() == cached
+    assert await load_cached(repo) == cached
+
+
+async def test_a_failed_roster_read_is_not_a_refresh_failure(snap: LeagueSnapshot) -> None:
+    class Unreadable(FakeYahooSource):
+        async def fetch_rosters(self, league_key: str) -> Rosters:
+            raise YahooHTTPError(503, "league/x/teams/roster", "Service unavailable")
+
+    repo, clock = InMemoryRepository(), FakeClock()
+    refresh = service(Unreadable(snap), repo, clock)
+    cached = await refresh.current()
+    with pytest.raises(YahooHTTPError):
+        await refresh.read_rosters("465.l.8076")
+    assert await refresh.eligible(T0)
+    assert (await refresh.current()).refresh_error is None
+    assert cached.refresh_error is None

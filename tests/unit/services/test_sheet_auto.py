@@ -1,5 +1,6 @@
 """Automatic tab updates over a saved roster and synthetic Sheets responses."""
 
+import asyncio
 import time
 from dataclasses import dataclass, replace
 from typing import Any
@@ -8,6 +9,7 @@ import httpx
 import pytest
 import respx
 
+from fha.services import sheet_auto
 from fha.services.free_agents import row_key, set_aav_override
 from fha.services.league_sheet import COLLECTION, ROW_BINDINGS, bind_tab, read_league_sheet
 from fha.services.refresh import CACHE, Cached, RefreshService, save_cached
@@ -25,16 +27,18 @@ from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal, prepare_upda
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.sources.league_sheet.writer import FakeLeagueSheetWriter, SheetsApiLeagueSheetWriter
 from fha.sources.yahoo.fake import FakeYahooSource
-from fha.sources.yahoo.models import LeagueSnapshot
+from fha.sources.yahoo.models import LeagueSnapshot, RosterEntry, Rosters, Team
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import RepositoryError
 from tests.unit.league_sheet import sheets as s
-from tests.unit.services.test_league_sheet_service import ONE, TAB_ONE, TAB_TWO, TWO
+from tests.unit.services.test_league_sheet_service import ONE, TAB_ONE, TAB_TWO, TWO, yplayer
 from tests.unit.services.test_refresh import T0, FakeClock
 from tests.unit.services.test_sheet_update_service import BEFORE, LOST, Reads, live, snapshot
 
 OLD_TAB = replace(TAB_ONE, players=[*TAB_ONE.players[:2], None, *TAB_ONE.players[3:]])
 OLD = live(OLD_TAB, TAB_TWO)
+OETTINGER = s.Player("Oettinger, Jake", "G", "Dal", 8_000_000)
+BO_STONE = s.Player("Bo Stone", "D", "EDM", 2_000_000)
 AFTER = live(
     replace(
         OLD_TAB,
@@ -63,6 +67,10 @@ class Setup:
     snap: LeagueSnapshot
     refresh: RefreshService
     yahoo: FakeYahooSource
+
+    def yahoo_now(self, *teams: Team, date: str | None = None) -> None:
+        """What a fresh roster read returns from now on."""
+        self.yahoo.rosters = Rosters(teams, date)
 
     async def save_generation(self) -> None:
         await save_cached(self.repo, Cached(self.snap, self.clock.now()))
@@ -118,6 +126,169 @@ async def setup(
     return out
 
 
+def moved(team: Team, player_id: str, slot: str) -> Team:
+    """``team`` with one player moved to another roster slot."""
+    return replace(
+        team,
+        roster=tuple(
+            replace(entry, selected_position=slot) if entry.player.player_id == player_id else entry
+            for entry in team.roster
+        ),
+    )
+
+
+# The owner's tab after he moved Bo Stone off IR by hand: a counted row, an empty IR slot.
+OFF_IR = live(
+    replace(
+        OLD_TAB,
+        players=[*OLD_TAB.players[:2], BO_STONE, OETTINGER, *OLD_TAB.players[4:]],
+        below=[s.IRRow("IR")],
+    ),
+    TAB_TWO,
+)
+
+
+@pytest.mark.parametrize("stored", ["current", "stale"])
+async def test_a_hand_fix_off_ir_is_not_written_back_from_the_cached_roster(stored: str) -> None:
+    """The owner's report (2026-11-28): the cached snapshot still has Bo Stone in IR,
+    Yahoo and the tab now have him in a counted row. Nothing is written, whether the
+    stored sheet decides it or (past 24 hours) a live read does."""
+    app = await setup(OFF_IR)
+    if stored == "stale":
+        app.clock.t += 24 * 3600 + 1
+        await app.save_generation()
+    in_ir = [e.selected_position for e in app.snap.teams[0].roster if e.player.player_id == "4"]
+    assert in_ir == ["IR"]
+    app.yahoo_now(moved(ONE, "4", "BN"), TWO)
+    sheet, writer = Sheet(OFF_IR, OFF_IR, OFF_IR), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert writer.writes == []
+    assert result is None
+    assert sheet.calls == (0 if stored == "current" else 1)
+    assert await log_entries(app.repo) == []
+    assert app.yahoo.roster_calls == [app.snap.settings.league_key]
+
+
+def pinecone(players: list[s.Player | None], *below: s.IRRow) -> ParsedSheet:
+    """The owner's tab with these counted rows and IR rows, beside Maple."""
+    return live(replace(OLD_TAB, players=players, below=list(below)), TAB_TWO)
+
+
+ANDERSEN, CY = OLD_TAB.players[1], OLD_TAB.players[4]
+ADA = OLD_TAB.players[0]
+# AFTER, with a free IR+ row under Bo Stone's.
+ROOM = pinecone([ADA, ANDERSEN, None, OETTINGER, CY], s.IRRow("IR", BO_STONE), s.IRRow("IR+"))
+
+
+async def test_a_move_to_ir_since_the_fetch_is_planned_and_written_from_the_fresh_roster() -> None:
+    app = await setup(ROOM)
+    app.yahoo_now(moved(ONE, "1", "IR+"), TWO, date="2026-11-28")
+    written = pinecone(
+        [None, ANDERSEN, None, OETTINGER, CY], s.IRRow("IR", BO_STONE), s.IRRow("IR+", ADA)
+    )
+    sheet, writer = Sheet(ROOM, ROOM, written), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert result.outcome == "written"  # a cached re-plan would end as tab_changed
+    assert result.changes == ("to_ir Ada Knight",)
+    assert result.roster_date == "2026-11-28"
+    assert [edit.row for edit in writer.writes[0][1]] == [7] * 4 + [13] * 4
+    assert await log_entries(app.repo) == [result]
+    assert (await app.repo.all(AUTO_LOG)).popitem()[1]["roster_date"] == "2026-11-28"
+
+
+async def test_a_move_off_ir_since_the_fetch_is_written_though_the_stored_tab_has_him_in_ir() -> (
+    None
+):
+    app = await setup(AFTER)
+    app.yahoo_now(moved(ONE, "4", "BN"), TWO)
+    sheet, writer = Sheet(AFTER, AFTER, OFF_IR), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert result.outcome == "written"
+    assert result.changes == ("back Bo Stone",)
+    assert result.roster_date is None
+    assert "roster_date" not in (await app.repo.all(AUTO_LOG)).popitem()[1]
+
+
+async def test_a_drop_since_the_fetch_passes_the_unidentified_drop_guard() -> None:
+    app = await setup(AFTER, bindings={row_key("Ada Knight", "C"): "1"})
+    assert "1" in {e.player.player_id for e in ONE.roster}  # the cached roster still has her
+    app.yahoo_now(replace(ONE, roster=ONE.roster[1:]), TWO)
+    dropped = pinecone([None, ANDERSEN, None, OETTINGER, CY], s.IRRow("IR", BO_STONE))
+    sheet, writer = Sheet(AFTER, AFTER, dropped), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert result.outcome == "written"
+    assert result.changes == ("drop Ada Knight",)
+
+
+async def test_every_teams_rows_are_matched_against_the_fresh_rosters() -> None:
+    gus = s.Player("Gus Lake", "C", "NYR", 1_000_000)
+    after_tab = replace(OLD_TAB, players=[ADA, ANDERSEN, None, OETTINGER, CY])
+    sheet = live(after_tab, replace(TAB_TWO, players=[*TAB_TWO.players, gus]))
+    app = await setup(sheet)
+    newcomer = RosterEntry(yplayer("13", "Gus Lake", "NYR"), "C")
+    app.yahoo_now(ONE, replace(TWO, roster=(*TWO.roster, newcomer)))
+    assert await app.run(Sheet(), FakeLeagueSheetWriter()) is None
+    bindings = await app.repo.get(COLLECTION, ROW_BINDINGS)
+    assert bindings is not None
+    assert bindings["entries"]["Maple"][row_key("Gus Lake", "C")]["player_id"] == "13"
+
+
+async def test_my_team_missing_from_the_fresh_rosters_skips() -> None:
+    app = await setup()
+    app.yahoo_now(TWO, date="2026-11-28")
+    sheet, writer = Sheet(), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert (result.outcome, result.code) == ("skipped", "problem_no_team")
+    assert result.roster_date == "2026-11-28"
+    assert sheet.calls == 0
+    assert writer.writes == []
+
+
+async def test_a_player_added_since_the_fetch_without_a_cap_hit_is_refused() -> None:
+    app = await setup(AFTER)
+    newcomer = RosterEntry(yplayer("21", "Nils Newman", "DET"), "BN")
+    app.yahoo_now(replace(ONE, roster=(*ONE.roster, newcomer)), TWO)
+    sheet, writer = Sheet(AFTER), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert (result.outcome, result.code) == ("skipped", "refusal")
+    assert "Nils Newman" in result.reason
+    assert "cap hit is unknown" in result.reason
+    assert writer.writes == []
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+async def test_an_unreadable_roster_skips_without_reading_or_writing_the_sheet(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hidden = "ROSTER_FAILURE_SENTINEL"
+    app = await setup()
+
+    class Unreadable(FakeYahooSource):
+        async def fetch_rosters(self, league_key: str) -> Rosters:
+            if failure == "timeout":
+                await asyncio.sleep(60)
+            raise httpx.ConnectError(hidden)
+
+    monkeypatch.setattr(sheet_auto, "ROSTER_TIMEOUT", 0.01)
+    app.refresh = RefreshService(Unreadable(app.snap), app.repo, app.clock)
+    sheet, writer = Sheet(), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert (result.outcome, result.code) == ("skipped", "roster_unreadable")
+    assert result.reason == "your Yahoo roster couldn't be checked just now"
+    assert result.roster_date is None
+    assert hidden not in repr(await app.repo.all(AUTO_LOG))
+    assert await log_entries(app.repo) == [result]
+    assert sheet.calls == 0
+    assert writer.writes == []
+    assert await checked_generation(app.repo) == T0
+
+
 @pytest.mark.parametrize("state", ["checked", "off", "expired", "undecodable"])
 async def test_an_ineligible_snapshot_writes_and_logs_nothing(state: str) -> None:
     app = await setup()
@@ -138,6 +309,7 @@ async def test_an_ineligible_snapshot_writes_and_logs_nothing(state: str) -> Non
     assert writer.writes == []
     assert await checked_generation(app.repo) == (T0 if state == "checked" else None)
     assert await log_entries(app.repo) == []
+    assert app.yahoo.roster_calls == []
 
 
 async def test_the_matching_stored_sheet_avoids_google_until_the_24_hour_threshold() -> None:
@@ -530,6 +702,7 @@ async def test_a_lost_manual_answer_blocks_auto_then_keeps_evidence_until_a_fres
     skip = await app.run(Sheet(), writer)
     assert skip is not None
     assert skip.code == "earlier_unknown"
+    assert app.yahoo.roster_calls == []  # no Yahoo read while an outcome is unknown
 
     app.clock.t += 600
     await app.save_generation()

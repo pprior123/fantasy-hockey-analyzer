@@ -89,6 +89,14 @@ class Team:
 
 
 @dataclass(frozen=True)
+class Rosters:
+    """Every team's roster from one ``teams/roster`` read, outside a full refresh."""
+
+    teams: tuple[Team, ...]
+    date: str | None  # Yahoo's roster date (ISO), when the response gives one
+
+
+@dataclass(frozen=True)
 class StatLine:
     """One player's season totals as Yahoo sends them: raw strings by stat ID.
 

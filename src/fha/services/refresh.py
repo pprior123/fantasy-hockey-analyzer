@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 
 from fha.services import snapshot_codec
 from fha.services.clock import Clock
-from fha.sources.yahoo.models import LeagueSnapshot
+from fha.sources.yahoo.models import LeagueSnapshot, Rosters
 from fha.sources.yahoo.source import YahooSource
 from fha.storage.chunks import META, ChunkError, load_chunked, save_chunked
 from fha.storage.repository import Repository, RepositoryError
@@ -132,6 +132,11 @@ class RefreshService:
         if cached is not None and cached.fetched_at == fetched_at and self.is_fresh(cached):
             return cached
         return None
+
+    async def read_rosters(self, league_key: str) -> Rosters:
+        """Every team's roster read from Yahoo now. The cache, the refresh lock
+        and the failure back-off are left alone: this read is not a refresh."""
+        return await self._source.fetch_rosters(league_key)
 
     async def current(self, *, force: bool = False) -> Cached:
         """The snapshot to serve: cached if fresh (and not forced), else refreshed.

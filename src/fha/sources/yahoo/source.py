@@ -28,7 +28,14 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from fha.sources.yahoo import parse
-from fha.sources.yahoo.models import LeagueSnapshot, Player, Scoreboard, StatLine, Team
+from fha.sources.yahoo.models import (
+    LeagueSnapshot,
+    Player,
+    Rosters,
+    Scoreboard,
+    StatLine,
+    Team,
+)
 from fha.sources.yahoo.parse import YahooParseError
 
 DEFAULT_LEAGUE_ID = 8076
@@ -42,6 +49,10 @@ DEFAULT_AVAILABLE_SORT = "AR"  # Yahoo's actual (current) rank
 class YahooSource(Protocol):
     async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
         """Read everything a refresh needs; last season's stats only if asked."""
+        ...
+
+    async def fetch_rosters(self, league_key: str) -> Rosters:
+        """Read only every team's roster, as it stands now (one call, no stats)."""
         ...
 
 
@@ -167,6 +178,10 @@ class HttpYahooSource:
             stats=by_season[game.season],
             last_season_stats=by_season[game.season - 1] if last_season else None,
         )
+
+    async def fetch_rosters(self, league_key: str) -> Rosters:
+        content = await self._client.get(f"league/{league_key}/teams/roster")
+        return Rosters(parse.parse_teams_rosters(content), parse.parse_roster_date(content))
 
     async def _all_available(self, page: PageFetcher) -> tuple[Player, ...]:
         """The available players: ``self._available`` of them, or every one."""

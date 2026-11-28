@@ -334,6 +334,29 @@ def test_team_given_as_one_flat_object() -> None:
     assert team.roster[0].player.name == "Ada Knight"
 
 
+def test_roster_date_is_the_first_rosters_date() -> None:
+    content = b.teams_roster([b.T(1), b.T(2)])
+    content["league"][1]["teams"]["1"]["team"][1]["roster"]["date"] = "2026-10-08"
+    assert parse.parse_roster_date(content) == "2026-10-07"
+
+
+@pytest.mark.parametrize("how", ["absent", "not-text", "no-roster"])
+def test_roster_date_is_none_when_not_given_as_text(how: str) -> None:
+    content = b.teams_roster([b.T(1)])
+    sub = content["league"][1]["teams"]["0"]["team"][1]
+    if how == "absent":
+        del sub["roster"]["date"]
+    elif how == "not-text":
+        sub["roster"]["date"] = 20261007
+    else:
+        del sub["roster"]
+    assert parse.parse_roster_date(content) is None
+
+
+def test_roster_date_of_a_league_without_teams_is_none() -> None:
+    assert parse.parse_roster_date(b.teams_roster([])) is None
+
+
 def test_roster_without_players_is_an_error() -> None:
     content = b.teams_roster([b.T(1)])
     content["league"][1]["teams"]["0"]["team"][1]["roster"] = {"coverage_type": "date"}

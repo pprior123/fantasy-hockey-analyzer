@@ -2905,3 +2905,36 @@ but change the source seam; the cost is accepted for v1.
 positions) needs a weight nobody can justify. A greedy daily lineup is wrong
 with multi-position players. A multi-add weekly plan is combinatorial, and the
 owner makes one move at a time.
+
+## 2026-11-28 — The automatic tab update reads the rosters fresh
+
+**The bug.** The owner (2026-11-28): after he moved a player off IR, the app
+didn't update the sheet, and when he fixed the tab by hand it moved the player
+back to IR. The automatic update (PR #29) planned and wrote from the cached
+Yahoo snapshot, up to 30 minutes old, while it read the sheet live. A
+generation stays unchecked when a fragment did the fetch, or when a page
+closed before its check ran, and the next full page inside the cache window
+checks it. Any Yahoo move or hand edit made after that fetch was "corrected"
+back to the old roster. The manual confirmation already forced a fresh Yahoo
+read.
+
+**The guard.** Before the stored-sheet pre-check, the automatic path reads
+every team's roster from Yahoo (`YahooSource.fetch_rosters`: one
+`teams/roster` call, the full refresh's parser, a 10-second limit) and uses
+the saved snapshot with those teams for the pre-check, the plan, the
+unidentified-drop guard and the write. The cache is not updated. A failed or
+slow read skips with `roster_unreadable`, never falling back to the cached
+roster. The log entry records Yahoo's roster date, for any later day-boundary
+question. A Yahoo move still reaches the tab only at the app's next fetch, as
+PR #29 decided. The window narrows to one check (at most the 35-second send
+budget), not to zero. Because that read's timeout can cancel a token renewal,
+the Yahoo client now marks a renewed token unsaved until its save succeeds,
+and lets the save finish after the caller's timeout (FR-2). A failed roster
+read then waits up to 10 seconds for that save before it answers, since a
+serverless instance may stop once the response is sent (FR-3). Plan: `docs/plans/sheet-auto-fresh-roster.md` (PR #33).
+
+**Alternatives.** Writing only within N seconds of the fetch leaves the
+window open after a fragment fetch, and N is arbitrary. Skipping when the tab
+changed after the snapshot needs a per-tab modified time Sheets doesn't have.
+A full forced refresh, as the manual confirmation does, costs dozens of calls
+inside the 35-second send budget.

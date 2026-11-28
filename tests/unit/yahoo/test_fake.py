@@ -1,7 +1,14 @@
 """FakeYahooSource satisfies YahooSource and honours last_season."""
 
 from fha.sources.yahoo.fake import FakeYahooSource
-from fha.sources.yahoo.models import Game, LeagueSettings, LeagueSnapshot, Scoreboard, StatLine
+from fha.sources.yahoo.models import (
+    Game,
+    LeagueSettings,
+    LeagueSnapshot,
+    Rosters,
+    Scoreboard,
+    StatLine,
+)
 from fha.sources.yahoo.source import YahooSource
 
 LINE = StatLine("465.p.1", 2025, {"0": "82"})
@@ -26,3 +33,12 @@ async def test_fake_serves_its_snapshot() -> None:
     assert without.last_season_stats is None
     assert without.game == SNAPSHOT.game
     assert fake.calls == [True, False]
+
+
+async def test_fake_roster_read_serves_the_snapshot_teams_or_the_given_rosters() -> None:
+    fake = FakeYahooSource(SNAPSHOT)
+    assert await fake.fetch_rosters("465.l.8076") == Rosters((), None)
+    fake.rosters = Rosters((), "2026-11-28")
+    assert await fake.fetch_rosters("465.l.8076") == Rosters((), "2026-11-28")
+    assert fake.roster_calls == ["465.l.8076", "465.l.8076"]
+    assert fake.calls == []

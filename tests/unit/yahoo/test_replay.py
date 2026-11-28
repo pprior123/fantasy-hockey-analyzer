@@ -16,11 +16,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
+import respx
 
 from fha.domain.engine import rate
 from fha.domain.models import Category
 from fha.domain.names import normalize_name
-from fha.sources.yahoo.client import YahooClient
+from fha.sources.yahoo.client import API_BASE, YahooClient
 from fha.sources.yahoo.models import LeagueSnapshot
 from fha.sources.yahoo.oauth import Credentials, Token
 from fha.sources.yahoo.source import HttpYahooSource
@@ -240,3 +242,30 @@ def test_the_engine_rates_the_real_pool() -> None:
 def test_every_real_name_normalizes() -> None:
     names = [p.name for p in snapshot().pool]
     assert all(normalize_name(n) for n in names)
+
+
+@pytest.fixture
+def recorded() -> LeagueSnapshot:
+    """The replayed full refresh, loaded outside the test's event loop (it runs its own)."""
+    return snapshot()
+
+
+@respx.mock
+async def test_a_roster_only_read_parses_the_recorded_rosters_in_one_call(
+    recorded: LeagueSnapshot,
+) -> None:
+    """``fetch_rosters`` against the recorded ``teams/roster`` response (009)."""
+    league_key = recorded.settings.league_key
+    path = f"league/{league_key}/teams/roster"
+    (call,) = [c for c in manifest()["calls"] if c["path"] == path]
+    assert call["file"].startswith("009-")
+    route = respx.get(API_BASE + path).mock(
+        return_value=httpx.Response(200, json=body(call["file"]))
+    )
+    async with httpx.AsyncClient() as http:
+        client = YahooClient(http, Credentials("id", "secret"), Store(), clock=lambda: NOW)
+        rosters = await HttpYahooSource(client).fetch_rosters(league_key)
+    assert route.call_count == 1
+    assert len(respx.calls) == 1
+    assert rosters.teams == recorded.teams
+    assert rosters.date == "2026-10-30"

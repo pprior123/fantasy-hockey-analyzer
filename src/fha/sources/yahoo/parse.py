@@ -311,6 +311,17 @@ def _roster_adds(meta: dict[str, Any]) -> tuple[int, int] | None:
     return None if week is None or adds is None else (week, adds)
 
 
+def parse_roster_date(content: dict[str, Any]) -> str | None:
+    """``league/{key}/teams/roster``: the first roster's ``date``, None if not given."""
+    league = _league(content)
+    for raw in _collection(_get(league, "teams", "league"), "team", "league.teams"):
+        _, sub = _team_meta(raw)
+        roster = sub.get("roster")
+        date = roster.get("date") if isinstance(roster, dict) else None
+        return date if isinstance(date, str) else None
+    return None
+
+
 def parse_teams_rosters(content: dict[str, Any]) -> tuple[Team, ...]:
     """``league/{key}/teams/roster``: every team with today's roster and slots."""
     league = _league(content)

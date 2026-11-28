@@ -106,7 +106,9 @@ Differences from the plan, each with its test (`tests/unit/services/test_sheet_a
   refresh lock and the failure back-off alone (`tests/unit/services/test_refresh.py`), so `auto_update`'s signature
   is unchanged.
 - The roster date goes in both places: `AutoUpdate.roster_date` (stored only when known; older entries read as
-  None) and an info log line, since an up-to-date check (the owner's case) writes no log entry.
+  None) and an info log line. The log entry is the record: it covers every written, skipped and failed outcome. An
+  up-to-date check (the owner's case) writes no log entry, and the info line reaches production logs only if INFO
+  is enabled there (the app configures no level; Python's default is WARNING).
 - The owner's case runs twice: settled by the stored sheet, and (stored sheet over 24 hours old) by a live read.
 - The test fixture's IR slot is `IR`, not `IR+`; both are IR slots (`IR_SLOTS`). The move-to-IR test uses `IR+`.
 - Any exception from the roster read (and the 10 s timeout) is `roster_unreadable`; the log keeps only the error's

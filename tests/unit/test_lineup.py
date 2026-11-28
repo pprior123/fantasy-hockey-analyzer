@@ -103,10 +103,11 @@ def test_an_unrated_player_is_benched_for_a_rated_one_but_fills_an_empty_slot() 
 
 
 def test_value_ties_go_to_more_starts_then_the_lower_player_id() -> None:
-    # 1.0 alone, or 0.5 + 0.5: the same value, and the pair gives more starts.
-    pair = [p("big", "C/LW", 1.0), p("x", "C", 0.5), p("y", "C", 0.5)]
-    lineup = best_lineup(pair, {"C": 2, "LW": 1})
-    assert lineup.starts == 3
+    # The same value with big at C alone, or at LW beside an unrated C: two starts win.
+    pair = [p("big", "C/LW", 1.0), p("zero", "C", 0.0)]
+    lineup = best_lineup(pair, {"C": 1, "LW": 1})
+    assert (lineup.value, lineup.starts) == (units(1.0), 2)
+    assert dict(lineup.assignment) == {"big": "LW", "zero": "C"}
     # Equal value and starts: the lower id starts, whatever the input order.
     for players in ([p("b", "C", 0.3), p("a", "C", 0.3)], [p("a", "C", 0.3), p("b", "C", 0.3)]):
         assert dict(best_lineup(players, {"C": 1}).assignment) == {"a": "C"}

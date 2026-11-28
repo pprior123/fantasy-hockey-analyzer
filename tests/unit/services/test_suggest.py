@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+from fha.domain.cap import cap_room, fits, swap_ok
 from fha.domain.engine import DEFAULT_CONFIG, Rating
 from fha.domain.lineup import LineupPlayer, best_lineup, units
 from fha.domain.schedule import Game
@@ -18,6 +19,7 @@ from fha.services.suggest import (
     Gap,
     Ranking,
     Week,
+    add_candidates,
     drop_options,
     games,
     has_open_spot,
@@ -27,7 +29,7 @@ from fha.services.suggest import (
     replace_gains,
     starting_slots,
 )
-from fha.services.teams import replace_view
+from fha.services.teams import drop_cap_hit, replace_view
 from fha.sources.yahoo.demo import demo_snapshot
 from fha.sources.yahoo.models import RosterSlot, Scoreboard, Team
 from fha.storage.memory import InMemoryRepository
@@ -423,7 +425,11 @@ def oracle_rank(
         if p is None or not plays:
             continue
         options = []
+        room = cap_room(view.cap, mine.payroll)
         for d in drops:
+            ok = fits(f.aav, room) if d is None else swap_ok(room, drop_cap_hit(mine, d), f.aav)
+            if ok is False:  # a cap misfit is never suggested
+                continue
             total, starts = 0, 0
             for i in range(len(playing_by_day)):
                 players = day(i, d.player_id if d else None) + ([p] if i in plays else [])
@@ -439,6 +445,8 @@ def oracle_rank(
                     starts,
                 )
             )
+        if not options:
+            continue
         _, d, gain, starts = min(options, key=lambda o: o[0])
         if gain >= MIN_GAIN:
             rows.append(
@@ -557,3 +565,18 @@ def test_dates_and_playing_teams_must_line_up() -> None:
 def test_games_counts_the_teams_games_over_the_horizon() -> None:
     assert games(fa("f", team="Bos"), playing({"BOS"}, {"NYR"}, {"BOS"})) == 2
     assert games(fa("f", team=""), playing({"BOS"})) == 0
+
+
+def test_add_candidates_are_startable_skaters_with_a_game_at_any_position() -> None:
+    fas = [
+        fa("c", "C"),
+        fa("d", "D"),
+        fa("dtd", "LW", status="DTD"),
+        fa("out", "C", status="O"),
+        fa("idle", "C", team="ANA"),
+        fa("goal", "G", goalie=True),
+        fa("util", "Util"),
+    ]
+    view = league([row("c1", "C", slot="C")], fas)
+    found = [r.player_id for r in add_candidates(view, playing({"BOS"}, {"NYR"}))]
+    assert sorted(found) == ["c", "d", "dtd"]

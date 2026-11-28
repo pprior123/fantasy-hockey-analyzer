@@ -60,7 +60,7 @@
     {% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="{{ 4 + (2 if week else 0) + (2 if mode == 'money' else categories|length) }}" class="muted">No free agents at {{ drop.position }}{% if swap_only %} fit the cap{% endif %}.</td></tr>
+  <tr><td colspan="{{ 4 + (2 if week else 0) + (2 if mode == 'money' else categories|length) }}" class="muted">{% if priced %}No free agent can play that week{% else %}No free agents at {{ drop.position }}{% endif %}{% if swap_only %} fit the cap{% endif %}.</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -11,13 +11,14 @@ from fha.services.schedule import eastern_date, nights
 from fha.services.suggest import (
     Week,
     WeekPlan,
+    add_candidates,
     games,
     horizon,
     load_week,
     plan_week,
     replace_gains,
 )
-from fha.services.teams import ReplaceView, discrepancy_flags, replace_view, summarize
+from fha.services.teams import discrepancy_flags, replace_view, summarize
 from fha.web.app import render, services
 from fha.web.data import page_data, season_param, view_param
 from fha.web.format import day_labels, game_count, games_line, schedule_notes
@@ -132,17 +133,26 @@ async def replace(request: Request) -> HTMLResponse:
         )
     mode = view_param(params.get("view"))
     data = await page_data(request, season=season_param(params.get("season")))
-    swap = replace_view(data.view, params.get("drop") or "", swap_ok_only=swap_only == "1")
+    view = data.view
+    drop = view.by_id.get(params.get("drop") or "")
+    # Goalies aren't in the lineup model, and an IR-slot drop frees no active spot.
+    can_plan = drop is not None and not drop.is_goalie and not drop.in_ir_slot
+    priced = await _replace_week(request, view, week) if drop and can_plan and week else None
+    # A week priced whole lists every add candidate (Week + is position-free);
+    # otherwise the free agents at the drop's positions, as without a week.
+    only = set(priced[1]) if priced is not None and priced[1] is not None else None
+    swap = replace_view(view, params.get("drop") or "", swap_ok_only=swap_only == "1", only=only)
     if swap is None:
         return bad_request(
             request, "Replace works for a player on your own roster.", "/rosters", "rosters"
         )
-    # Goalies aren't in the lineup model, and an IR-slot drop frees no active spot.
-    can_plan = not swap.drop.is_goalie and not swap.drop.in_ir_slot
-    priced = await _replace_week(request, data.view, swap, week) if can_plan and week else None
     rows = swap.rows
-    if priced is not None and priced[1]:
-        gains = priced[1]
+    gains: dict[str, SwapGain] = {}
+    game_totals: dict[str, int] = {}
+    if priced is not None and priced[1] is not None:
+        fas = [r.player for r in rows]
+        gains = replace_gains(view, swap.drop, fas, priced[2])
+        game_totals = {fa.player_id: games(fa, priced[2]) for fa in fas}
         rows = tuple(
             sorted(
                 rows,
@@ -170,8 +180,9 @@ async def replace(request: Request) -> HTMLResponse:
         can_plan=can_plan,
         week=week.value if week and can_plan else None,
         week_plan=priced[0] if priced else None,
-        gains=priced[1] if priced else {},
-        game_totals=priced[2] if priced else {},
+        gains=gains,
+        game_totals=game_totals,
+        priced=only is not None,
         categories=data.view.config.categories,
         mode=mode,
         here=_here(request),
@@ -179,22 +190,18 @@ async def replace(request: Request) -> HTMLResponse:
 
 
 async def _replace_week(
-    request: Request, view: LeagueView, swap: ReplaceView, week: Week
-) -> tuple[WeekPlan, dict[str, SwapGain], dict[str, int]]:
-    """Week + and Starts for each row, or empty maps when the week can't be priced whole."""
+    request: Request, view: LeagueView, week: Week
+) -> tuple[WeekPlan, list[str] | None, list[frozenset[str]]]:
+    """The week's plan, the ids of its add candidates and each day's playing teams; the ids
+    are None when the week can't be priced whole (unknown, no days left, a missing day)."""
     svc = services(request)
     plan = horizon(view.snapshot, eastern_date(svc.clock), week)
     if not plan.known or not plan.days:
-        return WeekPlan(plan, (), (), None), {}, {}
+        return WeekPlan(plan, (), (), None), None, []
     loaded = await load_week(svc.repo, svc.schedule_source, svc.clock, plan.days)
     missing = tuple(s.date for s in loaded if s.state == "unavailable")
-    week_plan = WeekPlan(plan, loaded, missing, None)
     if missing:
-        return week_plan, {}, {}
+        return WeekPlan(plan, loaded, missing, None), None, []
     playing = [frozenset(s.games) for s in loaded]
-    fas = [r.player for r in swap.rows]
-    return (
-        week_plan,
-        replace_gains(view, swap.drop, fas, playing),
-        {fa.player_id: games(fa, playing) for fa in fas},
-    )
+    ids = [fa.player_id for fa in add_candidates(view, playing)]
+    return WeekPlan(plan, loaded, (), None), ids, playing

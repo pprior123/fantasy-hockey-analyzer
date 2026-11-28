@@ -266,8 +266,50 @@ def test_replace_with_a_week_adds_week_plus_and_starts_and_sorts_by_them() -> No
     header = table(page, "replace").split("</thead>", 1)[0]
     assert len(re.findall(r"<th\b", header)) == 4 + 2 + 2  # with AAV and Room after
     plain = c.get(f"/rosters/replace?drop={drop}").text
-    assert names_of(page) != names_of(plain)  # Week + reorders the TTLTST list
-    assert sorted(names_of(page)) == sorted(names_of(plain))
+    assert names_of(page) != names_of(plain)  # Week + reorders, and lists other positions
+
+
+def drop_positions(html: str) -> set[str]:
+    head = html.split('<section class="card">', 1)[1].split("</p>", 1)[0]
+    found = re.search(r"</strong> \(([^)]*)\)", head)
+    assert found is not None
+    return set(found[1].split(","))
+
+
+def row_positions(html: str) -> list[set[str]]:
+    return [
+        set(re.findall(r"<td[^>]*>(.*?)</td>", r, re.S)[1].split(","))
+        for r in body_rows(html, "replace")
+    ]
+
+
+def test_every_suggest_row_s_add_is_on_its_linked_replace_page() -> None:
+    c, _ = setup()
+    page = c.get("/rosters/suggest").text
+    rows = body_rows(page, "suggest")
+    assert rows
+    crossed = 0
+    for r in rows:
+        add = re.search(r'<td class="first">([^<]*)', r)[1].strip()  # type: ignore[index]
+        link = unescape(re.search(r'href="(/rosters/replace[^"]*)"', r)[1])  # type: ignore[index]
+        replace_page = c.get(link).text
+        assert add in names_of(replace_page)
+        add_pos = set(re.findall(r"<td[^>]*>(.*?)</td>", r, re.S)[1].split(","))
+        crossed += not (add_pos & drop_positions(replace_page))
+    assert crossed  # some suggested adds play another position than their drop
+
+
+def test_replace_with_a_week_lists_other_positions_and_without_one_does_not() -> None:
+    c, _ = setup()
+    drop = my_skater()
+    plain = c.get(f"/rosters/replace?drop={drop}").text
+    week = c.get(f"/rosters/replace?drop={drop}&week=this").text
+    wanted = drop_positions(plain) & {"C", "LW", "RW", "D"}
+    assert all(p & wanted for p in row_positions(plain))
+    assert any(not (p & wanted) for p in row_positions(week))
+    assert all(p & {"C", "LW", "RW", "D"} for p in row_positions(week))  # skaters only
+    week_text = text(week)
+    assert "No free agents" not in week_text
 
 
 def names_of(html: str) -> list[str]:
@@ -397,3 +439,10 @@ def test_the_suggester_formats() -> None:
     assert fills(((SAT, "C"), (date(2026, 11, 30), "D"))) == "Sat C, Mon D"
     assert gap_text((("C", 1), ("D", 2))) == "C 1 · D 2"
     assert gap_text(()) == "none"
+
+
+def test_a_priced_week_with_no_candidate_says_nobody_can_play() -> None:
+    c, _ = setup(source=DaySource(games=()))  # no games all week
+    page = c.get(f"/rosters/replace?drop={my_skater()}&week=this").text
+    assert "No free agent can play that week." in page
+    assert "No free agents at" not in page

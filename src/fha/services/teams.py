@@ -8,7 +8,7 @@ is unknown, and the filters that use them exclude those rows and count them.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -284,9 +284,15 @@ def drop_cap_hit(mine: TeamInfo, drop: PlayerRow) -> CapHit | None:
 
 
 def replace_view(
-    view: LeagueView, drop_id: str, *, swap_ok_only: bool = False
+    view: LeagueView,
+    drop_id: str,
+    *,
+    swap_ok_only: bool = False,
+    only: Collection[str] | None = None,
 ) -> ReplaceView | None:
-    """Free agents eligible at any of the dropped player's positions, by TTLTST (SPEC §7.2).
+    """Free agents eligible at any of the dropped player's positions, by TTLTST (SPEC §7.2);
+    or, with ``only``, exactly the free agents with those ids, whatever their positions (a
+    week chosen: the suggester's add candidates).
 
     None if ``drop_id`` isn't on the owner's roster.
     """
@@ -300,7 +306,7 @@ def replace_view(
     rows: list[ReplaceRow] = []
     unknown = 0
     for fa in view.free_agents():
-        if not (positions(fa) & wanted):
+        if (fa.player_id not in only) if only is not None else not (positions(fa) & wanted):
             continue
         ok = swap_ok(room, hit, fa.aav)
         if swap_ok_only and ok is not True:

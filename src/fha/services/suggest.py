@@ -202,6 +202,23 @@ def drop_options(roster: Sequence[PlayerRow]) -> list[PlayerRow]:
     return [r for r in rated if _value(r) <= line]
 
 
+def _candidates(
+    view: LeagueView, slots: Collection[str], playing: Sequence[Collection[str]]
+) -> list[tuple[PlayerRow, LineupPlayer, frozenset[int]]]:
+    out = []
+    for fa in view.free_agents():
+        player = _lineup_player(fa, slots)
+        add_days = _game_days(fa, playing)
+        if player is not None and add_days:
+            out.append((fa, player, add_days))
+    return out
+
+
+def add_candidates(view: LeagueView, playing: Sequence[Collection[str]]) -> list[PlayerRow]:
+    """Free agents who could start: a skater at a starting slot type, not out, with a game."""
+    return [fa for fa, _, _ in _candidates(view, starting_slots(view.snapshot), playing)]
+
+
 def rank(
     view: LeagueView,
     dates: Sequence[date],
@@ -225,11 +242,7 @@ def rank(
     weeks = [drop_week(days, slots, d.player_id if d else None) for d in drops]
     hits = [drop_cap_hit(mine, d) if d else None for d in drops]
     rows: list[Suggestion] = []
-    for fa in view.free_agents():
-        player = _lineup_player(fa, slots)
-        add_days = _game_days(fa, playing) if player is not None else frozenset()
-        if player is None or not add_days:
-            continue
+    for fa, player, add_days in _candidates(view, slots, playing):
         best: tuple[tuple[int, bool, float, str], PlayerRow | None, SwapGain, bool | None] | None
         best = None
         for drop, week, hit in zip(drops, weeks, hits, strict=True):

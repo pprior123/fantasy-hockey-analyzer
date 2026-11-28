@@ -647,11 +647,13 @@ A season label and toggle per §5.
      cap room after the swap (`room_after`), and per-category deltas. Toggle:
      only swaps where `swap_ok` holds. Week chips: **Any time** (the default,
      as before, with no schedule read), **This week**, **Next week**. With a
-     week chosen, **Week +** and **Starts** columns price each free agent
-     swapped for this drop, and rows sort by Week +. A goalie or an IR-slot
+     week chosen, Replace lists every free agent the suggester would consider
+     (a skater at C, LW, RW or D, not out, with a game that week), at any
+     position, since Week + is position-free. **Week +** and **Starts** columns
+     price each one swapped for this drop, and rows sort by Week +. A goalie or an IR-slot
      drop has no week chips: goalies aren't in the lineup model, and an
      IR-slot drop frees no active spot. A week that can't be priced whole
-     shows a note, dashes and the TTLTST sort.
+     shows a note, dashes, and the drop's positions in the TTLTST sort.
    - **Suggest adds** (`/rosters/suggest`, linked from Rosters on the owner's
      team; `week=this` by default, or `next`). The page shows:
      - the days planned for: from tomorrow to the week's end (today's lineup is

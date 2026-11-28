@@ -38,6 +38,7 @@ LOG_LIMIT = 50
 SHEET_MAX_AGE = 24 * 3600
 SEND_BUDGET = 35.0
 ROSTER_TIMEOUT = 10.0  # the fresh roster read's own limit: the Yahoo client's read timeout
+SETTLE_TIMEOUT = 10.0  # after a failed roster read, for a token save it left running
 ATTEMPT_PREFIX = "attempt-"
 log = logging.getLogger(__name__)
 
@@ -283,6 +284,9 @@ async def _run_update(
             rosters = await refresh.read_rosters(cached.snapshot.settings.league_key)
     except Exception as error:  # any failure skips: no fallback to the cached roster
         log.warning("Automatic sheet update roster read failed (%s)", type(error).__name__)
+        # A timeout can land mid-renewal: let the rotated token's save finish before the
+        # response, after which the instance may stop (FR-3). Bounded; never raises.
+        await refresh.settle_token(SETTLE_TIMEOUT)
         return skipped("roster_unreadable")
     log.info("Automatic sheet update read the Yahoo rosters dated %s", rosters.date)
     snapshot = replace(cached.snapshot, teams=rosters.teams)

@@ -386,6 +386,35 @@ async def test_a_newer_token_cancelled_behind_an_earlier_save_is_saved_later() -
     assert fake.refreshes == 2
 
 
+async def test_settle_with_no_save_pending_or_one_finished_is_immediate() -> None:
+    yahoo = client(FakeYahoo())
+    assert await yahoo.settle(0) is True  # never saved
+    store = MemoryStore(Token("access-1", "refresh-1", NOW - 1))
+    yahoo = client(FakeYahoo(), store)
+    await yahoo.get("x")
+    assert await yahoo.settle(0) is True  # saved already
+    assert store.saved == [RENEWED]
+
+
+async def test_settle_waits_for_a_stalled_save_within_its_bound(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    yahoo, store, _, _ = await stalled_renewal(down=False)
+    assert await yahoo.settle(0.05) is False
+    assert "Yahoo token save still pending after 0 s" in caplog.text
+    assert store.saved == []
+    asyncio.get_running_loop().call_later(0.05, store.release.set)
+    assert await yahoo.settle(5) is True
+    assert store.saved == [RENEWED]
+
+
+async def test_settle_does_not_raise_when_the_pending_save_fails() -> None:
+    yahoo, store, _, _ = await stalled_renewal(down=True)
+    store.release.set()
+    assert await yahoo.settle(5) is True  # finished: its retry mark stays for later
+    assert store.saved == []
+
+
 async def test_a_failed_token_save_logs_the_store_error_s_safe_detail(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

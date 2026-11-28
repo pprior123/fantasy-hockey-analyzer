@@ -138,6 +138,10 @@ class RefreshService:
         and the failure back-off are left alone: this read is not a refresh."""
         return await self._source.fetch_rosters(league_key)
 
+    async def settle_token(self, timeout: float) -> bool:
+        """Give a Yahoo token save still running up to ``timeout`` seconds to land."""
+        return await self._source.settle(timeout)
+
     async def current(self, *, force: bool = False) -> Cached:
         """The snapshot to serve: cached if fresh (and not forced), else refreshed.
 

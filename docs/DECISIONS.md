@@ -2929,7 +2929,9 @@ question. A Yahoo move still reaches the tab only at the app's next fetch, as
 PR #29 decided. The window narrows to one check (at most the 35-second send
 budget), not to zero. Because that read's timeout can cancel a token renewal,
 the Yahoo client now marks a renewed token unsaved until its save succeeds,
-and lets the save finish after the caller's timeout (FR-2). Plan: `docs/plans/sheet-auto-fresh-roster.md` (PR #33).
+and lets the save finish after the caller's timeout (FR-2). A failed roster
+read then waits up to 10 seconds for that save before it answers, since a
+serverless instance may stop once the response is sent (FR-3). Plan: `docs/plans/sheet-auto-fresh-roster.md` (PR #33).
 
 **Alternatives.** Writing only within N seconds of the fetch leaves the
 window open after a fragment fetch, and N is arbitrary. Skipping when the tab

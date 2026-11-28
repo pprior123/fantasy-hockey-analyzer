@@ -18,6 +18,7 @@ class FakeYahooSource:
         self.rosters = rosters
         self.calls: list[bool] = []  # the last_season flag of each fetch
         self.roster_calls: list[str] = []  # the league key of each roster read
+        self.settles: list[float] = []  # the timeout of each settle
 
     async def fetch_snapshot(self, *, last_season: bool = True) -> LeagueSnapshot:
         self.calls.append(last_season)
@@ -26,3 +27,7 @@ class FakeYahooSource:
     async def fetch_rosters(self, league_key: str) -> Rosters:
         self.roster_calls.append(league_key)
         return self.rosters if self.rosters is not None else Rosters(self.snapshot.teams, None)
+
+    async def settle(self, timeout: float) -> bool:
+        self.settles.append(timeout)
+        return True

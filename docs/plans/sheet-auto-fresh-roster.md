@@ -128,3 +128,14 @@ Differences from the plan, each with its test (`tests/unit/services/test_sheet_a
 - #3, #4: the window and the best-effort single read are stated here and in SPEC §4a.
 - #5: the replay test loads its reference snapshot in a synchronous fixture; it passes alone.
 
+### FR-3: settle a pending token save before the skip (FR-R2, quality-mgr at `1fce141`; 1 Medium, accepted)
+
+- After a failed or timed-out roster read, `_run_update` awaits `RefreshService.settle_token(SETTLE_TIMEOUT = 10 s)`
+  before returning `roster_unreadable`. That calls `YahooSource.settle` and then `YahooClient.settle(timeout)`, which waits for a
+  token save still running and returns False with a warning at the bound (never raises). The 10 s read plus the
+  10 s settle stay inside the route's 60 s. A successful read waits for nothing.
+- Tests: `test_a_roster_timeout_mid_renewal_waits_for_the_token_save_before_skipping` (a rotating token endpoint, a
+  stalled store: within the bound the store holds the rotated token when the skip returns and a new client
+  authenticates from it; past the bound the skip still returns, with the warning), plus `settle` unit tests in
+  `tests/unit/yahoo/test_client.py`.
+

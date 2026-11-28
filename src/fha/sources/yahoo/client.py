@@ -168,6 +168,24 @@ class YahooClient:
         self._saving = asyncio.ensure_future(self._persist(token))
         await asyncio.shield(self._saving)
 
+    async def settle(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for a token save still running (FR-3).
+
+        True when none is pending or it finished (saved or not: a failed save keeps its
+        retry mark); False, with a warning, when it is still running at the bound. Never
+        raises. A caller about to respond awaits this, since a serverless instance may
+        stop once the response is sent, taking the pending save with it."""
+        saving = self._saving
+        if saving is None or saving.done():
+            return True
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.shield(saving)
+        except TimeoutError:
+            log.warning("Yahoo token save still pending after %.0f s", timeout)
+            return False
+        return True
+
     async def _persist(self, token: Token) -> None:
         try:
             await self._store.save(token)

@@ -26,8 +26,12 @@ from fha.services.sheet_auto import (
 from fha.services.sheet_update import WRITE_ATTEMPTS, WriteJournal, prepare_update, write_update
 from fha.sources.league_sheet.models import LeagueSheetError, ParsedSheet
 from fha.sources.league_sheet.writer import FakeLeagueSheetWriter, SheetsApiLeagueSheetWriter
+from fha.sources.yahoo import oauth
+from fha.sources.yahoo.client import YahooClient
 from fha.sources.yahoo.fake import FakeYahooSource
 from fha.sources.yahoo.models import LeagueSnapshot, RosterEntry, Rosters, Team
+from fha.sources.yahoo.oauth import Credentials, Token
+from fha.sources.yahoo.source import HttpYahooSource
 from fha.storage.memory import InMemoryRepository
 from fha.storage.repository import RepositoryError
 from tests.unit.league_sheet import sheets as s
@@ -195,6 +199,7 @@ async def test_a_move_to_ir_since_the_fetch_is_planned_and_written_from_the_fres
     assert [edit.row for edit in writer.writes[0][1]] == [7] * 4 + [13] * 4
     assert await log_entries(app.repo) == [result]
     assert (await app.repo.all(AUTO_LOG)).popitem()[1]["roster_date"] == "2026-11-28"
+    assert app.yahoo.settles == []  # a successful read waits for nothing
 
 
 async def test_a_move_off_ir_since_the_fetch_is_written_though_the_stored_tab_has_him_in_ir() -> (
@@ -275,7 +280,8 @@ async def test_an_unreadable_roster_skips_without_reading_or_writing_the_sheet(
             raise httpx.ConnectError(hidden)
 
     monkeypatch.setattr(sheet_auto, "ROSTER_TIMEOUT", 0.01)
-    app.refresh = RefreshService(Unreadable(app.snap), app.repo, app.clock)
+    unreadable = Unreadable(app.snap)
+    app.refresh = RefreshService(unreadable, app.repo, app.clock)
     sheet, writer = Sheet(), FakeLeagueSheetWriter()
     result = await app.run(sheet, writer)
     assert result is not None
@@ -287,6 +293,89 @@ async def test_an_unreadable_roster_skips_without_reading_or_writing_the_sheet(
     assert sheet.calls == 0
     assert writer.writes == []
     assert await checked_generation(app.repo) == T0
+    assert unreadable.settles == [sheet_auto.SETTLE_TIMEOUT]  # a pending token save may land
+
+
+class RotatingYahoo:
+    """Yahoo's token endpoint rotating the refresh token (the old one retired), and a
+    roster call that never answers in time."""
+
+    def __init__(self) -> None:
+        self.refresh_tokens = {"refresh-1"}
+        self.access_tokens: set[str] = set()
+        self.renewals = 0
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == oauth.TOKEN_URL:
+            form = dict(item.split("=", 1) for item in request.content.decode().split("&"))
+            if form["refresh_token"] not in self.refresh_tokens:
+                return httpx.Response(400, json={"error": "invalid_grant"})
+            self.renewals += 1
+            access, refresh = f"access-{self.renewals + 1}", f"refresh-{self.renewals + 1}"
+            self.refresh_tokens, self.access_tokens = {refresh}, {access}
+            return httpx.Response(
+                200, json={"access_token": access, "refresh_token": refresh, "expires_in": 3600}
+            )
+        if request.headers["Authorization"].removeprefix("Bearer ") not in self.access_tokens:
+            return httpx.Response(401, json={"error": {"description": "expired"}})
+        if "/teams/roster" in request.url.path:
+            await asyncio.sleep(60)
+        return httpx.Response(200, json={"fantasy_content": {"ok": 1}})
+
+
+class StalledStore:
+    """A token store whose saves wait for ``release``."""
+
+    def __init__(self, token: Token) -> None:
+        self.token = token
+        self.release = asyncio.Event()
+
+    async def load(self) -> Token | None:
+        return self.token
+
+    async def save(self, token: Token) -> None:
+        await self.release.wait()
+        self.token = token
+
+
+def yahoo_client(yahoo: RotatingYahoo, store: StalledStore, clock: FakeClock) -> YahooClient:
+    http = httpx.AsyncClient(transport=httpx.MockTransport(yahoo))
+    return YahooClient(http, Credentials("id", "secret"), store, clock=clock.now)
+
+
+@pytest.mark.parametrize("store_answers", ["within-bound", "never"])
+async def test_a_roster_timeout_mid_renewal_waits_for_the_token_save_before_skipping(
+    store_answers: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FR-3: a timed-out roster read can leave a rotated token's save running. The skip
+    waits (bounded) for it, so a cold instance finds the rotated token in the store."""
+    app = await setup()
+    yahoo = RotatingYahoo()
+    store = StalledStore(Token("access-1", "refresh-1", app.clock.now() - 1))
+    source = HttpYahooSource(yahoo_client(yahoo, store, app.clock))
+    app.refresh = RefreshService(source, app.repo, app.clock)
+    monkeypatch.setattr(sheet_auto, "ROSTER_TIMEOUT", 0.05)
+    settle = 0.3 if store_answers == "never" else 5.0
+    monkeypatch.setattr(sheet_auto, "SETTLE_TIMEOUT", settle)
+    if store_answers == "within-bound":
+        asyncio.get_running_loop().call_later(0.15, store.release.set)
+    sheet, writer = Sheet(), FakeLeagueSheetWriter()
+    result = await app.run(sheet, writer)
+    assert result is not None
+    assert (result.outcome, result.code) == ("skipped", "roster_unreadable")
+    assert yahoo.renewals == 1
+    assert sheet.calls == 0
+    assert writer.writes == []
+    if store_answers == "never":
+        assert store.token.refresh_token not in yahoo.refresh_tokens  # bounded: didn't wait on
+        assert "Yahoo token save still pending" in caplog.text
+        store.release.set()
+        await asyncio.sleep(0)
+        return
+    assert store.token.refresh_token in yahoo.refresh_tokens  # the rotated one, saved before
+    cold = yahoo_client(yahoo, store, app.clock)  # a new instance, on the same store
+    assert await cold.get("league/x/settings") == {"ok": 1}
+    assert yahoo.renewals == 1  # it used the rotated token as stored
 
 
 @pytest.mark.parametrize("state", ["checked", "off", "expired", "undecodable"])

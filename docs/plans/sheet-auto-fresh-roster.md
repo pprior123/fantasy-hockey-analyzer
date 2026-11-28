@@ -1,6 +1,7 @@
 # Plan: the automatic tab update reads the roster fresh before writing
 
-Status: **draft**, 2026-11-28, for quality-mgr's plan review. Priority fix. The owner needs no review of plans.
+Status: **approved**, 2026-11-28, after quality-mgr's plan review (FR-P1: ready with changes, 5 findings, all
+accepted; triage in §4). Priority fix. The owner needs no review of plans.
 
 ## The bug
 
@@ -31,7 +32,9 @@ actually fetches Yahoo). The fix keeps it, and the reply to the owner says so.
 |---|---|
 | The guard | Before the automatic path plans against the live sheet, it reads the rosters fresh from Yahoo and plans from the snapshot with `teams` replaced by them. The manual path already forces a full fresh read and is unchanged. |
 | Which Yahoo call | Only the rosters: the same request and parser the full refresh uses (`league/{league_key}/teams/roster`, `parse.parse_teams_rosters`, recorded fixture `009-...-teams-roster.json`), through a new `YahooSource.fetch_rosters(league_key) -> tuple[Team, ...]` (and the fake). That is one call, with no player pages and no stats, so it fits the automatic path's budget. A full forced refresh (as the manual confirm does) costs dozens of calls; rejected for a background write. |
-| Where | In `_run_update`, after the stored-sheet pre-check (which still decides cheaply whether to go on) and before `read_league_sheet` / `prepare_update`. The fresh snapshot is what `prepare_update` and `write_update` get. The pre-check keeps using the cached snapshot: at worst it lets a check through, and the fresh plan then finds nothing to do. |
+| Where | In `_run_update`, right after the eligibility, checked-generation and attempt checks, and **before the stored-sheet pre-check**: one fresh read per checked generation (at most one per 30-minute fetch). The fresh snapshot (`replace(cached.snapshot, teams=fresh)`) is used for everything after: the pre-check, `prepare_update`, `write_update` (so its re-plan and digest match the preview), and `mine` / `roster` for the unidentified-drop guard in `before_write`. The cached snapshot's rosters are used for nothing that decides a write. |
+| Time limit | The read has its own limit inside the send budget: 10 s (the Yahoo client's read timeout). A timeout is `roster_unreadable`. |
+| Diagnosis | `fetch_rosters` also returns the roster's date (`roster.date` from the response, when present), and the automatic-update log entry records it (or a debug log line does), so a Yahoo day-boundary question can be settled from the log if the report recurs. |
 | The roster read fails | Skip, with nothing written: a new reason `roster_unreadable`, "your Yahoo roster couldn't be checked just now". Never fall back to the cached roster. |
 | My team missing from the fresh read | Skip, as today (`problem_no_team`). |
 | A player new since the snapshot | His cap hit comes from the free-agent salaries by player ID, as today. If it's unknown, the plan refuses (the existing refusal) and nothing is written. |
@@ -55,15 +58,36 @@ actually fetches Yahoo). The fix keeps it, and the reply to the owner says so.
    snapshot has the player in `IR+`, the live tab has him in a counted row (a hand fix), and the fresh rosters have
    him on the bench. Today it writes him back to an IR row; after the fix it writes nothing ("up to date").
    Then:
-   - the reverse case (a fresh move to IR is written);
+   - the reverse case (a fresh move to IR) **is written**: the write re-plans with the fresh snapshot (a cached one
+     would end as `tab_changed`);
+   - a move off IR made after the snapshot, with the stored tab still showing him in IR (the pre-check runs on the
+     fresh roster), is written;
+   - a drop made in Yahoo after the snapshot is written (the unidentified-drop guard uses the fresh roster);
+   - another team's roster changed since the snapshot (matching uses the fresh rosters for every team);
+   - a roster read past its time limit skips with `roster_unreadable`;
+   - the roster's date reaches the log entry;
    - a failed roster read skips with `roster_unreadable` and writes nothing;
    - my team missing from the fresh read;
    - a player added since the snapshot with no known cap hit is refused;
-   - the fresh read happens only after the pre-check finds work (no Yahoo call when there's nothing to do);
+   - no fresh read for an ineligible, already checked or switched-off generation;
    - `fetch_rosters` parses the recorded `009` fixture through respx.
 
    Existing tests that assume the cached roster get a fake `fetch_rosters` returning the snapshot's teams.
 2. **Docs**: SPEC §4a, DECISIONS, this plan's status.
+
+## 4. Review
+
+### FR-P1 (quality-mgr, at `3917006`): ready with changes, 5 findings (4 Low, 1 Nit). Root cause confirmed.
+
+| # | Sev | Finding | Triage |
+|---|---|---|---|
+| 1 | Low | The unidentified-drop guard uses the cached roster, so a drop made after the snapshot is refused every time | **Accepted.** `mine` / `roster` come from the fresh snapshot; a test |
+| 2 | Low | The pre-check on the cached snapshot can also hide real work | **Accepted.** The fresh read moves before the pre-check, which runs on the fresh roster |
+| 3 | Low | The roster read needs its own time limit inside the send budget | **Accepted.** 10 s; a timeout is `roster_unreadable`; a test |
+| 4 | Low | Record the roster's date for diagnosis | **Accepted.** The date goes into the log entry or a debug line |
+| 5 | Nit | Tests: the write uses the fresh snapshot; another team's roster changed | **Accepted.** Both added |
+
+The plan is approved after this triage (team-lead, 2026-11-28).
 
 ## 3. Stop-gap until it ships
 

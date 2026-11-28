@@ -170,3 +170,21 @@ The report is posted verbatim on PR #32. Each finding was checked against the co
 | 12 | Low | Share the drop's cap-hit rule with Replace | **Accepted.** Checked: inline in `replace_view` (`teams.py:289-294`). One helper; a test that both agree |
 
 The plan is approved after this triage (team-lead, 2026-11-27). Phases 3 to 5 start after PR #31 merges.
+
+### Implementation notes, phases 1-2 (developer, approved by team-lead, 2026-11-27)
+
+The plan contradicted itself in three places; developer resolved them, and team-lead approved:
+
+1. **Ties.** §0 "Speed" said he starts "exactly when `v > c_P`", while lineup ties go to more starts. The direct
+   re-solve defines the result: thresholds carry `(value, starts)` and compare lexicographically; an exact tie on
+   both falls back to solving that day directly, so the id rule decides.
+2. **Speed.** `week_gain` called per (add, drop) would re-price the drop each time. `drop_week(days, slots, drop)
+   -> DropWeek` precomputes each day's base and thresholds; `DropWeek.gain(add, add_days)` is arithmetic; `week_gain`
+   keeps its signature as a thin wrapper. Measured: 0.205 s for 600 adds, 11 drop options, 7 full-slate days (pass
+   line 2 s).
+3. **Units.** `LineupPlayer.value` is a float, converted once (`units`, `SCALE = 10**6`); `Lineup.value`,
+   `Thresholds` and `SwapGain.gain` are integer units, so the 0.005 cut is an exact integer compare.
+4. **Solver.** Not flow or Hungarian: a greedy over the transversal matroid (players in value-then-id order, each
+   seated if an augmenting path over slot types exists, moving earlier starters along it). Exact because a player's
+   value doesn't depend on his slot; with values ≥ 0 it also gives the most starts. Negative or non-finite values
+   raise `ValueError`. The slot tie order is the `slots` mapping's order (the service passes the settings' order).

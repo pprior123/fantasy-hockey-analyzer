@@ -274,6 +274,15 @@ def positions(row: PlayerRow) -> frozenset[str]:
     return frozenset(row.eligible_positions) & POSITIONS
 
 
+def drop_cap_hit(mine: TeamInfo, drop: PlayerRow) -> CapHit | None:
+    """What dropping ``drop`` frees, for Replace and Suggest alike (one rule, so they agree)."""
+    if drop.counts is not None:
+        return CapHit(drop.aav, bool(drop.counts))
+    if mine.unmatched_counted:  # his counted row may be one no player matched (M4R9B-1)
+        return CapHit(None, True)  # so what the drop frees is unknown
+    return None  # missing from the tab: frees nothing (SPEC §5)
+
+
 def replace_view(
     view: LeagueView, drop_id: str, *, swap_ok_only: bool = False
 ) -> ReplaceView | None:
@@ -286,12 +295,7 @@ def replace_view(
     if mine is None or drop is None or drop.owner_key != mine.team_key:
         return None
     room = cap_room(view.cap, mine.payroll)
-    if drop.counts is not None:
-        hit: CapHit | None = CapHit(drop.aav, bool(drop.counts))
-    elif mine.unmatched_counted:  # his counted row may be one no player matched (M4R9B-1)
-        hit = CapHit(None, True)  # so what the drop frees is unknown
-    else:
-        hit = None  # missing from the tab: frees nothing (SPEC §5)
+    hit = drop_cap_hit(mine, drop)
     wanted = positions(drop)
     rows: list[ReplaceRow] = []
     unknown = 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -78,6 +79,13 @@ async def nights(
 ) -> tuple[Tonight, ...]:
     """Tonight's slate, and with ``count`` 2 tomorrow's too, loaded concurrently."""
     days = [night] if count < 2 else [night, tomorrow_of(night)]
+    return await slates(repo, source, clock, days)
+
+
+async def slates(
+    repo: Repository, source: ScheduleSource | None, clock: Clock, days: Sequence[date]
+) -> tuple[Tonight, ...]:
+    """Each date's slate, loaded concurrently (each through its own cache, lock and backoff)."""
     return tuple(await asyncio.gather(*(tonight(repo, source, clock, night=day) for day in days)))
 
 

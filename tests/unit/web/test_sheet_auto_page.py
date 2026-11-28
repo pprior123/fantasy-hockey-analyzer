@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 
+from fha.domain.names import normalize_name
 from fha.services.free_agents import row_key
 from fha.services.league_sheet import confirm_row
 from fha.services.refresh import CACHE, Cached, RefreshService, save_cached
@@ -434,7 +435,7 @@ def test_the_automatic_post_silently_ignores_an_undecodable_cache() -> None:
     assert sheet.writes == 0
 
 
-def test_the_automatic_post_uses_the_old_saved_roster_while_a_new_save_is_stalled() -> None:
+def test_the_automatic_post_plans_from_fresh_rosters_while_a_new_save_is_stalled() -> None:
     entered, release = Event(), Event()
 
     class StalledSave(InMemoryRepository):
@@ -449,7 +450,7 @@ def test_the_automatic_post_uses_the_old_saved_roster_while_a_new_save_is_stalle
     repo = StalledSave()
     repo.collections = cast(InMemoryRepository, svc.repo).collections
     svc.repo = repo
-    new_roster = replace(MINE, roster=MINE.roster[1:])  # B would not add FIRST
+    new_roster = replace(MINE, roster=MINE.roster[1:])  # Yahoo now: FIRST has left
     newer = replace(SNAP, teams=tuple(new_roster if t == MINE else t for t in SNAP.teams))
     yahoo = FakeYahooSource(newer)
     svc.refresh = RefreshService(yahoo, repo, svc.clock)
@@ -466,8 +467,16 @@ def test_the_automatic_post_uses_the_old_saved_roster_while_a_new_save_is_stalle
             assert response.status_code == 200
             assert "Your tab was updated" in response.text
             assert sheet.writes == 1
-            assert FIRST.last_name in unescape(response.text)
+            # The saved (stale) roster would add FIRST; the fresh one only drops Zed.
+            written = asyncio.run(sheet.fetch()).tab("Mine")
+            assert written is not None
+            names = {normalize_name(row.name) for row in written.rows}  # "Last, First" too
+            assert normalize_name("Zed Nobody") not in names
+            assert normalize_name(FIRST.name) not in names
+            assert names == {normalize_name(e.player.name) for e in new_roster.roster}
+            assert FIRST.name.split()[-1] not in unescape(response.text)  # no "Last, First" add
             assert yahoo.calls == [True]  # the one in /refresh, none in /sheet/auto-update
+            assert yahoo.roster_calls == [SNAP.settings.league_key]  # the automatic POST's
         finally:
             release.set()
         assert refreshing.result(timeout=5).status_code == 303

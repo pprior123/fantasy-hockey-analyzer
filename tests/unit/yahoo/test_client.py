@@ -277,6 +277,115 @@ async def test_a_failed_token_save_doesnt_fail_the_request_and_is_retried(
     assert fake.refreshes == 1
 
 
+class StalledSave(MemoryStore):
+    """A store whose saves wait for ``release``, then fail while ``down``."""
+
+    def __init__(self, token: Token | None = FRESH) -> None:
+        super().__init__(token)
+        self.release = asyncio.Event()
+        self.attempts = 0
+        self.down = False
+
+    async def save(self, token: Token) -> None:
+        self.attempts += 1
+        await self.release.wait()
+        if self.down:
+            raise OSError("store down")
+        await super().save(token)
+
+
+async def settle() -> None:
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+RENEWED = Token("access-2", "refresh-1", NOW + 3600)
+
+
+async def stalled_renewal(down: bool) -> tuple[YahooClient, StalledSave, FakeYahoo, list[float]]:
+    """A renewal whose save is still stalled when the caller's timeout fires (FR-2)."""
+    fake = FakeYahoo()
+    store = StalledSave(Token("access-1", "refresh-1", NOW - 1))
+    store.down = down
+    now = [NOW]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    yahoo = YahooClient(http, CREDS, store, clock=lambda: now[0])
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.05):
+            await yahoo.get("x")
+    assert (fake.refreshes, store.attempts, store.saved) == (1, 1, [])
+    return yahoo, store, fake, now
+
+
+async def test_a_timeout_during_the_token_save_lets_the_save_finish() -> None:
+    yahoo, store, fake, now = await stalled_renewal(down=False)
+    store.release.set()
+    await settle()
+    assert store.saved == [RENEWED]  # the shielded save finished after the timeout
+    now[0] += SAVE_RETRY_SECONDS
+    assert await yahoo.get("x") == {"ok": 1}
+    assert (fake.refreshes, store.attempts) == (1, 1)  # saved: no retry, no new renewal
+    assert fake.requests[-1].headers["Authorization"] == "Bearer access-2"
+
+
+async def test_a_timed_out_save_that_then_fails_is_retried() -> None:
+    yahoo, store, fake, now = await stalled_renewal(down=True)
+    store.release.set()
+    await settle()
+    assert store.saved == []
+    store.down = False
+    assert await yahoo.get("x") == {"ok": 1}  # within the retry wait: no second save
+    assert store.attempts == 1
+    now[0] += SAVE_RETRY_SECONDS
+    assert await yahoo.get("x") == {"ok": 1}
+    assert store.attempts == 2
+    assert store.saved == [RENEWED]
+    assert fake.refreshes == 1
+
+
+async def test_a_retry_waits_for_a_stalled_save_then_saves_again() -> None:
+    yahoo, store, fake, now = await stalled_renewal(down=False)
+    now[0] += SAVE_RETRY_SECONDS
+    retry = asyncio.ensure_future(yahoo.get("x"))  # waits behind the stalled save
+    await settle()
+    assert not retry.done()
+    assert store.attempts == 1  # no second save while the first may still land
+    store.release.set()
+    assert await retry == {"ok": 1}
+    assert store.attempts == 2
+    assert store.saved == [RENEWED, RENEWED]
+    assert fake.refreshes == 1
+
+
+async def test_a_later_renewal_is_saved_after_an_earlier_stalled_save() -> None:
+    yahoo, store, fake, now = await stalled_renewal(down=False)
+    now[0] += 7200  # the renewed token has expired too
+    later = asyncio.ensure_future(yahoo.get("x"))
+    await settle()
+    assert fake.refreshes == 2
+    assert store.attempts == 1  # the second save waits for the first
+    store.release.set()
+    assert await later == {"ok": 1}
+    assert [t.access_token for t in store.saved] == ["access-2", "access-3"]  # in order
+    assert store.token == store.saved[-1]  # the store ends with the newest token
+
+
+async def test_a_newer_token_cancelled_behind_an_earlier_save_is_saved_later() -> None:
+    yahoo, store, fake, now = await stalled_renewal(down=False)
+    now[0] += 7200  # the renewed token has expired too
+    with pytest.raises(TimeoutError):  # cancelled while waiting for the first save
+        async with asyncio.timeout(0.05):
+            await yahoo.get("x")
+    assert fake.refreshes == 2
+    store.release.set()
+    await settle()
+    assert [t.access_token for t in store.saved] == ["access-2"]  # the older one landed
+    now[0] += SAVE_RETRY_SECONDS
+    assert await yahoo.get("x") == {"ok": 1}
+    assert [t.access_token for t in store.saved] == ["access-2", "access-3"]  # then the newer
+    assert fake.refreshes == 2
+
+
 async def test_a_failed_token_save_logs_the_store_error_s_safe_detail(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

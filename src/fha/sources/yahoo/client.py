@@ -77,6 +77,7 @@ class YahooClient:
         # A renewal Yahoo refused: (its refresh token, when, the error).
         self._refused: tuple[str, float, YahooAuthError] | None = None
         self._unsaved_at: float | None = None  # when saving ``_token`` last failed
+        self._saving: asyncio.Task[None] | None = None  # the latest save, maybe still running
 
     async def get(self, path: str) -> JsonObject:
         """GET ``API_BASE + path`` and return its ``fantasy_content``.
@@ -154,7 +155,20 @@ class YahooClient:
         """Save a renewed token. A failure is logged (its type, or a RepositoryError's
         ``summary``) and retried on a later request (``SAVE_RETRY_SECONDS``), never
         raised: the token in memory works, and failing the fetch would only cost a
-        stale page (M4R13A-1/A-2)."""
+        stale page (M4R13A-1/A-2).
+
+        Cancellation-safe (FR-2): the token counts as unsaved until a save succeeds, and
+        the save runs shielded, so a caller's timeout can't stop it half-way. Saves run
+        in order: a new one waits for any earlier save still running, so an older token
+        never lands last."""
+        self._unsaved_at = self._clock()
+        earlier = self._saving
+        if earlier is not None and not earlier.done():
+            await asyncio.shield(earlier)
+        self._saving = asyncio.ensure_future(self._persist(token))
+        await asyncio.shield(self._saving)
+
+    async def _persist(self, token: Token) -> None:
         try:
             await self._store.save(token)
         except Exception as error:  # the store's errors (RepositoryError, OSError)
@@ -162,9 +176,10 @@ class YahooClient:
             summary = getattr(error, "summary", None)
             why = summary if isinstance(summary, str) else type(error).__name__
             log.warning("Yahoo token not saved (%s); retrying later", why)
-            self._unsaved_at = self._clock()
+            self._unsaved_at = self._clock()  # the retry wait runs from the failure
         else:
-            self._unsaved_at = None
+            if self._token is token:  # a newer token's save follows this one: leave its mark
+                self._unsaved_at = None
 
 
 def _content(response: httpx.Response, path: str) -> JsonObject:

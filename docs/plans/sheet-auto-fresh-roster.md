@@ -32,7 +32,7 @@ actually fetches Yahoo). The fix keeps it, and the reply to the owner says so.
 |---|---|
 | The guard | Before the automatic path plans against the live sheet, it reads the rosters fresh from Yahoo and plans from the snapshot with `teams` replaced by them. The manual path already forces a full fresh read and is unchanged. |
 | Which Yahoo call | Only the rosters: the same request and parser the full refresh uses (`league/{league_key}/teams/roster`, `parse.parse_teams_rosters`, recorded fixture `009-...-teams-roster.json`), through a new `YahooSource.fetch_rosters(league_key) -> tuple[Team, ...]` (and the fake). That is one call, with no player pages and no stats, so it fits the automatic path's budget. A full forced refresh (as the manual confirm does) costs dozens of calls; rejected for a background write. |
-| Where | In `_run_update`, right after the eligibility, checked-generation and attempt checks, and **before the stored-sheet pre-check**: one fresh read per checked generation (at most one per 30-minute fetch). The fresh snapshot (`replace(cached.snapshot, teams=fresh)`) is used for everything after: the pre-check, `prepare_update`, `write_update` (so its re-plan and digest match the preview), and `mine` / `roster` for the unidentified-drop guard in `before_write`. The cached snapshot's rosters are used for nothing that decides a write. |
+| Where | In `_run_update`, right after the eligibility, checked-generation and attempt checks, and **before the stored-sheet pre-check**: one fresh read per checked generation (at most one per 30-minute fetch), best-effort: two overlapping page loads can both pass `checked_generation` before `mark_checked` and each read the rosters (FR-R1 #4; accepted for a single-user app, no code change). The fresh snapshot (`replace(cached.snapshot, teams=fresh)`) is used for everything after: the pre-check, `prepare_update`, `write_update` (so its re-plan and digest match the preview), and `mine` / `roster` for the unidentified-drop guard in `before_write`. The cached snapshot's rosters are used for nothing that decides a write. |
 | Time limit | The read has its own limit inside the send budget: 10 s (the Yahoo client's read timeout). A timeout is `roster_unreadable`. |
 | Diagnosis | `fetch_rosters` also returns the roster's date (`roster.date` from the response, when present), and the automatic-update log entry records it (or a debug log line does), so a Yahoo day-boundary question can be settled from the log if the report recurs. |
 | The roster read fails | Skip, with nothing written: a new reason `roster_unreadable`, "your Yahoo roster couldn't be checked just now". Never fall back to the cached roster. |
@@ -43,8 +43,9 @@ actually fetches Yahoo). The fix keeps it, and the reply to the owner says so.
 
 ## 1. Alternatives
 
-- **A. Read the rosters fresh before writing (chosen).** It closes the window to seconds whatever left the
-  generation unchecked, at the cost of one Yahoo call, and only when the pre-check finds work.
+- **A. Read the rosters fresh before writing (chosen).** It narrows the window to the length of one check (at most
+  the 35 s send budget), whatever left the generation unchecked, at the cost of one Yahoo call per check. Not to
+  zero: a move or hand fix made while a check is running can still be reverted (FR-R1 #3).
 - **B. Only write within N seconds of the fetch.** Rejected: a fetch made by a fragment still leaves a window, and
   N is arbitrary.
 - **C. Skip when the tab changed after the snapshot.** Rejected: Sheets has no per-tab modified time, and other
@@ -113,4 +114,17 @@ Differences from the plan, each with its test (`tests/unit/services/test_sheet_a
 - The test fixture's IR slot is `IR`, not `IR+`; both are IR slots (`IR_SLOTS`). The move-to-IR test uses `IR+`.
 - Any exception from the roster read (and the 10 s timeout) is `roster_unreadable`; the log keeps only the error's
   type name.
+
+### FR-2: fixes after the Codex review (FR-R1, at `1ebe031`; 5 findings, all accepted)
+
+- #1: the web test for a stalled full-refresh save now asserts the fresh roster wins: the written tab drops Zed and
+  doesn't add the departed player, and the automatic POST made one roster read
+  (`test_the_automatic_post_plans_from_fresh_rosters_while_a_new_save_is_stalled`). The old assertion passed by
+  accident: the demo players have an empty `last_name`.
+- #2: `YahooClient._save` is cancellation-safe. The roster read's timeout can cancel inside a token renewal, so
+  the token is marked unsaved before the save and cleared only on success. The save runs shielded and finishes
+  after a caller's timeout. A later save waits for an earlier one still running, so an older token never lands
+  last (`tests/unit/yahoo/test_client.py`, the five stalled-store tests).
+- #3, #4: the window and the best-effort single read are stated here and in SPEC §4a.
+- #5: the replay test loads its reference snapshot in a synchronous fixture; it passes alone.
 

@@ -275,8 +275,12 @@ exact saved generation from storage. Before anything else touches the sheet,
 it reads every team's roster afresh from Yahoo (one `teams/roster` call,
 `YahooSource.fetch_rosters`, 10-second limit) and plans, pre-checks, guards
 drops and writes from the saved generation with those rosters, never the
-cached ones: a move or a hand fix to the tab made since the fetch is not
-written back. That read leaves the cache as it is. A failed or slow read
+cached ones, so a move or a hand fix to the tab made between the fetch and
+the check is not written back. The window narrows to the check itself (at
+most the 35-second send budget), not to zero: a move or hand fix made while a
+check is running can still be reverted, and the next fetch's check corrects
+it. Overlapping page loads may each read the rosters for the same generation
+(the checked mark is not atomic). That read leaves the cache as it is. A failed or slow read
 skips the update ("your Yahoo roster couldn't be checked just now"), with no
 fallback to the cached roster; the log entry records the roster's Yahoo date.
 A Yahoo move still reaches the tab only at the app's next fetch (Refresh, or

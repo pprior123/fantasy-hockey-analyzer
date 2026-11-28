@@ -1150,7 +1150,7 @@ def test_a_goalie_in_an_ir_slot_is_marked_and_no_goalies_spans_the_table() -> No
         for t in SNAP.teams
     )
     empty = client(services_for(replace(SNAP, teams=no_goalies))).get("/rosters").text
-    assert '<td colspan="8" class="muted">No goalies.</td>' in empty
+    assert '<td colspan="9" class="muted">No goalies.</td>' in empty  # with Gm
 
 
 def test_an_ir_row_in_review_leaves_a_missing_drop_freeing_nothing() -> None:
@@ -1642,7 +1642,7 @@ def test_the_replace_back_link_and_the_team_picker_keep_the_view() -> None:
     assert '<input type="hidden" name="season" value="last">' in picker
 
 
-@pytest.mark.parametrize(("view", "columns"), [("", 9), ("&view=cats", 14)])
+@pytest.mark.parametrize(("view", "columns"), [("", 10), ("&view=cats", 15)])  # with Gm
 def test_empty_roster_and_replace_tables_span_their_columns(view: str, columns: int) -> None:
     empty = replace(
         SNAP,

@@ -96,7 +96,7 @@ def test_schedule_toggle_combines_with_each_owner_chip() -> None:
         assert names_in(filtered, "players") == expected
         assert f"{len(expected)} players" in filtered
     assert "tonight" not in params(player_link(page, "Tonight"))
-    assert c.get("/players?tonight=2").status_code == 400
+    assert c.get("/players?tonight=3").status_code == 400
     assert source.calls == [DAY]
 
 
@@ -456,3 +456,23 @@ def test_demo_games_follow_the_date_without_using_http(monkeypatch: pytest.Monke
             clock.t += 24 * 3600
     finally:
         asyncio.run(http.aclose())
+
+
+@pytest.mark.parametrize(
+    ("games", "query", "expected"),
+    [
+        ((GAME,), "owner=all&sort=name", "9f5bd85bf3e8"),
+        (GAMES, "owner=all&sort=name", "a942b96a5cd0"),
+        (GAMES, "owner=all&sort=name&tonight=1", "a942b96a5cd0"),
+    ],
+    ids=["one-game", "full-slate", "full-slate-tonight"],
+)
+def test_one_day_slate_fingerprint_is_pinned(
+    games: tuple[Game, ...], query: str, expected: str
+) -> None:
+    """Computed on main before the two-day option: the one-day fingerprint must not drift."""
+    svc = make_services(FakeClock(NOW))
+    svc.schedule_source = Source(games)
+    links = show_more(client(svc).get(f"/players?{query}").text)
+    assert links is not None
+    assert params(links[1])["slate"] == expected

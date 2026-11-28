@@ -22,7 +22,8 @@
 </nav>
 
 <nav class="chips schedule-filter" aria-label="Schedule">
-  <a class="chip{{ ' on' if tonight_active else '' }}" href="{{ url('/players', params, tonight=none if query.tonight else '1') }}">Tonight</a>
+  <a class="chip{{ ' on' if schedule_on and query.nights == 1 else '' }}" href="{{ url('/players', params, tonight=none if query.nights == 1 else '1') }}">Tonight</a>
+  <a class="chip{{ ' on' if schedule_on and query.nights == 2 else '' }}" href="{{ url('/players', params, tonight=none if query.nights == 2 else '2') }}">Tonight + tomorrow</a>
 </nav>
 
 <form method="get" action="/players" class="toolbar filters">
@@ -54,11 +55,11 @@
 </th>
 {%- endmacro %}
 
-{{ m.schedule_note(slate) }}
+{{ m.schedule_note(schedule_notes) }}
 <div class="table-wrap">
 <table class="data players">
   <thead><tr>
-    {% for key, label in columns %}{{ header(key, label) }}{% endfor %}
+    {% for key, label in columns %}{{ header(key, label) }}{% if key == 'team' and show_games %}{{ m.game_count_header() }}{% endif %}{% endfor %}
     {% if mode == 'money' %}{% for key, label in money_columns %}{{ header(key, label) }}{% endfor %}
     {% else %}{% for cat in categories %}{{ header(cat.value, cat.value) }}{% endfor %}{% endif %}
   </tr></thead>

@@ -60,7 +60,12 @@ are listed in §10 for context only.
   read-only. See §4a "Writing" and DECISIONS, "Automatic league sheet updates".
 - **Tonight's NHL games** appear beside players on Players and Rosters.
   The Players **Tonight** chip filters to teams with a game today in Eastern
-  time. Ratings and roster recommendations are outside this feature's scope.
+  time, and **Tonight + tomorrow** to teams with a game today or the next
+  Eastern date. With either option, a **Gm** column counts each team's games
+  in those days. The owner asked for Gm on 2026-11-27, so it comes ahead of the
+  Phase 2 "games-this-week counts" candidate (§10). Ratings and roster
+  recommendations are outside this feature's scope (DECISIONS, "Tonight +
+  tomorrow").
 
 ## 2. Architecture
 
@@ -599,6 +604,14 @@ A season label and toggle per §5.
    scheduled time in ET when available. Show more carries the date and asks for
    a reload if Eastern midnight passed. If the schedule is unavailable, the
    page shows the normal list for its other filters and leaves Tonight unlit.
+   **Tonight + tomorrow** (`tonight=2`) is a second chip, exclusive with
+   Tonight. It keeps players whose teams play on either day. It filters only
+   when both days' schedules are available; otherwise the page shows the
+   normal list and a note names the missing day. With this option on,
+   tomorrow's marks follow tonight's, each prefixed with the weekday
+   (`Sat vs NYR 1:00p`). With either chip's parameter set, a **Gm** column
+   after Team counts the team's games in the chosen days (0–2). It is not
+   sortable, and it shows a dash when a needed day is unavailable.
 2. **Rosters** — team picker (default: the owner's team). The team's players
    with the same metrics, plus the team profile (§5: mean norm per category
    with standard deviation, and mean TTLTST), payroll, cap room (over-cap in
@@ -610,7 +623,13 @@ A season label and toggle per §5.
    Skaters and goalies have the same opponent and time marks as Players. The
    Tonight count covers players outside IR slots whose NHL teams have a game,
    including goalies and injured players in other slots. An unavailable
-   schedule hides the count.
+   schedule hides the count. Two chips, **Tonight** (the default) and
+   **Tonight + tomorrow** (`tonight=2`), choose the days; they don't filter.
+   With the second chip on, tomorrow's marks show too, and the line reads
+   "Tonight + tomorrow: N games for M of K players". It is hidden when either
+   day is unavailable. A **Gm** column (after Slot for skaters, after Team for
+   goalies, where it counts team games, not starts) counts each team's games
+   in the chosen days, with a dash when a needed day is unavailable.
    - **Replace** (owner's team): tap a player to see free agents eligible at
      any of that player's positions, ranked by TTLTST, each with ΔTTLTST,
      cap room after the swap (`room_after`), and per-category deltas. Toggle:
@@ -823,7 +842,7 @@ access (DECISIONS, "Yahoo API access: pending approval").
 - **Phase 2:** to be planned from the owner's use of the running Phase 1 app.
   Candidates so far: waiver recommendations (drop suggestions), trade
   evaluator, tonight's-games lineup helper and games-this-week counts (NHL
-  schedule API), weekly acquisition counter, goalie-appearance tracker (the
+  schedule API; a two-day games count, Gm, was brought forward in §1), weekly acquisition counter, goalie-appearance tracker (the
   league requires 3 per week). (Exporting the owner's roster to the league
   sheet was brought forward as "Updating the owner's own tab", §1.)
 - **Phase 3:** history snapshots, schedule/rest-of-season weighting, goalie

@@ -21,11 +21,11 @@ from fha.services.players_table import (
     select,
     zero_gp_hidden,
 )
-from fha.services.schedule import eastern_date, team_code, tonight
+from fha.services.schedule import Tonight, eastern_date, nights
 from fha.web.app import render, services
 from fha.web.auth import safe_next
 from fha.web.data import page_data, season_param, view_param
-from fha.web.format import game_label, url
+from fha.web.format import day_labels, game_count, game_label, schedule_notes, url
 
 router = APIRouter()
 
@@ -63,7 +63,7 @@ def bad_request(request: Request, message: str, back: str, active: str) -> HTMLR
 
 
 def _reload_list(
-    request: Request, params: dict[str, str], colspan: int, *, new_night: bool
+    request: Request, params: dict[str, str], colspan: int, *, new_night: bool, two_days: bool
 ) -> HTMLResponse:
     return render(
         request,
@@ -71,7 +71,28 @@ def _reload_list(
         colspan=colspan,
         reload_url=url("/players", params),
         new_night=new_night,
+        two_days=two_days,
     )
+
+
+def _labels_hash(labels: object) -> str:
+    return sha256(json.dumps(labels, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def slate_fingerprint(slates: tuple[Tonight, ...]) -> str:
+    """What "Show more" checks, so it never appends rows from a different slate.
+    One day: as before the two-day option (pinned in the tests); two: both days'
+    labels, each ``off`` when unavailable."""
+
+    def labels(slate: Tonight) -> dict[str, str | None] | str:
+        if slate.state == "unavailable":
+            return "off"
+        return {code: game_label(mark(code, game)) for code, game in slate.games.items()}
+
+    if len(slates) == 1:
+        one = labels(slates[0])
+        return one if isinstance(one, str) else _labels_hash(one)
+    return _labels_hash([labels(slate) for slate in slates])
 
 
 @router.get("/players", response_class=HTMLResponse)
@@ -102,23 +123,31 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
     if query.team_key is not None and view.team(query.team_key) is None:
         return bad_request(request, "That team isn't in the league.", "/players", "players")
     categories = view.config.categories
-    colspan = len(COLUMNS) + (len(MONEY_COLUMNS) if mode == "money" else len(categories))
+    show_games = query.nights > 0  # the Gm column follows the query, not the slate
+    colspan = (
+        len(COLUMNS)
+        + (len(MONEY_COLUMNS) if mode == "money" else len(categories))
+        + (1 if show_games else 0)
+    )
+    two_days = query.nights == 2
     svc = services(request)
     page_night = params.pop("night", None)
     page_slate = params.pop("slate", None)
     day = eastern_date(svc.clock)
     if partial and page_night is not None and page_night != day.isoformat():
-        return _reload_list(request, params, colspan, new_night=True)
-    slate = await tonight(svc.repo, svc.schedule_source, svc.clock, night=day)
-    playing = None if slate.state == "unavailable" else slate.games
-    team_labels = {code: game_label(mark(code, game)) for code, game in slate.games.items()}
-    fingerprint = (
-        "off"
-        if playing is None
-        else sha256(json.dumps(team_labels, sort_keys=True).encode()).hexdigest()[:12]
+        return _reload_list(request, params, colspan, new_night=True, two_days=two_days)
+    slates = await nights(
+        svc.repo, svc.schedule_source, svc.clock, count=2 if two_days else 1, night=day
     )
+    # The filter needs every chosen day: an outage never narrows the list.
+    playing = (
+        None
+        if any(s.state == "unavailable" for s in slates)
+        else {code for s in slates for code in s.games}
+    )
+    fingerprint = slate_fingerprint(slates)
     if partial and page_slate is not None and page_slate != fingerprint:
-        return _reload_list(request, params, colspan, new_night=False)
+        return _reload_list(request, params, colspan, new_night=False, two_days=two_days)
     rows = select(view, query, totals=mode == "totals", playing=playing)
     end = query.start + PAGE_SIZE
     shown = rows[query.start if partial else 0 : end]
@@ -136,8 +165,10 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         "categories": categories,
         "colspan": colspan,
         "team_names": {t.team_key: t.name for t in view.teams},
-        "game_labels": {r.player_id: team_labels.get(team_code(r.nhl_team)) for r in shown},
-        "paging_night": slate.date.isoformat() if svc.schedule_source is not None else None,
+        "game_labels": {r.player_id: day_labels(slates, r.nhl_team) for r in shown},
+        "show_games": show_games,
+        "game_counts": {r.player_id: game_count(slates, r.nhl_team) for r in shown},
+        "paging_night": day.isoformat() if svc.schedule_source is not None else None,
         "paging_slate": fingerprint if svc.schedule_source is not None else None,
     }
     if partial:
@@ -152,8 +183,8 @@ async def _players(request: Request, *, partial: bool) -> HTMLResponse:
         data=data,
         total=len(rows),
         zero_gp_hidden=zero_gp_hidden(view, query, playing=playing),
-        slate=slate,
-        tonight_active=query.tonight and playing is not None,
+        schedule_notes=schedule_notes(slates),
+        schedule_on=playing is not None,
         query=query,
         sort=query.sort.value,
         columns=COLUMNS,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
@@ -66,6 +66,19 @@ async def tonight(
     except RepositoryError as error:
         log.warning("NHL schedule cache unavailable (%s)", type(error).__name__)
         return Tonight(day, {}, "unavailable")
+
+
+def tomorrow_of(day: date) -> date:
+    """The next Eastern calendar date (a day, not 24 h, so DST changes don't matter)."""
+    return day + timedelta(days=1)
+
+
+async def nights(
+    repo: Repository, source: ScheduleSource | None, clock: Clock, *, count: int, night: date
+) -> tuple[Tonight, ...]:
+    """Tonight's slate, and with ``count`` 2 tomorrow's too, loaded concurrently."""
+    days = [night] if count < 2 else [night, tomorrow_of(night)]
+    return tuple(await asyncio.gather(*(tonight(repo, source, clock, night=day) for day in days)))
 
 
 async def _cached_or_fresh(

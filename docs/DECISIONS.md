@@ -2798,3 +2798,46 @@ reload at Eastern midnight.
 A committed season schedule would age when games move. A browser-side NHL
 request would depend on cross-origin access and move data fetching out of
 the server-rendered app.
+
+## 2026-11-27 — Tonight + tomorrow
+
+**What.** Players and Rosters get a second schedule option, **Tonight +
+tomorrow**, beside Tonight, and a **Gm** column with each team's games in the
+chosen days. "Tomorrow" is tonight's Eastern date plus one calendar day.
+The owner asked for the option and the count. Plan and review in
+`docs/plans/tonight-tomorrow.md` (PR #31).
+
+**Parameter.** The existing `tonight` parameter takes `2`. On Players, any
+value other than absent, `1` or `2` is a 400. Every link and form that
+carried `tonight` carries the new value, so nothing new is threaded. On
+Rosters, as with its other parameters, anything but `2` means Tonight.
+
+**Mixed states.** The Players filter applies only when both days' schedules
+are available, fresh or stale. Otherwise the page shows the normal list, the
+chip stays unlit and a note names the missing day. An outage never narrows the
+list, and filtering on one day would hide players who play only on the missing
+day. An off day counts as available.
+
+**Gm.** Gm counts a team's regular-season and playoff games in the chosen
+days: 0–1 for Tonight, 0–2 for Tonight + tomorrow. For goalies it counts team
+games, not starts. If a needed day is unavailable, every Gm cell shows a dash,
+never a partial count. Players shows Gm whenever `tonight` is set; the header
+is plain text, not a sort link. Rosters always shows Gm. Matchup's goalie
+tables don't. Gm comes ahead of the Phase 2 "games-this-week counts"
+candidate (SPEC §10), because the owner asked for it.
+
+**Rosters.** Rosters gets the two chips, Tonight by default. They choose the
+days for the marks, the count and Gm, and don't filter: a roster is short.
+
+**Cost.** Tomorrow's slate is a second call through the same cache, lock and
+failure backoff. It runs only with `tonight=2`, concurrently with tonight's,
+so a cold cache still fits one three-second budget. The Show more fingerprint
+covers both days when the option is on. With the option off it is computed
+as before, and a test pins it to the earlier value.
+
+**Alternatives.** A separate `tomorrow=1` parameter would need to stay
+exclusive with `tonight` and be threaded through every link again. Reading
+tomorrow from the same NHL response (its game week) would change the source
+seam and the cache document; the weekly suggester's plan decides that.
+Always showing tomorrow's marks would double the marks on every page for a
+question the owner asks only sometimes.

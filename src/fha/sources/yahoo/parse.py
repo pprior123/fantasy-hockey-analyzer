@@ -103,6 +103,17 @@ def _as_int(value: Any, what: str) -> int:
         raise YahooParseError(f"{what}: expected an integer, got {value!r}") from None
 
 
+def _count(value: Any) -> int | None:
+    """An optional whole number >= 0 ("5" or 5), else None: for fields the app can do without."""
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        return None
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+    return number if number >= 0 else None
+
+
 def _as_str(value: Any, what: str) -> str:
     if isinstance(value, bool) or not isinstance(value, str | int):
         raise YahooParseError(f"{what}: expected a string, got {value!r}")
@@ -213,6 +224,7 @@ def parse_league_settings(content: dict[str, Any]) -> LeagueSettings:
             _get(settings, "stat_categories", "settings"), "settings.stat_categories"
         ),
         roster_slots=tuple(slots),
+        max_weekly_adds=_count(settings.get("max_weekly_adds")),
     )
 
 
@@ -289,6 +301,16 @@ def _team_meta(raw: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     return merged, merged
 
 
+def _roster_adds(meta: dict[str, Any]) -> tuple[int, int] | None:
+    """``roster_adds``: the adds used in a coverage week, as (week, adds); None otherwise."""
+    raw = meta.get("roster_adds")
+    if not isinstance(raw, dict) or raw.get("coverage_type") != "week":
+        return None
+    week = _count(raw.get("coverage_value"))
+    adds = _count(raw.get("value"))
+    return None if week is None or adds is None else (week, adds)
+
+
 def parse_teams_rosters(content: dict[str, Any]) -> tuple[Team, ...]:
     """``league/{key}/teams/roster``: every team with today's roster and slots."""
     league = _league(content)
@@ -316,6 +338,7 @@ def parse_teams_rosters(content: dict[str, Any]) -> tuple[Team, ...]:
                 name=_as_str(_get(meta, "name", f"team {team_key}"), "team name"),
                 is_mine=_flag(meta.get("is_owned_by_current_login", "0")),
                 roster=tuple(entries),
+                roster_adds=_roster_adds(meta),
             )
         )
     return tuple(teams)

@@ -17,22 +17,41 @@
   <a class="chip {{ '' if swap_only else 'on' }}" href="{{ url('/rosters/replace', params, swap_ok=None) }}">All eligible</a>
   <a class="chip {{ 'on' if swap_only else '' }}" href="{{ url('/rosters/replace', params, swap_ok='1') }}">Only swaps that fit the cap</a>
 </nav>
+{% if can_plan %}
+<nav class="chips week-toggle" aria-label="Week">
+  <a class="chip {{ '' if week else 'on' }}" href="{{ url('/rosters/replace', params, week=None) }}">Any time</a>
+  <a class="chip {{ 'on' if week == 'this' else '' }}" href="{{ url('/rosters/replace', params, week='this') }}">This week</a>
+  {% if data.view.snapshot.next_scoreboard is not none %}<a class="chip {{ 'on' if week == 'next' else '' }}" href="{{ url('/rosters/replace', params, week='next') }}">Next week</a>{% endif %}
+</nav>
+{% endif %}
+{% if week %}{% set h = week_plan.horizon %}
+{% if not h.known %}<p class="muted week-note">That week's dates aren't known yet, so Week + can't be worked out.</p>
+{% elif not h.days %}<p class="muted week-note">No days left this week, so Week + can't be worked out.</p>
+{% elif week_plan.missing %}<p class="warn week-note">The NHL schedule for {% for d in week_plan.missing %}{{ d|day_name }}{{ ', ' if not loop.last else '' }}{% endfor %} is unavailable, so Week + can't be worked out (never from part of the week). The app tries again in a few minutes.</p>
+{% else %}<p class="muted week-note">Week + over {{ h.days|days_span }}: TTLTST × the starts each would get in your best daily lineup, minus what dropping {{ drop.name }} loses.</p>
+{% for s in week_plan.stale %}<p class="muted">Schedule for {{ s.date|day_name }} from {{ s.age|ago }}.</p>{% endfor %}
+{% endif %}
+{% endif %}
 {% if swap_only and swap.excluded_unknown %}<p class="muted excluded">{{ swap.excluded_unknown }} left out: a cap hit or the room isn't known.</p>{% endif %}
 {{ m.rates_note() }}
 {{ m.view_toggle("/rosters/replace", params, mode) }}
 
 <div class="table-wrap">
 <table class="data replace">
-  <thead><tr><th class="first">Free agent</th><th>Pos</th><th class="num">TTLTST</th><th class="num">ΔTTLTST</th>
+  <thead><tr><th class="first">Free agent</th><th>Pos</th><th class="num">TTLTST</th><th class="num">ΔTTLTST</th>{% if week %}<th class="num">Week +</th><th class="num">Starts</th>{% endif %}
     {% if mode == 'money' %}<th class="num">AAV</th><th class="num">Room after</th>{% else %}{% for cat in categories %}<th class="num">Δ{{ cat.value }}</th>{% endfor %}{% endif %}</tr></thead>
   <tbody>
-  {% for row in swap.rows %}
+  {% for row in rows %}
   {% set fa = row.player %}
   <tr>
     <td class="first">{{ fa.name }}{% if fa.status %} <span class="badge">{{ fa.status }}</span>{% endif %}</td>
     <td>{{ fa.position }}</td>
     <td class="num">{{ fa.ttltst|number(3) }}</td>
     <td class="num {{ 'good' if row.delta_ttltst and row.delta_ttltst > 0 else '' }}">{{ row.delta_ttltst|signed(3) }}</td>
+    {% if week %}{% set g = gains.get(fa.player_id) %}
+    <td class="num {{ 'good' if g and g.gain > 0 else '' }}">{{ g.gain|week_plus if g else DASH }}</td>
+    <td class="num">{% if g %}{{ g.starts }} of {{ game_totals.get(fa.player_id, 0) }}{% else %}{{ DASH }}{% endif %}</td>
+    {% endif %}
     {% if mode == 'money' %}
     <td class="num">{{ fa.aav|money }}</td>
     <td class="num {{ 'over' if row.swap_ok == false else '' }}">{{ row.room_after|money }}</td>
@@ -41,7 +60,7 @@
     {% endif %}
   </tr>
   {% else %}
-  <tr><td colspan="{{ 4 + (2 if mode == 'money' else categories|length) }}" class="muted">No free agents at {{ drop.position }}{% if swap_only %} fit the cap{% endif %}.</td></tr>
+  <tr><td colspan="{{ 4 + (2 if week else 0) + (2 if mode == 'money' else categories|length) }}" class="muted">{% if priced %}No free agent can play that week{% else %}No free agents at {{ drop.position }}{% endif %}{% if swap_only %} fit the cap{% endif %}.</td></tr>
   {% endfor %}
   </tbody>
 </table>

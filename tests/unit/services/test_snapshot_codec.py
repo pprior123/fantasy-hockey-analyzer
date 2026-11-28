@@ -18,6 +18,24 @@ async def test_a_full_snapshot_round_trips_exactly() -> None:
     assert decode(copy.deepcopy(meta), copy.deepcopy(lists)) == snap
 
 
+async def test_the_add_limit_and_team_adds_round_trip() -> None:
+    snap = await synthetic_snapshot()
+    assert snap.settings.max_weekly_adds == 5
+    assert [t.roster_adds for t in snap.teams] == [(1, 2), None]
+    meta, lists = encode(snap)
+    assert decode(copy.deepcopy(meta), copy.deepcopy(lists)) == snap
+
+
+async def test_a_snapshot_cached_before_the_add_fields_still_decodes() -> None:
+    meta, lists = encode(await synthetic_snapshot())
+    del meta["settings"]["max_weekly_adds"]
+    for team in meta["teams"]:
+        del team["roster_adds"]
+    back = decode(meta, lists)
+    assert back.settings.max_weekly_adds is None
+    assert {t.roster_adds for t in back.teams} == {None}
+
+
 async def test_without_last_season_or_a_next_week() -> None:
     snap = await synthetic_snapshot(last_season=False, current_week=25)
     assert snap.next_scoreboard is None
@@ -53,6 +71,9 @@ async def test_an_older_format_is_refused() -> None:
         (lambda m, ls: m["teams"][0].update(roster=None), "TypeError"),
         (lambda m, ls: m.update(has_last_season=1), "expected a boolean, got int"),
         (lambda m, ls: m.update(surprise=1), r"cache meta keys \['surprise'\] unexpected"),
+        (lambda m, ls: m["settings"].update(max_weekly_adds="5"), "expected an integer, got str"),
+        (lambda m, ls: m["teams"][0].update(roster_adds=[1]), "roster_adds"),
+        (lambda m, ls: m["teams"][0].update(roster_adds=[1, True]), "expected an integer"),
     ],
 )
 async def test_damaged_caches_are_refused(damage: Any, message: str) -> None:

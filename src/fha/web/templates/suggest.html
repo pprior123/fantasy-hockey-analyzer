@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+{{ m.notes(data) }}
+{% set h = plan.horizon %}
+{% set season = params.get('season', '') %}
+<div class="toolbar">
+  {{ m.season_toggle(data, "/rosters/suggest", params) }}
+  {{ m.refresh_button(here) }}
+</div>
+<p><a href="{{ url('/rosters', {'season': season}) }}">Back to my roster</a></p>
+{% if h.has_next %}
+<nav class="chips week-toggle" aria-label="Week">
+  <a class="chip {{ 'on' if week == 'this' else '' }}" href="{{ url('/rosters/suggest', params, week=None) }}">This week</a>
+  <a class="chip {{ 'on' if week == 'next' else '' }}" href="{{ url('/rosters/suggest', params, week='next') }}">Next week</a>
+</nav>
+{% endif %}
+<p class="muted">Week + is TTLTST × the starts an add would get in your best daily lineup, minus whom he benches and what the drop loses. Not a projection: a player plays when his NHL team has a game and he isn't out.</p>
+
+{% if not h.known %}
+<p>{{ 'This' if week == 'this' else 'Next' }} week's dates aren't known yet, so there is nothing to plan.</p>
+{% elif not h.days %}
+<p>No days left this week.{% if h.has_next %} <a href="{{ url('/rosters/suggest', params, week='next') }}">Plan next week</a>.{% endif %}</p>
+{% else %}
+<p class="horizon">{{ 'This week' if week == 'this' else 'Next week' }}: {{ h.days|days_span }}{% if week == 'this' %} (today is left out: its lineup is set){% endif %}</p>
+<p class="adds-left">{% if week == 'this' %}Adds left: {% if h.adds_left is none %}unknown{% else %}{{ h.adds_left }} of {{ h.max_adds }}{% endif %}{% else %}Adds next week: {{ 'unknown' if h.adds_left is none else h.adds_left }}{% endif %}</p>
+{% for s in plan.stale %}<p class="muted">Schedule for {{ s.date|day_name }} from {{ s.age|ago }}.</p>
+{% endfor %}
+{% if plan.missing %}
+<p class="warn missing-days">The NHL schedule for {% for d in plan.missing %}{{ d|day_name }}{{ ', ' if not loop.last else '' }}{% endfor %} is unavailable, so there are no suggestions (never a value from part of the week). The app tries again in a few minutes.</p>
+{% elif plan.ranking %}
+<h2>Gaps</h2>
+<p class="muted">Starting slots your best lineup leaves empty each day.</p>
+<div class="table-wrap">
+<table class="data gaps">
+  <thead><tr><th class="first">Day</th><th>Empty slots</th></tr></thead>
+  <tbody>
+  {% for g in plan.ranking.gaps %}<tr><td class="first">{{ g.day|day_name }}</td><td>{{ g.empty|gap_text }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>Top adds</h2>
+{% if h.adds_left == 0 %}
+<p class="no-adds">No adds left this week{% if h.has_next %}: <a href="{{ url('/rosters/suggest', params, week='next') }}">next week</a> resets the limit{% endif %}.</p>
+{% else %}
+<p class="muted">Available players may be on waivers; Yahoo says so when you add one. Each add is shown with his best drop{% if plan.ranking.open_spot %} (you have an open spot, so some need no drop){% endif %}.</p>
+<div class="table-wrap">
+<table class="data suggest">
+  <thead><tr><th class="first">Add</th><th>Pos</th><th>Team</th><th class="num">TTLTST</th><th>Drop</th><th class="num">Week +</th><th class="num">Starts</th><th>Fills</th><th></th></tr></thead>
+  <tbody>
+  {% for s in plan.ranking.rows %}
+  <tr>
+    <td class="first">{{ s.add.name }}{% if s.add.status %} <span class="badge">{{ s.add.status }}</span>{% endif %}{% if s.cap_ok is none %} <span class="badge">cap unknown</span>{% endif %}</td>
+    <td>{{ s.add.position }}</td>
+    <td>{{ s.add.nhl_team or DASH }}</td>
+    <td class="num">{{ s.add.ttltst|number(3) }}</td>
+    <td>{% if s.drop %}{{ s.drop.name }}{% if s.drop.status %} <span class="badge">{{ s.drop.status }}</span>{% endif %} <span class="muted">{{ s.drop.ttltst|number(3) }}</span>{% else %}<span class="muted">open spot</span>{% endif %}</td>
+    <td class="num good">{{ s.gain|week_plus }}</td>
+    <td class="num">{{ s.starts }} of {{ s.games }}</td>
+    <td>{{ s.filled|fills }}</td>
+    <td>{% if s.drop %}<a href="{{ url('/rosters/replace', {'season': season}, drop=s.drop.player_id, week=week) }}">Replace</a>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="muted">No add improves your lineup {{ 'this' if week == 'this' else 'next' }} week.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

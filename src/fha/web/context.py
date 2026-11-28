@@ -234,8 +234,9 @@ def demo_services(
     Salaries are built in (issue #14): a synthetic league sheet, read and bound,
     and free-agent rows, stored before the first page. A configured sheet
     (``LEAGUE_SHEET_ID`` or ``LEAGUE_SHEET_XLSX``) replaces them all."""
+    from fha.services.schedule import eastern_date
     from fha.sources.nhl.demo import DemoScheduleSource
-    from fha.sources.yahoo.demo import demo_snapshot
+    from fha.sources.yahoo.demo import demo_snapshot, demo_this_week
     from fha.sources.yahoo.fake import FakeYahooSource
     from fha.storage.memory import InMemoryRepository
     from fha.storage.repository import RepositoryError
@@ -253,7 +254,8 @@ def demo_services(
     else:
         repo = InMemoryRepository()
     clock = SystemClock()
-    snapshot = demo_snapshot()
+    # Dated from the clock at start-up, so the suggester has a current week.
+    snapshot = demo_this_week(demo_snapshot(), eastern_date(clock))
     refresh = RefreshService(
         FakeYahooSource(snapshot), repo, clock, ttl_seconds=settings.ttl_seconds
     )

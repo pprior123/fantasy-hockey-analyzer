@@ -114,9 +114,10 @@ def stat_entry(stat_id: str, name: str, display: str, pos_type: str, **extra: An
 def league_settings(
     categories: Sequence[tuple[str, str, str, str]] = LEAGUE_CATEGORIES,
     slots: Sequence[tuple[str, int, int]] = ROSTER_SLOTS,
+    max_weekly_adds: Any = "5",  # Yahoo sends a string; None leaves it out
     **meta: Any,
 ) -> dict[str, Any]:
-    settings = {
+    settings: dict[str, Any] = {
         "draft_type": "live",
         "roster_positions": [
             {
@@ -131,6 +132,8 @@ def league_settings(
         ],
         "stat_categories": {"stats": [stat_entry(*c) for c in categories]},
     }
+    if max_weekly_adds is not None:
+        settings["max_weekly_adds"] = max_weekly_adds
     return {"league": [league_meta(**meta), {"settings": [settings]}]}
 
 
@@ -197,7 +200,9 @@ class P:
         return fragments
 
 
-def team_meta(team_key: str, name: str, is_mine: bool = False) -> list[Any]:
+def team_meta(
+    team_key: str, name: str, is_mine: bool = False, roster_adds: Any = None
+) -> list[Any]:
     meta: list[Any] = [
         {"team_key": team_key},
         {"team_id": team_key.rsplit(".", 1)[-1]},
@@ -222,6 +227,8 @@ def team_meta(team_key: str, name: str, is_mine: bool = False) -> list[Any]:
     ]
     if is_mine:
         meta.insert(3, {"is_owned_by_current_login": 1})
+    if roster_adds is not None:  # as Yahoo sends it, e.g. {"coverage_type": "week", ...}
+        meta.append({"roster_adds": roster_adds})
     return meta
 
 
@@ -233,6 +240,7 @@ class T:
     roster: Sequence[tuple[P, str]] = ()
     is_mine: bool = False
     name: str = ""
+    roster_adds: Any = None  # Yahoo's roster_adds object, or None to leave it out
 
     @property
     def key(self) -> str:
@@ -257,7 +265,9 @@ def teams_roster(teams: Sequence[T]) -> dict[str, Any]:
         }
         items.append(
             [
-                team_meta(team.key, team.name or f"Name {team.team_id}", team.is_mine),
+                team_meta(
+                    team.key, team.name or f"Name {team.team_id}", team.is_mine, team.roster_adds
+                ),
                 {"roster": roster},
             ]
         )

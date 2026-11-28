@@ -46,6 +46,7 @@ class LeagueSettings:
     end_week: int
     stat_categories: tuple[StatCategory, ...]  # the league's categories
     roster_slots: tuple[RosterSlot, ...]
+    max_weekly_adds: int | None = None  # None: Yahoo didn't say, or not a whole number
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,9 @@ class Team:
     name: str
     is_mine: bool  # Yahoo's is_owned_by_current_login
     roster: tuple[RosterEntry, ...]
+    # Adds used in Yahoo's coverage week: (that week, adds); None when not given per week.
+    # The coverage week may not be the current one: the reader checks.
+    roster_adds: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)

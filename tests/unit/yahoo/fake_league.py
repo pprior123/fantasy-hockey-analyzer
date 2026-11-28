@@ -21,7 +21,10 @@ def skater(pid: int, gp: int, team: str = "TB") -> b.P:
 
 # Two teams of 3, and 200 free agents (most tests read 60: 3 pages of 25).
 MINE = b.T(
-    1, [(skater(1, 10), "C"), (skater(2, 9), "IR"), (b.P("3", "Gee Oalie", pos="G"), "G")], True
+    1,
+    [(skater(1, 10), "C"), (skater(2, 9), "IR"), (b.P("3", "Gee Oalie", pos="G"), "G")],
+    True,
+    roster_adds={"coverage_type": "week", "coverage_value": 1, "value": "2"},
 )
 THEIRS = b.T(2, [(skater(4, 8), "C"), (skater(5, 7), "BN"), (skater(6, 0), "IR+")])
 FREE = [skater(100 + i, i % 5) for i in range(200)]

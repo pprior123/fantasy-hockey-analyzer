@@ -111,6 +111,17 @@ def test_league_settings_missing_week_is_an_error() -> None:
         parse.parse_league_settings(content)
 
 
+def test_league_settings_read_the_weekly_add_limit() -> None:
+    assert parse.parse_league_settings(b.league_settings()).max_weekly_adds == 5
+    assert parse.parse_league_settings(b.league_settings(max_weekly_adds=7)).max_weekly_adds == 7
+
+
+@pytest.mark.parametrize("raw", [None, "", "five", True, "-1", [], "2.5"])
+def test_a_missing_or_malformed_add_limit_is_unknown(raw: Any) -> None:
+    settings = parse.parse_league_settings(b.league_settings(max_weekly_adds=raw))
+    assert settings.max_weekly_adds is None
+
+
 def test_game_stat_categories_collect_position_types() -> None:
     cats = parse.parse_game_stat_categories(b.game_stat_categories())
     by_id = {c.stat_id: c for c in cats}
@@ -257,6 +268,49 @@ def test_teams_rosters_with_slots_and_my_team() -> None:
     assert other.roster == (
         RosterEntry(parse.parse_league_players(b.league_players([WALL]))[0], "G"),
     )
+
+
+def test_teams_read_their_adds_this_coverage_week() -> None:
+    teams = parse.parse_teams_rosters(
+        b.teams_roster(
+            [
+                b.T(1, roster_adds={"coverage_type": "week", "coverage_value": 5, "value": "3"}),
+                b.T(2, roster_adds={"coverage_type": "week", "coverage_value": "4", "value": 0}),
+                b.T(3),
+            ]
+        )
+    )
+    assert [t.roster_adds for t in teams] == [(5, 3), (4, 0), None]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"coverage_type": "date", "coverage_value": 5, "value": "3"},
+        {"coverage_value": 5, "value": "3"},
+        {"coverage_type": "week", "value": "3"},
+        {"coverage_type": "week", "coverage_value": 5},
+        {"coverage_type": "week", "coverage_value": "x", "value": "3"},
+        {"coverage_type": "week", "coverage_value": 5, "value": "-1"},
+        {"coverage_type": "week", "coverage_value": True, "value": "3"},
+        "3",
+        [],
+    ],
+    ids=[
+        "date-coverage",
+        "no-type",
+        "no-week",
+        "no-value",
+        "bad-week",
+        "negative",
+        "bool",
+        "str",
+        "list",
+    ],
+)
+def test_malformed_or_non_weekly_adds_are_unknown(raw: Any) -> None:
+    (team,) = parse.parse_teams_rosters(b.teams_roster([b.T(1, roster_adds=raw)]))
+    assert team.roster_adds is None
 
 
 def test_roster_players_directly_under_roster_are_read_too() -> None:

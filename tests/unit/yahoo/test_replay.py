@@ -142,6 +142,14 @@ def test_eight_teams_one_of_them_mine() -> None:
     assert [t.team_key for t in snap.teams if t.is_mine] == ["477.l.8076.t.6"]
 
 
+def test_the_add_limit_and_every_team_s_adds_this_week() -> None:
+    snap = snapshot()
+    assert snap.settings.max_weekly_adds == 5
+    assert snap.settings.current_week == 5
+    assert all(t.roster_adds is not None and t.roster_adds[0] == 5 for t in snap.teams)
+    assert all(0 <= t.roster_adds[1] <= 5 for t in snap.teams if t.roster_adds is not None)
+
+
 def test_rosters_fit_the_league_s_slots() -> None:
     snap = snapshot()
     slots = {s.position: s.count for s in snap.settings.roster_slots}

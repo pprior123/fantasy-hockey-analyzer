@@ -54,9 +54,12 @@ class DaySource:
 
 
 def setup(
-    snapshot: LeagueSnapshot = SNAP, source: DaySource | None = None, now: float = NOW
+    snapshot: LeagueSnapshot = SNAP,
+    source: DaySource | None = None,
+    now: float = NOW,
+    clock: FakeClock | None = None,
 ) -> tuple[TestClient, DaySource]:
-    clock = FakeClock(now)
+    clock = clock or FakeClock(now)
     repo = InMemoryRepository()
     svc = Services(repo, RefreshService(FakeYahooSource(snapshot), repo, clock), clock)
     src = source or DaySource()
@@ -262,6 +265,13 @@ def test_replace_with_a_week_adds_week_plus_and_starts_and_sorts_by_them() -> No
     assert sorted(set(source.calls)) == [SAT, SUN]
     header = table(page, "replace").split("</thead>", 1)[0]
     assert len(re.findall(r"<th\b", header)) == 4 + 2 + 2  # with AAV and Room after
+    plain = c.get(f"/rosters/replace?drop={drop}").text
+    assert names_of(page) != names_of(plain)  # Week + reorders the TTLTST list
+    assert sorted(names_of(page)) == sorted(names_of(plain))
+
+
+def names_of(html: str) -> list[str]:
+    return [n.strip() for n in re.findall(r'<td class="first">([^<]*)', table(html, "replace"))]
 
 
 @pytest.mark.parametrize("kind", ["goalie", "ir"])
@@ -290,12 +300,40 @@ def test_an_unpriceable_week_on_replace_shows_dashes_and_the_default_sort(case: 
     drop = my_skater()
     plain = c.get(f"/rosters/replace?drop={drop}").text
     page = c.get(f"/rosters/replace?drop={drop}&week=this").text
-    assert 'class="muted week-note"' in page or 'class="warn week-note"' in page
+    assert "can't be worked out" in text(page)
     rows = body_rows(page, "replace")
     assert rows
-    assert all(r.count('<td class="num">—</td>') >= 2 for r in rows)
-    names = re.findall(r'<td class="first">([^<]*)', table(page, "replace"))
-    assert names == re.findall(r'<td class="first">([^<]*)', table(plain, "replace"))
+    for r in rows:
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", r, re.S)
+        assert (cells[4], cells[5]) == ("—", "—")  # Week + and Starts
+    assert names_of(page) == names_of(plain)
+
+
+def test_stale_days_show_their_age_on_suggest_and_replace() -> None:
+    clock = FakeClock(NOW)
+    c, source = setup(clock=clock)
+    assert body_rows(c.get("/rosters/suggest").text, "suggest")  # caches Sat and Sun
+    clock.t += 7 * 3600
+    source.failing = frozenset({SAT, SUN})
+    page = c.get("/rosters/suggest").text
+    words = text(page)
+    assert "Schedule for Sat Nov 28 from 7 h ago." in words
+    assert "Schedule for Sun Nov 29 from 7 h ago." in words
+    assert body_rows(page, "suggest")  # stale days are used
+    replace_page = text(c.get(f"/rosters/replace?drop={my_skater()}&week=this").text)
+    assert "Schedule for Sat Nov 28 from 7 h ago." in replace_page
+
+
+def test_next_week_adds_are_unknown_while_yahoo_reports_the_old_week() -> None:
+    old = replace(
+        SNAP,
+        scoreboard=replace(SNAP.scoreboard, week_start="2026-11-16", week_end="2026-11-22"),
+        next_scoreboard=replace(SNAP.scoreboard, week_start="2026-11-23", week_end="2026-11-29"),
+    )
+    c, _ = setup(old)
+    words = text(c.get("/rosters/suggest?week=next").text)
+    assert "Next week: Sat Nov 28 to Sun Nov 29" in words
+    assert "Adds next week: unknown" in words
 
 
 def test_replace_refuses_an_unknown_week() -> None:

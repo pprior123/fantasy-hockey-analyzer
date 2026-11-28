@@ -150,7 +150,9 @@ def test_next_week_starts_tomorrow_when_yahoo_still_reports_the_old_week() -> No
 
 
 @pytest.mark.parametrize(
-    "week", [(None, "2026-11-29"), ("2026-11-23", None)], ids=["no-start", "no-end"]
+    "week",
+    [(None, "2026-11-29"), ("2026-11-23", None), ("Nov 23", "2026-11-29"), ("2026-11-23", "")],
+    ids=["no-start", "no-end", "not-iso", "blank-end"],
 )
 def test_a_week_without_dates_is_unknown(week: tuple[str | None, str | None]) -> None:
     h = horizon(league([], week=week).snapshot, TODAY, Week.THIS)
@@ -327,6 +329,10 @@ def test_the_cap_rule_drops_misfits_and_marks_unknowns() -> None:
     result = rank(view, (SAT,), playing({"BOS"}))
     by_add = {s.add.player_id: s for s in result.rows}
     assert set(by_add) == {"fits", "unknown"}
+    assert by_add["fits"].drop is not None
+    assert by_add["fits"].drop.player_id == "d1"  # the pair Replace is checked for below
+    assert by_add["unknown"].drop is not None
+    assert by_add["unknown"].drop.player_id == "d1"
     assert by_add["fits"].cap_ok is True
     assert by_add["unknown"].cap_ok is None
     # Replace computes the same mark for the same pair (one drop cap-hit rule).

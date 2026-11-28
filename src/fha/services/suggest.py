@@ -93,20 +93,29 @@ def horizon(snapshot: LeagueSnapshot, today: date, week: Week) -> Horizon:
     limit = settings.max_weekly_adds
     has_next = snapshot.next_scoreboard is not None
     board = snapshot.scoreboard if week is Week.THIS else snapshot.next_scoreboard
-    if board is None or board.week_start is None or board.week_end is None:
+    first = _iso(board.week_start) if board is not None else None
+    end = _iso(board.week_end) if board is not None else None
+    if first is None or end is None:
         return Horizon(week, (), False, has_next, limit, None)
-    start = max(date.fromisoformat(board.week_start), tomorrow)
-    end = date.fromisoformat(board.week_end)
+    start = max(first, tomorrow)
     days = tuple(start + timedelta(days=i) for i in range((end - start).days + 1))
     if week is Week.NEXT:
         # The limit resets, unless Yahoo still reports the week that has ended.
-        stale = date.fromisoformat(board.week_start) <= today
+        stale = first <= today
         return Horizon(week, days, True, has_next, limit, None if stale else limit)
     mine = snapshot.my_team
     used = mine.roster_adds if mine is not None else None
     if limit is None or used is None or used[0] != settings.current_week:
         return Horizon(week, days, True, has_next, limit, None)
     return Horizon(week, days, True, has_next, limit, max(limit - used[1], 0))
+
+
+def _iso(text: str | None) -> date | None:
+    """A Yahoo week date, or None when missing or not an ISO date (the week is then unknown)."""
+    try:
+        return date.fromisoformat(text) if text else None
+    except ValueError:
+        return None
 
 
 async def load_week(
